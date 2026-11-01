@@ -1198,3 +1198,42 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 
 .suggestion .suggest-icon svg{display:block;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .home-view .suggestion .suggest-icon{display:inline-flex;align-items:center}
+
+/* 对话 (chats without a project) and moving conversations by drag & drop */
+.chats-head{display:flex;align-items:center;justify-content:space-between;padding-right:4px}
+.chats-head .project-new{opacity:.7}
+.chats-head .project-new:hover{opacity:1}
+.thread-row[draggable="true"]{cursor:default}
+.thread-row.dragging{opacity:.45}
+.chat-group,.project-group{border-radius:9px;transition:background-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out)}
+.drop-target{background:#ffffff0d;box-shadow:inset 0 0 0 1px #ffffff2a}
+:root[data-accent] .drop-target{box-shadow:inset 0 0 0 1px var(--accent)}
+
+/* Ctrl+K search and commands */
+.palette{width:min(760px,calc(100vw - 80px));max-height:min(600px,calc(100vh - 120px));margin-top:12vh;padding:0;border:1px solid #3c3c39;border-radius:16px;background:#1c1c1b;color:#e7e6e1;box-shadow:0 24px 80px #000a;overflow:hidden}
+.palette[open]{display:flex;flex-direction:column}
+.palette::backdrop{background:#0006}
+.palette-input{flex:none;width:100%;box-sizing:border-box;padding:17px 20px;border:0;border-bottom:1px solid #2e2e2b;background:transparent;font-size:15px;color:inherit;outline:none}
+.palette-input::placeholder{color:#76746e}
+.palette-list{flex:1;min-height:180px;overflow:auto;padding:6px 8px}
+.palette-section{padding:10px 12px 5px;font-size:11.5px;color:#8a8984}
+.palette-item{display:flex;align-items:center;gap:11px;width:100%;padding:8px 12px;border-radius:9px;text-align:left;color:#dcdad4;font-size:13.5px}
+.palette-item svg{flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;color:#9d9b95}
+.palette-item.active{background:#ffffff10;color:#f4f2ec}
+.palette-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.palette-label small{display:block;margin-top:2px;font-size:11.5px;color:#8f8d86;overflow:hidden;text-overflow:ellipsis}
+.palette-meta{flex:none;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#85837d}
+.palette-item kbd{flex:none;padding:1px 7px;border-radius:5px;background:#ffffff12;font:11.5px "Segoe UI",sans-serif;color:#b9b7b0}
+.palette-empty{padding:40px 16px;text-align:center;font-size:13px;color:#85837d}
+.palette-tabs{flex:none;display:flex;align-items:center;gap:4px;padding:8px 10px;border-top:1px solid #2e2e2b}
+.palette-tabs button{padding:5px 12px;border-radius:8px;font-size:12.5px;color:#9d9b95}
+.palette-tabs button:hover{color:#ecebe5}
+.palette-tabs button.selected{background:#ffffff14;color:#f4f2ec}
+.palette-keys{margin-left:auto;font-size:11px;color:#6f6e69}
+:root[data-accent] .palette-item.active svg{color:var(--accent)}
+.palette[open]{animation:dialog-in var(--motion) var(--ease-out)}
+
+/* Search button beside the title, like Codex */
+.brand-search{margin-left:4px;flex:none;display:grid;place-items:center;width:30px;height:30px;padding:0;border-radius:8px;color:#9d9b95;-webkit-app-region:no-drag}
+.brand-search:hover{background:#ffffff10;color:#ecebe5}
+.brand-search svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}

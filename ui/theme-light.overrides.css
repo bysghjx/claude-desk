@@ -62,3 +62,7 @@ dialog::backdrop{background:#0000002e}
 :root[data-accent="yellow"]{--accent:#a77a07;--accent-ink:#ffffff}
 .thread-dot{background:transparent}
 .thread-dot.unread{background:#2f8a4c}
+.palette{background:#ffffff;border-color:#dededa;box-shadow:0 24px 80px #0000002e}
+.palette::backdrop{background:#0000002e}
+.palette-item.active{background:#0000000a;color:#1d1d1b}
+.palette-tabs button.selected{background:#0000000d;color:#1d1d1b}

@@ -15,6 +15,7 @@ import { createManager } from './views/manager.mjs';
 import { createChrome } from './views/chrome.mjs';
 import { createRewind } from './views/rewind.mjs';
 import { createTerminalPanel } from './views/terminal.mjs';
+import { createPalette } from './views/palette.mjs';
 
 const desk = window.desk;
 const api = (name, ...args) => desk.invoke(name, ...args);
@@ -32,6 +33,7 @@ const conversation = createConversation({ store, actions, api, composer, toast, 
 const status = createStatus({ store, actions, api, composer, toast });
 createRewind({ store, api, actions, composer, toast });
 createTerminalPanel({ store, api, toast, desk });
+createPalette({ store, api, actions, composer, toast });
 const sidebar = createSidebar({ store, actions, toast });
 const manager = createManager({ store, api, toast, confirm });
 createChrome({ store, actions, api, toast, manager, composer, sidebar });

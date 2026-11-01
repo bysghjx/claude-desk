@@ -26,7 +26,9 @@ export function createStore() {
     currentProject() { const id = this.current()?.projectId || this.projectId; return this.state.projects.find(p => p.id === id); },
     // The folder the panels work on: a conversation's own worktree, else its project.
     workspace() {
-      const thread = this.current(), project = this.currentProject(); if (!project) return null;
+      const thread = this.current(), project = this.currentProject();
+      if (thread && !thread.projectId) return { id: thread.id, name: '对话', path: thread.cwd, chat: true };
+      if (!project) return null;
       return thread?.worktree && !thread.worktree.removed ? { ...project, id: thread.id, path: thread.cwd, worktree: thread.worktree } : project;
     },
     running() { return isActive(this.current()); },

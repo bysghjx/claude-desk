@@ -100,7 +100,7 @@ function saveImages(list){
 function dropSaved(images,original){for(const image of images)if(!original?.some(x=>x?.path===image.path))try{fs.unlinkSync(image.path);}catch{}}
 function project(id) { const p = engine.store.state.projects.find(p => p.id === id); if(!p) throw Error('项目不存在'); return p; }
 // Panels address a project by id, or a conversation that runs in its own worktree by the conversation id.
-function folder(id) { const t = engine.store.state.threads.find(t => t.id === id); return t?.worktree && !t.worktree.removed ? t.cwd : project(id).path; }
+function folder(id) { const t = engine.store.state.threads.find(t => t.id === id); return t && (t.worktree && !t.worktree.removed || !t.projectId) ? t.cwd : project(id).path; }
 function within(root, relative) {
   if(typeof relative !== 'string' || !relative || relative.length > 2000) throw Error('文件路径无效');
   const target = path.resolve(root, relative); const realRoot = fs.realpathSync(root); const rel = path.relative(realRoot, target);
@@ -161,7 +161,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
   const legacy=[path.join(dataRoot,'bootstrap.json'),path.join(appData,'ClaudeDesk/data/workspace.json'),path.join(shadowRoot,'ClaudeDesk/data/workspace.json'),path.join(appData,'Claude Desk/data/workspace.json'),path.join(appData,'claude-desk/data/workspace.json'),path.join(projectRoot,'work/claude-desk-ui/workspace.json'),path.join(projectRoot,'work/claude-desk-v2-qa/workspace.json')];
-  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot });
+  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats') });
   applyTheme(engine.store.state.settings.theme);
   ensureStartMenuShortcut();
   const checkpoints=new Checkpoints(path.join(dataRoot,'checkpoints'));
@@ -220,7 +220,8 @@ if(primaryInstance)app.whenReady().then(async () => {
   ipcMain.on('ui:sync',(event,value)=>{try{if(event.sender!==win?.webContents||event.senderFrame!==win.webContents.mainFrame)throw Error('无效来源');event.returnValue=saveUi(value);}catch{event.returnValue=false;}});
   handle('project:add', async () => { const r = await dialog.showOpenDialog(win, { title: '选择项目文件夹', properties: ['openDirectory'] }); return r.canceled ? null : engine.addProject(r.filePaths[0]); });
   const worktrees=new Worktrees(path.join(dataRoot,'worktrees'));
-  handle('thread:create', async (id, options={}) => threadOut(engine.create(id, options?.worktree ? { worktree: await worktrees.create(project(id).path) } : {})));
+  handle('thread:create', async (id, options={}) => threadOut(engine.create(id || null, id && options?.worktree ? { worktree: await worktrees.create(project(id).path) } : {})));
+  handle('thread:move', async (id, projectId) => threadOut(await engine.moveThread(id, projectId || null)));
   const worktreeOf=id=>{const t=engine.thread(id);if(!t.worktree||t.worktree.removed)throw Error('这个会话没有独立工作树');return t.worktree;};
   // Terminal panel: one shell per workspace folder, opened on demand.
   terminals=new Terminals({send:event=>{if(win&&!win.isDestroyed())win.webContents.send('terminal:event',event);}});
@@ -253,7 +254,9 @@ if(primaryInstance)app.whenReady().then(async () => {
     return shell.openPath(image.path);
   });
   handle('thread:stop', id => engine.stop(id));
-  handle('thread:delete',async id=>{const wt=engine.thread(id).worktree;const result=await engine.deleteThread(id);
+  handle('thread:delete',async id=>{const {worktree:wt,cwd}=engine.thread(id);const result=await engine.deleteThread(id);
+    // A chat's own folder goes with it.
+    if(result&&engine.isChatFolder(cwd)){terminals.closeIn(cwd);fs.rmSync(cwd,{recursive:true,force:true,maxRetries:4,retryDelay:250});}
     // A clean worktree goes with the conversation; one with uncommitted work stays on disk.
     if(result&&wt&&!wt.removed){terminals.closeIn(wt.path);await worktrees.remove(wt).catch(()=>{});}sentRevs.delete(id);notifications.forget(id);agentWindows.refresh(id);return result;});
   // Rewind: preview which files would change, then drop the turn (and later ones) and optionally restore files.

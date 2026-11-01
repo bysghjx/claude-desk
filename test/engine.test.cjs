@@ -266,3 +266,25 @@ test('approving a plan switches the permission mode; rejecting it passes feedbac
   assert.match((await ask).message,/跳过/);
   await engine.shutdown();
 });
+
+test('chats without a project get their own folder and can move into a project and back',async()=>{
+  const sdk=fakeSdk();const dir=fs.mkdtempSync(path.join(scratch,'claude-desk-chat-'));const store=new JsonStore(path.join(dir,'state.json'));
+  const engine=new Engine({query:sdk.query,store,cliPath:'fake',chatRoot:path.join(dir,'chats')});
+  const project=engine.addProject(fs.mkdtempSync(path.join(scratch,'claude-desk-proj-')));
+  const chat=engine.create(null);
+  assert.equal(chat.projectId,null);assert.equal(chat.cwd,path.join(dir,'chats',chat.id));assert.ok(fs.statSync(chat.cwd).isDirectory());
+  await engine.send(chat.id,'hello');await tick();assert.equal(sdk.contexts[0].cwd,chat.cwd);
+  await assert.rejects(()=>engine.moveThread(chat.id,project.id),/先停止/);
+  await complete(sdk);
+  chat.turns[0].checkpoint='tree-old';
+  await engine.moveThread(chat.id,project.id);
+  assert.equal(chat.projectId,project.id);assert.equal(chat.cwd,project.path);
+  assert.equal(engine.runs.size,0,'the CLI restarts in the new folder');
+  assert.equal(chat.turns[0].checkpoint,undefined,'snapshots of the old folder no longer apply');
+  assert.equal(fs.existsSync(path.join(dir,'chats',chat.id)),false,'the empty chat folder is removed');
+  await engine.moveThread(chat.id,null);
+  assert.equal(chat.projectId,null);assert.equal(chat.cwd,path.join(dir,'chats',chat.id));
+  await assert.rejects(()=>engine.moveThread(chat.id,'missing'),/项目不存在/);
+  assert.equal(engine.isChatFolder(chat.cwd),true);assert.equal(engine.isChatFolder(project.path),false);
+  await engine.shutdown();
+});

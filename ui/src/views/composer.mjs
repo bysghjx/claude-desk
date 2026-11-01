@@ -134,7 +134,7 @@ export function createComposer({ store, api, toast, actions }) {
     const item=menuItems[index],token=menuToken;if(!item||!token)return;
     const prompt=$('#prompt');prompt.value=prompt.value.slice(0,token.start)+prompt.value.slice(token.end);prompt.selectionStart=prompt.selectionEnd=token.start;
     hidePromptMenu();
-    if(item.reference){if(references.length>=8)return toast('一条消息最多引用 8 项');const key=r=>r.kind==='file'?'file:'+r.path:'thread:'+r.id;if(!references.some(r=>key(r)===key(item.reference)))references.push(item.reference);renderReferences();prompt.focus();}
+    if(item.reference){addReference(item.reference);prompt.focus();}
     else if(item.command.prompt){prompt.value=item.command.prompt;prompt.focus();}
     else if(item.command.action)await item.command.action();
     save();
@@ -160,6 +160,7 @@ export function createComposer({ store, api, toast, actions }) {
   // Restores a draft; `defaults` supplies model, effort and mode when the draft has none.
   function restore(draft,defaults){$('#prompt').value=typeof draft==='string'?draft:draft?.text||'';const chosen=draft?.options?.model?draft.options:defaults;if(chosen){ensureModel(chosen.model);$('#effort').value=chosen.effort||'high';$('#mode').value=chosen.mode||'default';}
     references=structuredClone(draft?.references||[]);renderReferences();images=Array.isArray(draft?.images)?draft.images.slice():[];renderImages();syncPickers();closeAll();historyIndex=-1;historyDraft=null;autosize();}
+  function addReference(reference){if(references.length>=8)return toast('一条消息最多引用 8 项');const key=r=>r.kind==='file'?'file:'+r.path:'thread:'+r.id;if(!references.some(r=>key(r)===key(reference)))references.push(reference);renderReferences();save();}
   function clear(){$('#prompt').value='';references=[];renderReferences();images=[];renderImages();closeAll();historyIndex=-1;historyDraft=null;$('#prompt').style.height='auto';}
   $('#model-toggle').onclick=()=>openPicker('model');$('#mode-toggle').onclick=()=>openPicker('mode');
   $('#model-list-toggle').onclick=openModelList;
@@ -225,7 +226,7 @@ export function createComposer({ store, api, toast, actions }) {
   $('#prompt').addEventListener('keydown',guarded(toast,async event=>{if(keydown(event))return;if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();await actions().sendMessage();}}));
   $('#prompt').addEventListener('input',()=>{autosize();input();store.emit('composer');});
   function setMode(mode){if(modes.some(m=>m.id===mode)&&$('#mode').value!==mode){$('#mode').value=mode;optionChanged();}}
-  return{capture,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,
+  return{capture,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,addReference,
     focus:()=>$('#prompt').focus(),focusProject:()=>$('#home-project')?.focus(),
     initialize(){ready=true;syncPickers();renderModels();save();}};
 }

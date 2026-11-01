@@ -37,9 +37,9 @@ export function createActions({ store, api, composer, toast, confirm }) {
     selectThread(null); composer.focus(); return project;
   }
   async function newThread() {
+    // Without a project the new conversation is a chat in its own folder.
     const project = store.currentProject();
-    if (!project) return addProject();
-    const thread = await apply(await api('thread:create', project.id, { worktree: store.state.settings?.location === 'worktree' }));
+    const thread = await apply(await api('thread:create', project?.id || null, { worktree: Boolean(project) && store.state.settings?.location === 'worktree' }));
     selectThread(thread.id); composer.focus(); return thread;
   }
 
@@ -50,7 +50,6 @@ export function createActions({ store, api, composer, toast, confirm }) {
     const draft = composer.capture(), images = draft.images || [];
     text = String(text ?? draft.text ?? '').trim();
     if (!text && !images.length) return;
-    if (!store.current() && !store.currentProject()) { toast('请先在主页选择一个工作项目，或点击「添加文件夹」。'); composer.focusProject?.(); return; }
     sending = true;
     const fromHome = !store.current(), queueing = !fromHome && isActive(store.current());
     try {
@@ -101,6 +100,13 @@ export function createActions({ store, api, composer, toast, confirm }) {
     store.state.settings = { ...store.state.settings, location }; store.emit('threads');
     await api('settings', { location });
   }
+  // Drag a conversation onto a project (or onto 对话) to move it there.
+  async function moveThread(id, projectId) {
+    const thread = store.thread(id); if (!thread || (thread.projectId || null) === (projectId || null)) return;
+    await apply(await api('thread:move', id, projectId || null));
+    if (store.selected === id) { store.projectId = projectId || null; store.emit('select', id); }
+    toast(projectId ? `已移到「${store.state.projects.find(p => p.id === projectId)?.name || '项目'}」` : '已移到「对话」');
+  }
   async function sendQueuedNow(queueId) { await api('queue:send', store.selected, queueId); }
   async function removeQueued(queueId) { await api('queue:remove', store.selected, queueId); }
   async function editQueued(queueId) {
@@ -113,5 +119,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
 }

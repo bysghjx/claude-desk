@@ -579,6 +579,26 @@
   :root[data-accent="pink"]{--accent:#c81968;--accent-ink:#f9f5f7}
   :root[data-accent="yellow"]{--accent:#8f6d13;--accent-ink:#fbfbf9}
   :root[data-material] .app-rail{background:color-mix(in srgb,#ffffff 34%,transparent);border-right-color:#0f0f0f08}
+  .drop-target{background:#0f0f0f0d;box-shadow:inset 0 0 0 1px #ffffff12}
+  .palette{border:1px solid #d5d5d3;background:#f8f8f7;color:#292721;box-shadow:0 24px 80px #00000047}
+  .palette::backdrop{background:#ffffff66}
+  .palette-input{border-bottom:1px solid #efefee}
+  .palette-input::placeholder{color:#787670}
+  .palette-section{color:#696864}
+  .palette-item{color:#312f28}
+  .palette-item svg{color:#5f5e58}
+  .palette-item.active{background:#0f0f0f10;color:#231f14}
+  .palette-label small{color:#686761}
+  .palette-meta{color:#6e6c67}
+  .palette-item kbd{background:#0f0f0f12;color:#4a4842}
+  .palette-empty{color:#6e6c67}
+  .palette-tabs{border-top:1px solid #efefee}
+  .palette-tabs button{color:#5f5e58}
+  .palette-tabs button:hover{color:#26251c}
+  .palette-tabs button.selected{background:#0f0f0f14;color:#231f14}
+  .palette-keys{color:#7e7d77}
+  .brand-search{color:#5f5e58}
+  .brand-search:hover{background:#0f0f0f10;color:#26251c}
 }
 
 /* Hand-tuned light theme details */
@@ -647,4 +667,8 @@ dialog::backdrop{background:#0000002e}
 :root[data-accent="yellow"]{--accent:#a77a07;--accent-ink:#ffffff}
 .thread-dot{background:transparent}
 .thread-dot.unread{background:#2f8a4c}
+.palette{background:#ffffff;border-color:#dededa;box-shadow:0 24px 80px #0000002e}
+.palette::backdrop{background:#0000002e}
+.palette-item.active{background:#0000000a;color:#1d1d1b}
+.palette-tabs button.selected{background:#0000000d;color:#1d1d1b}
 }

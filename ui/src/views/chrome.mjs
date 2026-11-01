@@ -6,7 +6,7 @@ const RAIL_TABS = { mcp: 'manage-mcp', plugins: 'manage-plugins', skills: 'manag
 
 export function createChrome({ store, actions, api, toast, manager, composer, sidebar }) {
   function header() {
-    setText($('#project-label'), store.currentProject()?.name || '工作空间');
+    setText($('#project-label'), store.current() && !store.current().projectId ? '对话' : store.currentProject()?.name || '工作空间');
     setText($('#thread-title'), store.current()?.title || '主页');
     const wt = store.current()?.worktree, chip = $('#worktree-chip');
     chip.hidden = !wt || wt.removed; if (wt && !wt.removed) { setText(chip.lastChild, wt.branch); chip.title = `独立工作树：${store.current().cwd}`; }

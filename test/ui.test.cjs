@@ -109,3 +109,13 @@ test('sidebar dots: only running, waiting, or something new to read', async()=>{
   assert.equal(isUnread(t('stopped',{seenAt:1,finishedAt:2})),false,'stopping it yourself is not news');
   assert.equal(isUnread(null),false);
 });
+
+test('sending from home without a project starts a chat; worktree only applies to projects',async()=>{
+  const r=await setup();r.store.state.settings.location='worktree';
+  r.actions.showHome();r.composer.text='just a question';await r.actions.sendMessage();
+  const create=r.calls.find(c=>c.name==='thread:create');
+  assert.deepEqual(create.args,[null,{worktree:false}]);
+  assert.equal(r.toasts.some(t=>/选择一个工作项目/.test(t)),false);
+  r.actions.selectProject('p1');r.composer.text='in the project';await r.actions.sendMessage();
+  assert.deepEqual(r.calls.filter(c=>c.name==='thread:create')[1].args,['p1',{worktree:true}]);
+});

@@ -45,8 +45,8 @@ class JsonStore {
   }
 }
 class Engine extends EventEmitter {
-  constructor({ query, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='' }) {
-    super(); Object.assign(this, { query, store, cliPath, env, sessionOptions, attachmentRoot }); this.runs = new Map(); this.pending = new Map();
+  constructor({ query, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='', chatRoot='' }) {
+    super(); Object.assign(this, { query, store, cliPath, env, sessionOptions, attachmentRoot, chatRoot }); this.runs = new Map(); this.pending = new Map();
     this.saveTimer = null; this.eventTimers = new Map(); this.closing = false; this.deleting = new Set(); this.draining = new Set(); this.snapshots = new WeakMap(); this.revision = 0;
   }
   thread(id) { const t = this.store.state.threads.find(x => x.id === id); if (!t) throw Error('会话不存在'); return t; }
@@ -96,9 +96,11 @@ class Engine extends EventEmitter {
     return p;
   }
   // `worktree` (from worktree.cjs) makes the conversation run in its own checkout.
+  // Without a project the conversation is a chat: it works in its own empty folder under chatRoot.
   create(projectId, { worktree } = {}) {
-    const p = this.store.state.projects.find(p => p.id === projectId); if (!p) throw Error('先选择一个项目文件夹');
-    const t = { id: randomUUID(), projectId, cwd: worktree?.cwd || p.path, ...(worktree ? { worktree } : {}), title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), status: 'idle', seenAt: Date.now(), turns: [], model: this.store.state.settings.model, effort: this.store.state.settings.effort, mode: this.store.state.settings.mode };
+    const p = projectId ? this.store.state.projects.find(p => p.id === projectId) : null; if (projectId && !p) throw Error('项目不存在');
+    const id = randomUUID(), cwd = worktree?.cwd || p?.path || this.chatFolder(id);
+    const t = { id, projectId: p ? projectId : null, cwd, ...(worktree ? { worktree } : {}), title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), status: 'idle', seenAt: Date.now(), turns: [], model: this.store.state.settings.model, effort: this.store.state.settings.effort, mode: this.store.state.settings.mode };
     this.store.state.threads.unshift(t); this.store.save(); return t;
   }
   async send(id, text, options = {}) {
@@ -180,6 +182,27 @@ class Engine extends EventEmitter {
     try { await this.send(id, next.text, next.options); }
     catch (e) { t.queue.unshift(next); t.detail = '排队消息未能发送：' + e.message; this.emit('thread', this.threadSnapshot(t)); }
     finally { this.draining.delete(id); }
+  }
+  chatFolder(id) {
+    if (!this.chatRoot) throw Error('先选择一个项目文件夹');
+    const folder = path.join(this.chatRoot, id); fs.mkdirSync(folder, { recursive: true }); return folder;
+  }
+  isChatFolder(folder) { if (!this.chatRoot || !folder) return false; const rel = path.relative(path.resolve(this.chatRoot), path.resolve(folder)); return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel); }
+  // Moves a conversation into a project (or back to a plain chat). It continues in the new
+  // folder; snapshots of the old folder no longer apply, so they are dropped.
+  async moveThread(id, projectId) {
+    const t = this.thread(id), p = projectId ? this.store.state.projects.find(p => p.id === projectId) : null;
+    if (projectId && !p) throw Error('项目不存在');
+    if ((t.projectId || null) === (projectId || null)) return t;
+    if (this.deleting.has(id)) throw Error('会话正在删除，请稍后再试');
+    if (ACTIVE.has(t.status)) throw Error('请先停止当前运行，再移动会话');
+    if (t.worktree && !t.worktree.removed) throw Error('这个会话在独立工作树里，先移除工作树再移动');
+    await this.closeRun(id);
+    const old = t.cwd;
+    t.projectId = p ? projectId : null; t.cwd = p ? p.path : this.chatFolder(id);
+    for (const turn of t.turns) if (turn.checkpoint) { delete turn.checkpoint; turn.checkpointError = '会话已移到其他文件夹，之前的文件快照不再适用'; }
+    if (this.isChatFolder(old) && old !== t.cwd) try { fs.rmdirSync(old); } catch {} // only when empty
+    t.updatedAt = Date.now(); this.publish(id); this.store.save(); return t;
   }
   // After its worktree is removed a conversation continues in the project folder.
   async detachWorktree(id) {
