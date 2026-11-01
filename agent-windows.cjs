@@ -24,6 +24,8 @@ class AgentWindows{
     this.windows.set(key,{window,threadId,agentId:value.agent.id});
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',event=>event.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
+    const sendMaximized=()=>{if(!window.isDestroyed())window.webContents.send('window:maximized',window.isMaximized());};
+    window.on('maximize',sendMaximized);window.on('unmaximize',sendMaximized);window.webContents.on('did-finish-load',sendMaximized);
     window.on('closed',()=>this.windows.delete(key));window.loadFile(path.join(this.root,'ui/agent.html'));return true;
   }
   refresh(threadId){for(const entry of this.windows.values())if(entry.threadId===threadId&&!entry.window.isDestroyed()){const value=this.snapshot(entry.threadId,entry.agentId);entry.window.webContents.send('agent:update',value);}}

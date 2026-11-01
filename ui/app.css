@@ -1182,3 +1182,19 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 :root[data-accent] .rail-button.active{color:var(--accent)}
 :root[data-accent] .terminal-toggle.active{color:var(--accent)}
 :root[data-accent] .rewind-option input,:root[data-accent] .review-row input,:root[data-accent] .review-all input{accent-color:var(--accent)}
+
+/* Window material (设置 → 外观 → 窗口材质). The system draws mica or acrylic behind a transparent
+   page; the rail and sidebar let most of it through, the conversation keeps a nearly solid base. */
+:root[data-material],:root[data-material] body{background:transparent}
+:root[data-material] .app-rail{background:color-mix(in srgb,#000000 34%,transparent);border-right-color:#ffffff08}
+:root[data-material] .sidebar{background:color-mix(in srgb,var(--sidebar) 42%,transparent)}
+:root[data-material] .workspace{background:color-mix(in srgb,var(--bg) 86%,transparent)}
+:root[data-material="acrylic"] .sidebar{background:color-mix(in srgb,var(--sidebar) 30%,transparent)}
+:root[data-material="acrylic"] .workspace{background:color-mix(in srgb,var(--bg) 78%,transparent)}
+
+/* Maximise shows one square, restore two overlapping ones. */
+.window-controls .icon-restore,.maximized .window-controls .icon-max{display:none}
+.maximized .window-controls .icon-restore{display:block}
+
+.suggestion .suggest-icon svg{display:block;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.home-view .suggestion .suggest-icon{display:inline-flex;align-items:center}

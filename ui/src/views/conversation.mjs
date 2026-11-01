@@ -5,9 +5,10 @@ import { guarded } from '../core/ui.mjs';
 import { createTurn, updateTurn, animateIn } from './turn.mjs';
 
 const SUGGESTIONS = [
-  ['⌘', '了解这个项目', '梳理结构与启动方式', '请先阅读这个项目，概述目录结构、技术栈和启动方式。先不要修改文件。'],
-  ['⌕', '检查代码问题', '从具体证据出发', '请检查当前项目，找出值得优先修复的问题，给出具体位置和改进建议。先不要修改文件。'],
-  ['↗', '一起实现新想法', '先计划，再逐步构建', '我想实现一个新功能。请先了解项目，然后和我确认需求并制定实施计划。']
+  // Drawn icons: text symbols like ⌘ ⌕ ↗ sit at different heights in each font.
+  ['<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h4a1.5 1.5 0 0 1 1.5 1.5v8a1 1 0 0 0-1-1h-4.5Z"/><path d="M13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1 1 0 0 1 1-1h4.5Z"/></svg>', '了解这个项目', '梳理结构与启动方式', '请先阅读这个项目，概述目录结构、技术栈和启动方式。先不要修改文件。'],
+  ['<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></svg>', '检查代码问题', '从具体证据出发', '请检查当前项目，找出值得优先修复的问题，给出具体位置和改进建议。先不要修改文件。'],
+  ['<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.2 12.5h3.6M6.7 14.2h2.6M8 1.8a4.2 4.2 0 0 0-2.6 7.5c.5.4.8.9.8 1.5v.2h3.6v-.2c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z"/></svg>', '一起实现新想法', '先计划，再逐步构建', '我想实现一个新功能。请先了解项目，然后和我确认需求并制定实施计划。']
 ];
 
 function welcomeHtml(store) {

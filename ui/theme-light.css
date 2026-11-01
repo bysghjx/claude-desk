@@ -578,6 +578,7 @@
   :root[data-accent="purple"]{--accent:#4310e4;--accent-ink:#f5f4f9}
   :root[data-accent="pink"]{--accent:#c81968;--accent-ink:#f9f5f7}
   :root[data-accent="yellow"]{--accent:#8f6d13;--accent-ink:#fbfbf9}
+  :root[data-material] .app-rail{background:color-mix(in srgb,#ffffff 34%,transparent);border-right-color:#0f0f0f08}
 }
 
 /* Hand-tuned light theme details */

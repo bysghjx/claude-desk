@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('desk',{
   onThread:callback=>{const listener=(_event,value)=>callback(value);ipcRenderer.on('thread:update',listener);return()=>ipcRenderer.removeListener('thread:update',listener);},
   onNavigateThread:callback=>{const listener=(_event,value)=>callback(value);ipcRenderer.on('thread:navigate',listener);return()=>ipcRenderer.removeListener('thread:navigate',listener);},
   onTerminal:callback=>{const listener=(_event,value)=>callback(value);ipcRenderer.on('terminal:event',listener);return()=>ipcRenderer.removeListener('terminal:event',listener);},
+  onMaximized:callback=>{const listener=(_event,value)=>callback(value);ipcRenderer.on('window:maximized',listener);return()=>ipcRenderer.removeListener('window:maximized',listener);},
   onStorageError:callback=>{const listener=(_event,value)=>callback(value);ipcRenderer.on('storage:error',listener);return()=>ipcRenderer.removeListener('storage:error',listener);}
 });

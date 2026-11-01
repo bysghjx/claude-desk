@@ -151,7 +151,12 @@ if(primaryInstance)app.whenReady().then(async () => {
   const THEMES=new Set(['dark','light','system']);
   const windowBackground=()=>nativeTheme.shouldUseDarkColors?'#151515':'#ffffff';
   const applyTheme=theme=>{nativeTheme.themeSource=THEMES.has(theme)?theme:'dark';};
-  nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed())w.setBackgroundColor(windowBackground());});
+  // Window material (Windows 11 22H2+): mica or acrylic drawn by the system behind a transparent page.
+  const MATERIALS=new Set(['mica','acrylic','none']);
+  const materialSupported=process.platform==='win32'&&Number(os.release().split('.')[2])>=22621;
+  const materialOf=()=>{const m=engine?.store.state.settings.material;return materialSupported?(MATERIALS.has(m)?m:'mica'):'none';};
+  const applyMaterial=w=>{if(!w||w.isDestroyed())return;const m=materialOf();if(materialSupported)w.setBackgroundMaterial(m);w.setBackgroundColor(m==='none'?windowBackground():'#00000000');};
+  nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed()){if(w===win)applyMaterial(w);else w.setBackgroundColor(windowBackground());}});
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
@@ -179,7 +184,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   engine.on('thread', t => { if(!win?.isDestroyed()) win?.webContents.send('thread:update', forRenderer(t)); agentWindows.refresh(t.id); for(const notice of notifications.update(t))showNotice(notice); });
   handle('thread:get', id => { sentRevs.delete(id); return threadOut(id); });
   handle('agent:open',(threadId,agentId)=>agentWindows.open(threadId,agentId));
-  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;return({ ...snapshot, provider: providerInfo(), version: app.getVersion(), recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
+  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;return({ ...snapshot, material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
   const extensionCwd=id=>id?project(id).path:undefined;
   async function extensionList(id,refresh=false){
     const cwd=extensionCwd(id);let catalog={installed:[],available:[]},warning='';
@@ -274,6 +279,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     const settings = engine.store.state.settings;
     for(const key of ['model','effort','mode']) if(typeof value[key] === 'string') settings[key] = value[key].slice(0,150);
     if(THEMES.has(value.theme)){ settings.theme = value.theme; applyTheme(value.theme); }
+    if(MATERIALS.has(value.material)){ settings.material = value.material; applyMaterial(win); }
     if(typeof value.notifications === 'boolean') settings.notifications = value.notifications;
     if(['local','worktree'].includes(value.location)) settings.location = value.location;
     if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;
@@ -320,9 +326,12 @@ if(primaryInstance)app.whenReady().then(async () => {
   });
   handle('window', action => { if(action === 'min') win.minimize(); if(action === 'max') win.isMaximized()?win.unmaximize():win.maximize(); if(action === 'close') win.close(); });
   const icon = nativeImage.createFromPath(path.join(__dirname,'ui/icon.png'));
-  win = new BrowserWindow({ width: 1480, height: 970, minWidth: 1040, minHeight: 690, title: 'Claude Desk', backgroundColor:windowBackground(), autoHideMenuBar:true, icon, titleBarStyle:'hidden', webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true} });
+  win = new BrowserWindow({ width: 1480, height: 970, minWidth: 1040, minHeight: 690, title: 'Claude Desk', backgroundColor:materialOf()==='none'?windowBackground():'#00000000', ...(materialOf()!=='none'?{backgroundMaterial:materialOf()}:{}), autoHideMenuBar:true, icon, titleBarStyle:'hidden', webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true} });
   win.on('closed',()=>{agentWindows.close();terminals?.closeAll();});
   win.on('focus',()=>win.flashFrame(false));
+  // The title bar swaps its maximise / restore icon.
+  const sendMaximized=()=>{if(!win.isDestroyed())win.webContents.send('window:maximized',win.isMaximized());};
+  win.on('maximize',sendMaximized);win.on('unmaximize',sendMaximized);win.webContents.on('did-finish-load',sendMaximized);
   win.webContents.setWindowOpenHandler(() => ({action:'deny'}));
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc,_permission,cb) => cb(false));

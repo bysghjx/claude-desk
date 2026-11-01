@@ -30,6 +30,18 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
     await api('settings', { theme });
   }
 
+  // Window material (Windows 11): mica or acrylic shows through the sidebar and rail; 纯色 keeps solid colours.
+  const MATERIAL_NOTES = { mica: '透出桌面壁纸的颜色，失去焦点时变为纯色', acrylic: '更透，能隐约看到背后的窗口', none: '' };
+  function applyMaterial() {
+    const supported = store.state.materialSupported, chosen = store.state.settings?.material || 'mica', active = supported ? store.state.material : 'none';
+    if (active && active !== 'none') document.documentElement.dataset.material = active; else delete document.documentElement.dataset.material;
+    for (const button of $$('[data-material-choice]')) { const on = button.dataset.materialChoice === (supported ? chosen : 'none'); button.classList.toggle('selected', on); button.setAttribute('aria-checked', String(on)); button.disabled = !supported; }
+    setText($('#material-note'), supported ? MATERIAL_NOTES[chosen] || '' : '需要 Windows 11');
+  }
+  async function setMaterial(material) {
+    store.state.settings = { ...store.state.settings, material }; store.state.material = material; applyMaterial();
+    await api('settings', { material });
+  }
   // Accent colour for buttons, toggles, links and highlights; none keeps the neutral look.
   const ACCENTS = { '': '默认', orange: '橙', blue: '蓝', green: '绿', purple: '紫', pink: '粉', yellow: '黄' };
   function applyAccent() {
@@ -67,6 +79,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#thread-title').addEventListener('dblclick', () => { if (store.current()) sidebar.startRename(store.current().id); });
   $('#export').addEventListener('click', guarded(toast, async () => { if (store.selected && await api('export', store.selected)) toast('对话已导出'); }));
   $('#settings').addEventListener('click', guarded(toast, openSettings));
+  for (const button of $$('[data-material-choice]')) button.addEventListener('click', guarded(toast, () => setMaterial(button.dataset.materialChoice)));
   for (const button of $$('[data-accent-choice]')) button.addEventListener('click', guarded(toast, () => setAccent(button.dataset.accentChoice)));
   for (const button of $$('[data-theme-choice]')) button.addEventListener('click', guarded(toast, () => setTheme(button.dataset.themeChoice)));
   $('#notify-toggle').addEventListener('change', guarded(toast, () => setNotifications($('#notify-toggle').checked)));
@@ -81,6 +94,10 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
     try { const models = await composer.refreshModels(); $('#settings-result').textContent = `已读取 ${models.length} 个模型。选择器已更新。`; } finally { button.disabled = false; }
   }));
   for (const button of $$('[data-window]')) button.addEventListener('click', () => api('window', button.dataset.window));
+  window.desk.onMaximized?.(maximized => {
+    document.documentElement.classList.toggle('maximized', maximized);
+    const button = $('[data-window="max"]'), label = maximized ? '向下还原' : '最大化'; button.title = label; button.setAttribute('aria-label', label);
+  });
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && event.key.toLowerCase() === 'n') { event.preventDefault(); actions.showHome(); }
     if (event.key === 'Escape' && $('#settings-dialog').open) $('#settings-dialog').close();
@@ -88,6 +105,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
 
   for (const event of ['select', 'threads', 'load']) store.on(event, render);
   store.on('load', applyAccent);
+  store.on('load', applyMaterial);
   store.on('thread', thread => { if (thread.id === store.selected) header(); });
   return { render };
 }
