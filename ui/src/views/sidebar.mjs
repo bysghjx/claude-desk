@@ -1,0 +1,105 @@
+// Sidebar tree: pinned conversations, then projects with their conversations.
+// Re-renders only when something it displays changed, not on every streaming event.
+import { $, escape } from '../core/dom.mjs';
+import { STATUS_LABELS, isActive, shortAgo, statusClass } from '../core/format.mjs';
+import { guarded } from '../core/ui.mjs';
+
+const VISIBLE_LIMIT = 6;
+
+export function createSidebar({ store, actions, toast }) {
+  const list = $('#threads'), menu = $('#thread-menu');
+  const expanded = new Set();
+  const collapsed = new Set((() => { try { return JSON.parse(localStorage.getItem('collapsedProjects') || '[]'); } catch { return []; } })());
+  let renaming = null, signature = '';
+
+  function row(t) {
+    const editing = renaming === t.id;
+    return `<div class="thread-row ${t.id === store.selected ? 'selected' : ''} ${t.pinned ? 'pinned' : ''}"><button class="thread-open" data-thread="${escape(t.id)}" title="${escape(t.title)}"><span class="dot ${statusClass(t)}"></span><span class="thread-copy">${editing ? `<input class="thread-rename" data-rename-input="${escape(t.id)}" value="${escape(t.title)}" maxlength="80" aria-label="新的会话名称">` : `<strong>${escape(t.title)}</strong>`}</span>${t.queue?.length ? `<span class="thread-queue" title="排队中的消息">${t.queue.length}</span>` : ''}<span class="thread-time">${isActive(t) ? STATUS_LABELS[t.status] || '' : shortAgo(t.updatedAt)}</span></button><button class="thread-more" data-thread-menu="${escape(t.id)}" title="更多操作" aria-label="会话 ${escape(t.title)} 的更多操作">⋯</button></div>`;
+  }
+
+  function treeHtml() {
+    const query = $('#search').value.trim().toLowerCase(), archivedView = store.showArchived;
+    const matches = t => !query || `${t.title} ${t.turns.map(x => x.user).join(' ')}`.toLowerCase().includes(query);
+    const visible = store.state.threads.filter(t => Boolean(t.archived) === archivedView && matches(t)).sort((a, b) => b.updatedAt - a.updatedAt);
+    const pinned = archivedView ? [] : visible.filter(t => t.pinned);
+    const groups = store.state.projects.map(p => ({ p, threads: visible.filter(t => t.projectId === p.id && !pinned.includes(t)) }))
+      .filter(g => g.threads.length || (!query && !archivedView))
+      .sort((a, b) => (b.threads[0]?.updatedAt || 0) - (a.threads[0]?.updatedAt || 0));
+    const orphans = visible.filter(t => !pinned.includes(t) && !store.state.projects.some(p => p.id === t.projectId));
+    const selectedProject = !store.current() && store.currentProject()?.id;
+    let html = pinned.length ? `<div class="tree-section">置顶</div>${pinned.map(row).join('')}` : '';
+    for (const { p, threads } of groups) {
+      const folded = !query && collapsed.has(p.id), limit = expanded.has(p.id) || query ? threads.length : VISIBLE_LIMIT;
+      html += `<div class="project-group ${selectedProject === p.id ? 'selected' : ''}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder">▱</span><span class="project-name">${escape(p.name)}</span></button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
+      if (!folded) html += threads.length ? threads.slice(0, limit).map(row).join('') + (threads.length > limit ? `<button class="tree-more" data-expand-project="${escape(p.id)}">显示其余 ${threads.length - limit} 个</button>` : '') : `<div class="tree-empty">${archivedView ? '没有归档的会话' : '还没有会话'}</div>`;
+    }
+    if (orphans.length) html += `<div class="tree-section">其他</div>${orphans.map(row).join('')}`;
+    if (html) return html;
+    if (!store.state.projects.length) return '<div class="no-project">添加文件夹，让 Claude 在你的项目里工作。</div>';
+    return `<div class="empty-list">${query ? '没有匹配的会话' : archivedView ? '没有归档的会话' : '还没有会话<br>从一个新问题开始。'}</div>`;
+  }
+
+  function render() {
+    const html = treeHtml();
+    const archived = store.state.threads.filter(t => t.archived).length;
+    $('#show-archived').textContent = store.showArchived ? '← 返回会话' : `已归档${archived ? ' · ' + archived : ''}`;
+    $('#show-archived').hidden = !archived && !store.showArchived;
+    // Keep an in-progress rename input (and its caret) intact.
+    if (html === signature || (renaming && list.querySelector('[data-rename-input]'))) return;
+    signature = html; list.innerHTML = html;
+    const input = list.querySelector('[data-rename-input]'); if (input) { input.focus(); input.select(); }
+  }
+
+  function closeMenu() { menu.hidden = true; menu.dataset.thread = ''; }
+  function openMenu(id, anchor) {
+    const t = store.thread(id); if (!t) return;
+    menu.innerHTML = `<button data-menu-action="rename">重命名</button><button data-menu-action="pin">${t.pinned ? '取消置顶' : '置顶'}</button><button data-menu-action="archive">${t.archived ? '取消归档' : '归档'}</button><div class="menu-line"></div><button data-menu-action="delete" class="danger">删除会话</button>`;
+    menu.dataset.thread = id; menu.hidden = false;
+    const rect = anchor.getBoundingClientRect();
+    menu.style.left = Math.min(rect.right - 4, window.innerWidth - 180) + 'px'; menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 170) + 'px';
+    menu.querySelector('button').focus();
+  }
+  function startRename(id) { closeMenu(); renaming = id; signature = ''; render(); }
+  async function finishRename(id, value) {
+    if (renaming !== id) return;
+    renaming = null; signature = ''; render();
+    await actions.rename(id, value);
+  }
+  function cancelRename() { renaming = null; signature = ''; render(); }
+
+  menu.addEventListener('click', guarded(toast, async event => {
+    const action = event.target.closest('[data-menu-action]')?.dataset.menuAction, id = menu.dataset.thread;
+    if (!action || !id) return;
+    const t = store.thread(id); closeMenu(); if (!t) return;
+    if (action === 'rename') return startRename(id);
+    if (action === 'pin') return actions.setPinned(id, !t.pinned);
+    if (action === 'archive') return actions.setArchived(id, !t.archived);
+    if (action === 'delete') return actions.deleteThread(id);
+  }));
+  document.addEventListener('mousedown', event => { if (!menu.hidden && !event.target.closest?.('#thread-menu,[data-thread-menu]')) closeMenu(); });
+  list.addEventListener('keydown', event => {
+    const input = event.target.closest?.('[data-rename-input]'); if (!input) return;
+    if (event.key === 'Enter') { event.preventDefault(); finishRename(input.dataset.renameInput, input.value).catch(e => toast(e.message)); }
+    if (event.key === 'Escape') { event.preventDefault(); cancelRename(); }
+  });
+  list.addEventListener('focusout', event => { const input = event.target.closest?.('[data-rename-input]'); if (input) finishRename(input.dataset.renameInput, input.value).catch(e => toast(e.message)); });
+  list.addEventListener('click', guarded(toast, async event => {
+    const target = event.target;
+    const remove = target.closest('[data-delete-thread]'); if (remove) return actions.deleteThread(remove.dataset.deleteThread);
+    if (target.closest('[data-rename-input]')) return;
+    const more = target.closest('[data-thread-menu]');
+    if (more) { event.stopPropagation(); return menu.dataset.thread === more.dataset.threadMenu && !menu.hidden ? closeMenu() : openMenu(more.dataset.threadMenu, more); }
+    const open = target.closest('[data-thread]'); if (open) return actions.selectThread(open.dataset.thread);
+    const fresh = target.closest('[data-new-in-project]'); if (fresh) { collapsed.delete(fresh.dataset.newInProject); return actions.selectProject(fresh.dataset.newInProject); }
+    const expand = target.closest('[data-expand-project]'); if (expand) { expanded.add(expand.dataset.expandProject); return render(); }
+    const toggle = target.closest('[data-project-toggle]');
+    if (toggle) { const id = toggle.dataset.projectToggle; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); localStorage.setItem('collapsedProjects', JSON.stringify([...collapsed])); render(); }
+  }));
+  $('#search').addEventListener('input', render);
+  $('#show-archived').addEventListener('click', () => { store.showArchived = !store.showArchived; render(); });
+  $('#add-project').addEventListener('click', guarded(toast, actions.addProject));
+
+  for (const event of ['thread', 'threads', 'select', 'load']) store.on(event, render);
+  setInterval(render, 30000);
+  return { render, startRename };
+}

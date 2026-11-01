@@ -1,0 +1,30 @@
+/* Surfaces follow light-theme elevation: white workspace, slightly grey sidebar and rail. */
+:root{--bg:#ffffff;--sidebar:#f6f6f5;--panel:#fafaf9;--raised:#f0f0ee;--line:#e4e4e1;--text:#1d1d1b;--muted:#6f6f6a;--faint:#a3a39e;--accent:#b4643d}
+body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
+.sidebar{background:#f6f6f5;border-right-color:#e7e7e4}
+.app-rail{background:#eeeeec;border-right-color:#e2e2df}
+.rail-button{color:#6b6b66}
+.rail-button:hover{background:#00000009;color:#1d1d1b}
+.rail-button.active{background:#0000000f;color:#111}
+.rail-button[data-tip]:hover::after,.rail-button[data-tip]:focus-visible::after{background:#1f1f1e;border-color:#1f1f1e;color:#f4f4f2}
+.composer{background:#ffffff;border-color:#dcdcd8;box-shadow:0 2px 14px #0000000f}
+.user-message{background:#f1f1ef;border-color:#ececea;color:#1d1d1b}
+.inspector,.context-panel{background:#ffffff;border-color:#e3e3e0;box-shadow:0 12px 40px #0000001a}
+.send-button{background:#1d1d1b;color:#ffffff}
+.send-button.stop{background:#1d1d1b;color:#ffffff}
+.thread-tree .thread-row.selected{background:#0000000c}
+.thread-tree .thread-row:hover{background:#00000007}
+.step-body pre,.turn-changes,.review-commit{background:#f7f7f5;border-color:#e6e6e3}
+.step-target{background:#0000000a;color:#2b2b28}
+.diff-add{background:#e3f3e6;color:#1f6b33}
+.diff-remove{background:#fbe5e3;color:#9c2b22}
+.markdown pre{background:#f5f5f3}
+.markdown code{background:#00000009}
+.toast{background:#1f1f1e;color:#f4f4f2;border-color:#1f1f1e}
+dialog::backdrop{background:#0000002e}
+.theme-options{background:#efefec;border-color:#e1e1de}
+.theme-options button.selected{background:#ffffff;color:#1d1d1b;box-shadow:0 1px 3px #0000001f,inset 0 0 0 1px #0000000a}
+.switch{background:#d4d4cf}
+.switch::after{background:#ffffff;box-shadow:0 1px 2px #00000033}
+.switch-row input:checked+.switch{background:#c4552f}
+.thread-time,.tree-empty{color:#85857f}

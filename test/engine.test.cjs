@@ -1,0 +1,225 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const os=require('node:os');
+const path=require('node:path');
+const {Engine,JsonStore,InputQueue}=require('../engine.cjs');
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const scratch=path.resolve(__dirname,'../../../work/unit-tests');fs.mkdirSync(scratch,{recursive:true});
+function setup(query){const dir=fs.mkdtempSync(path.join(scratch,'claude-desk-unit-'));const store=new JsonStore(path.join(dir,'state.json'));const engine=new Engine({query,store,cliPath:'fake-cli'});const p=engine.addProject(dir);return{engine,t:engine.create(p.id),dir,store};}
+function fakeSdk(){let count=0;const messages=[];const outputs=new InputQueue();const contexts=[];
+  const query=({prompt,options})=>{count++;contexts.push(options);(async()=>{for await(const input of prompt){messages.push(input);outputs.push({type:'system',subtype:'init',session_id:'cli-id'});}})();return{[Symbol.asyncIterator]:()=>outputs,close:()=>outputs.close()};};
+  return{query,outputs,messages,contexts,get count(){return count;}};
+}
+async function complete(sdk,text='OK'){sdk.outputs.push({type:'assistant',uuid:String(Math.random()),message:{content:[{type:'text',text}]}});sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:text,usage:{output_tokens:2},total_cost_usd:0.001});await tick();}
+test('two turns retain one live CLI and never depend on resume IDs',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();await complete(sdk,'remembered');await engine.send(t.id,'second');await tick();await complete(sdk,'still remembered');assert.equal(sdk.count,1);assert.equal(sdk.messages.length,2);assert.equal(engine.thread(t.id).turns[1].answer,'still remembered');assert.equal(sdk.contexts[0].persistSession,false);assert.equal(sdk.contexts[0].resume,undefined);await engine.shutdown();});
+test('error result with success subtype reports errors instead of displaying Error: success',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();sdk.outputs.push({type:'result',subtype:'success',is_error:true,errors:['HTTP 400: adaptive thinking required']});await tick();assert.equal(t.status,'error');assert.match(t.error,/adaptive thinking/);assert.notEqual(t.error,'success');await engine.shutdown();});
+test('stop rejects pending permissions and next send recreates process with saved context',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();const permission=sdk.contexts[0].canUseTool('Write',{file_path:'test.txt'},{toolUseID:'tool-1'});assert.equal(t.status,'approval');assert.equal(t.turns[0].approval.name,'Write');await engine.stop(t.id);assert.equal((await permission).behavior,'deny');assert.equal(t.status,'stopped');assert.equal(engine.pending.size,0);await engine.shutdown();});
+test('permission cannot be answered by a different thread and approved input is unchanged',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();const input={command:'echo test'};const promise=sdk.contexts[0].canUseTool('Bash',input,{toolUseID:'permission-1'});assert.equal(engine.approve('other-thread','permission-1',true),false);assert.equal(engine.approve(t.id,'permission-1',true),true);assert.deepEqual(await promise,{behavior:'allow',updatedInput:input});await engine.shutdown();});
+test('restart restores local history and labels context reconstruction',async()=>{const sdk=fakeSdk();const{engine,t,store}=setup(sdk.query);await engine.send(t.id,'my code is TEST-42');await tick();await complete(sdk,'remembered');await engine.shutdown();const next=fakeSdk();const restarted=new Engine({query:next.query,store:new JsonStore(store.file),cliPath:'fake'});await restarted.send(t.id,'what was my code?');await tick();assert.match(next.messages[0].message.content,/TEST-42/);assert.equal(restarted.thread(t.id).turns.at(-1).contextRestored,true);await restarted.shutdown();});
+test('partial text does not duplicate when complete assistant message arrives',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'hello');await tick();sdk.outputs.push({type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'Hello'}}});await complete(sdk,'Hello');assert.equal(t.turns[0].answer,'Hello');await engine.shutdown();});
+test('a running turn rejects an accidental second send',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await assert.rejects(()=>engine.send(t.id,'duplicate'),/正在运行/);await engine.shutdown();});
+test('all six permission modes reach the CLI and bypass flag requires explicit full-access selection',async()=>{for(const mode of ['default','acceptEdits','plan','auto','dontAsk','bypassPermissions']){const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'configuration test',{mode});await tick();assert.equal(sdk.contexts[0].permissionMode,mode);assert.equal(sdk.contexts[0].allowDangerouslySkipPermissions,mode==='bypassPermissions');await engine.shutdown();}});
+test('interrupted state is marked accurately after application restart',()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'claude-desk-restart-'));const file=path.join(dir,'state.json');fs.writeFileSync(file,JSON.stringify({threads:[{status:'tool',turns:[{tools:[{status:'running'}]}]}],projects:[],settings:{}}));const store=new JsonStore(file);assert.equal(store.state.threads[0].status,'interrupted');assert.equal(store.state.threads[0].turns[0].tools[0].status,'interrupted');});
+test('deleting one turn rebuilds CLI context without it and preserves later turns after restart',async()=>{
+  const sessions=[];const query=args=>{const sdk=fakeSdk();sessions.push(sdk);return sdk.query(args);};
+  const {engine,t,store}=setup(query);
+  await engine.send(t.id,'REMOVE_SECRET_42');await tick();await complete(sessions[0],'remove answer');
+  await engine.send(t.id,'KEEP_MESSAGE_17');await tick();await complete(sessions[0],'keep answer');
+  const removed=t.turns[0].id;
+  await engine.deleteTurn(t.id,removed);
+  assert.equal(t.turns.length,1);assert.equal(engine.runs.size,0);
+  assert.equal(new JsonStore(store.file).state.threads[0].turns.length,1);
+  assert.doesNotMatch(fs.readFileSync(store.file+'.bak','utf8'),/REMOVE_SECRET_42/);
+  await engine.send(t.id,'continue');await tick();
+  assert.equal(sessions.length,2);assert.match(sessions[1].messages[0].message.content,/KEEP_MESSAGE_17/);
+  assert.doesNotMatch(sessions[1].messages[0].message.content,/REMOVE_SECRET_42|remove answer/);
+  await engine.shutdown();
+});
+test('deleting an active thread denies pending tools, clears draft and recovery backup, and keeps projects',async()=>{
+  const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);
+  const other=engine.create(t.projectId);store.state.ui.selectedThread=t.id;store.state.ui.drafts[t.id]={text:'draft'};
+  await engine.send(t.id,'delete this active conversation');await tick();
+  const approval=sdk.contexts[0].canUseTool('Write',{file_path:'test.txt'},{toolUseID:'delete-approval'});
+  await engine.deleteThread(t.id);
+  assert.equal((await approval).behavior,'deny');assert.equal(engine.pending.size,0);assert.equal(engine.runs.size,0);
+  assert.equal(store.state.threads.length,1);assert.equal(store.state.threads[0].id,other.id);
+  assert.equal(store.state.projects.length,1);assert.equal(store.state.ui.selectedThread,null);assert.equal(store.state.ui.drafts[t.id],undefined);
+  assert.doesNotMatch(fs.readFileSync(store.file+'.bak','utf8'),/delete this active conversation/);
+  const restarted=new JsonStore(store.file);assert.equal(restarted.state.threads.length,1);
+  await engine.shutdown();
+});
+test('active turn deletion and unknown turn deletion leave history intact',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  await engine.send(t.id,'keep');await tick();
+  await assert.rejects(()=>engine.deleteTurn(t.id,t.turns[0].id),/先停止/);
+  await complete(sdk);await assert.rejects(()=>engine.deleteTurn(t.id,'missing'),/不存在/);
+  assert.equal(t.turns.length,1);
+  await engine.deleteTurn(t.id,t.turns[0].id);assert.equal(t.turns.length,0);assert.equal(t.status,'idle');
+  await engine.shutdown();
+});
+test('context meter uses the latest main response with cache tokens, not cumulative result totals',async()=>{
+  const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);
+  await engine.send(t.id,'first');await tick();
+  sdk.outputs.push({type:'assistant',uuid:'usage-1',message:{model:t.model,content:[{type:'text',text:'OK'}],usage:{input_tokens:100,cache_read_input_tokens:800,cache_creation_input_tokens:50,output_tokens:50}}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,usage:{input_tokens:99999,output_tokens:88888},total_cost_usd:0.2,modelUsage:{[t.model]:{contextWindow:200000,inputTokens:999999}}});await tick();
+  assert.equal(t.contextUsage.usedTokens,1000);assert.equal(t.contextUsage.contextWindow,200000);
+  await engine.send(t.id,'second');await tick();
+  sdk.outputs.push({type:'assistant',uuid:'usage-2',message:{model:t.model,content:[{type:'text',text:'next'}],usage:{input_tokens:1500,output_tokens:100}}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'subagent',uuid:'usage-sub',message:{model:'other',content:[],usage:{input_tokens:50000,output_tokens:1}}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,usage:{input_tokens:999999,output_tokens:200},total_cost_usd:0.3,modelUsage:{[t.model]:{contextWindow:200000}}});await tick();
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'usage-agent',tool_use_id:'subagent',status:'completed',summary:'finished'});await tick();
+  assert.equal(t.contextUsage.usedTokens,1600);assert.equal(t.contextUsage.model,t.model);
+  assert.ok(Math.abs(t.turns[1].usage.cost-0.1)<0.00001);
+  assert.equal(new JsonStore(store.file).state.threads[0].contextUsage.usedTokens,1600);
+  await engine.deleteTurn(t.id,t.turns[0].id);assert.equal(t.contextUsage,null);
+  await engine.shutdown();
+});
+test('streamed usage tracks the final response and a missing limit stays unknown',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'test');await tick();
+  sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{model:t.model,usage:{input_tokens:100,cache_read_input_tokens:200,cache_creation_input_tokens:300,output_tokens:0}}}});
+  sdk.outputs.push({type:'stream_event',event:{type:'message_delta',usage:{output_tokens:40}}});
+  await complete(sdk);assert.equal(t.contextUsage.usedTokens,640);assert.equal(t.contextUsage.contextWindow,null);
+  await engine.shutdown();
+});
+test('aggregate result usage alone cannot fabricate context occupancy',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'test');await tick();
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,usage:{input_tokens:5000,output_tokens:200},modelUsage:{[t.model]:{contextWindow:200000,inputTokens:5000}}});await tick();
+  assert.equal(t.contextUsage,null);await engine.shutdown();
+});
+test('parallel child streams and nested tools stay separate from the main answer',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'delegate');await tick();
+  sdk.outputs.push({type:'assistant',message:{content:[{type:'tool_use',id:'spawn-1',name:'Agent',input:{description:'Review',subagent_type:'Explore'}}]}});
+  sdk.outputs.push({type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'Main answer'}}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:'spawn-1',event:{type:'content_block_delta',delta:{type:'text_delta',text:'Child answer'}}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn-1',uuid:'child-final',message:{content:[{type:'text',text:'Child answer'},{type:'tool_use',id:'nested',name:'Agent',input:{description:'Nested review'}}]}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'nested',message:{content:[{type:'text',text:'Nested answer'}]}});
+  await complete(sdk,'Main answer');
+  assert.equal(t.turns[0].answer,'Main answer');
+  const agents=t.turns[0].subagents;assert.equal(agents.length,2);
+  assert.equal(agents[0].answer,'Child answer');assert.equal(agents[1].answer,'Nested answer');assert.equal(agents[1].parentId,'spawn-1');
+  await engine.stop(t.id);assert.ok(agents.every(a=>a.status==='stopped'));assert.equal(t.turns[0].status,'done');await engine.shutdown();
+});
+test('main completion does not hide background agents, and late progress cannot resurrect completed runs',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'background');await tick();
+  sdk.outputs.push({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'agent-a',tool_use_id:'spawn-a',run_id:'002',description:'Investigate',is_backgrounded:true});
+  await complete(sdk,'Main complete');assert.equal(t.status,'tool');assert.equal(t.turns[0].status,'done');
+  sdk.outputs.push({type:'system',subtype:'task_progress',task_id:'agent-a',run_id:'002',description:'Investigate',usage:{total_tokens:123,tool_uses:2,duration_ms:1000},summary:'Inspecting files'});await tick();
+  const agent=t.turns[0].subagents[0];assert.equal(agent.usage.totalTokens,123);assert.equal(agent.summary,'Inspecting files');
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'agent-a',run_id:'001',status:'failed',summary:'stale'});await tick();assert.equal(agent.status,'running');
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'agent-a',run_id:'002',status:'completed',summary:'Review complete'});await tick();assert.equal(t.status,'done');assert.equal(agent.status,'done');
+  sdk.outputs.push({type:'system',subtype:'task_progress',task_id:'agent-a',run_id:'002',description:'Investigate',usage:{total_tokens:124,tool_uses:2,duration_ms:1001}});await tick();assert.equal(agent.status,'done');assert.equal(t.status,'done');
+  await engine.shutdown();
+});
+test('parallel agent approval requests retain their own source and resolve independently',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'parallel');await tick();
+  for(const id of ['a','b'])sdk.outputs.push({type:'system',subtype:'task_started',task_type:'local_agent',task_id:id,description:'Worker '+id});await tick();
+  const first=sdk.contexts[0].canUseTool('Write',{file_path:'a.txt'},{toolUseID:'request-a',agentID:'a'});
+  const second=sdk.contexts[0].canUseTool('Write',{file_path:'b.txt'},{toolUseID:'request-b',agentID:'b'});
+  assert.equal(t.turns[0].approvals.length,2);assert.equal(t.turns[0].approval.agentName,'Worker a');
+  engine.approve(t.id,'request-a',true);assert.equal((await first).behavior,'allow');assert.equal(t.status,'approval');
+  assert.equal(t.turns[0].approval.agentName,'Worker b');
+  await engine.stop(t.id);assert.equal((await second).behavior,'deny');assert.equal(engine.pending.size,0);assert.equal(t.turns[0].approval,undefined);
+  await engine.shutdown();
+});
+test('background task snapshots replace membership and ignore shell and ambient activity',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'snapshot');await tick();
+  sdk.outputs.push({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'agent-1',task_type:'local_agent',description:'Work'},{task_id:'watcher',task_type:'local_agent',description:'Watch',ambient:true},{task_id:'shell',task_type:'local_bash',description:'Shell'}]});
+  await complete(sdk);assert.equal(t.status,'tool');assert.equal(t.turns[0].subagents.length,2);
+  sdk.outputs.push({type:'system',subtype:'background_tasks_changed',tasks:[]});await tick();assert.equal(t.status,'done');assert.equal(t.turns[0].subagents[0].status,'ended');
+  await engine.shutdown();
+});
+test('restarting restores child history and marks live agents and their tools interrupted',async()=>{
+  const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);await engine.send(t.id,'persist');await tick();
+  sdk.outputs.push({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'persist-agent',tool_use_id:'persist-tool',description:'Persisted worker'});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'persist-tool',message:{content:[{type:'text',text:'Saved child output'},{type:'tool_use',id:'read',name:'Read',input:{file_path:'demo'}}]}});await tick();store.save();
+  const restored=new JsonStore(store.file).state.threads[0];assert.equal(restored.subagents,undefined);
+  assert.equal(restored.turns[0].subagents[0].status,'interrupted');assert.equal(restored.turns[0].subagents[0].answer,'Saved child output');assert.equal(restored.turns[0].subagents[0].tools[0].status,'interrupted');
+  await engine.shutdown();
+});
+test('permission-first task identities merge with streamed tool identities without duplicating output',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'identity');await tick();
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:'spawn-x',event:{type:'content_block_delta',delta:{type:'text_delta',text:'Child text'}}});await tick();
+  const pending=sdk.contexts[0].canUseTool('Write',{file_path:'test.txt'},{toolUseID:'permission-x',agentID:'task-x'});
+  sdk.outputs.push({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'task-x',tool_use_id:'spawn-x',description:'One worker'});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn-x',message:{content:[{type:'text',text:'Child text'}]}});await tick();
+  assert.equal(t.turns[0].subagents.length,1);assert.equal(t.turns[0].subagents[0].answer,'Child text');
+  engine.approve(t.id,'permission-x',false);assert.equal((await pending).behavior,'deny');
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'task-x',status:'completed',summary:'Finished'});await complete(sdk);
+  assert.equal(t.status,'done');await engine.shutdown();
+});
+test('changed skill and plugin configuration recreates the next CLI and only passes SDK options',async()=>{
+  const sessions=[];const {engine,t}=setup(args=>{const sdk=fakeSdk();sessions.push(sdk);return sdk.query(args);});
+  let revision=1;engine.sessionOptions=()=>({revision,skills:['desk-user-skills:review'],plugins:[{type:'local',path:'C:/local-skill-library'}]});
+  await engine.send(t.id,'first');await tick();await complete(sessions[0]);
+  assert.deepEqual(sessions[0].contexts[0].skills,['desk-user-skills:review']);assert.equal(sessions[0].contexts[0].plugins[0].type,'local');assert.equal(sessions[0].contexts[0].revision,undefined);
+  revision++;await engine.send(t.id,'second');await tick();assert.equal(sessions.length,2);assert.equal(t.turns[1].contextRestored,true);
+  await engine.shutdown();
+});
+test('turn items keep commentary, tools and the final answer in the order they streamed',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'do it');await tick();
+  const stream=event=>sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event});
+  stream({type:'content_block_start',index:0,content_block:{type:'thinking'}});stream({type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'plan'}});
+  stream({type:'content_block_start',index:1,content_block:{type:'text'}});stream({type:'content_block_delta',index:1,delta:{type:'text_delta',text:'Checking files.'}});
+  sdk.outputs.push({type:'assistant',uuid:'a1',message:{content:[{type:'text',text:'Checking files.'},{type:'tool_use',id:'tool-1',name:'Bash',input:{command:'ls'}}]}});
+  sdk.outputs.push({type:'user',message:{content:[{type:'tool_result',tool_use_id:'tool-1',content:'a.txt'}]}});
+  await complete(sdk,'Done.');
+  assert.deepEqual(t.turns[0].items.map(i=>i.type==='tool'?'tool:'+i.id:i.type+':'+i.text),['thinking:plan','text:Checking files.','tool:tool-1','text:Done.']);
+  assert.equal(t.turns[0].answer,'Checking files.\n\nDone.');
+  await engine.shutdown();
+});
+test('messages queued during a turn are sent after it finishes and kept after an error',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();
+  engine.enqueue(t.id,'second');engine.enqueue(t.id,'third');assert.equal(t.queue.length,2);
+  assert.throws(()=>engine.enqueue(t.id,'  '),/请输入消息/);
+  await complete(sdk,'one');await tick();await tick();
+  assert.equal(t.turns.length,2);assert.equal(t.turns[1].user,'second');assert.deepEqual(t.queue.map(q=>q.text),['third']);
+  sdk.outputs.push({type:'result',subtype:'error_during_execution',is_error:true,errors:['boom']});await tick();await tick();
+  assert.equal(t.status,'error');assert.equal(t.turns.length,2);assert.deepEqual(t.queue.map(q=>q.text),['third']);
+  await engine.sendQueued(t.id,t.queue[0].id);await tick();
+  assert.equal(t.turns.at(-1).user,'third');assert.equal(t.queue.length,0);
+  await engine.shutdown();
+});
+test('send now on a queued message stops the running turn first',async()=>{
+  const sessions=[];const {engine,t}=setup(args=>{const sdk=fakeSdk();sessions.push(sdk);return sdk.query(args);});await engine.send(t.id,'long task');await tick();
+  const queued=engine.enqueue(t.id,'urgent').queue[0];
+  await engine.sendQueued(t.id,queued.id);await tick();
+  assert.equal(sessions.length,2);assert.match(sessions[1].messages[0].message.content,/urgent/);
+  assert.equal(t.turns[0].status,'stopped');assert.equal(t.turns[1].user,'urgent');assert.equal(t.queue.length,0);
+  await engine.shutdown();
+});
+test('images are sent as content blocks, must live in the attachment folder and are removed with the thread',async()=>{
+  const sdk=fakeSdk();const dir=fs.mkdtempSync(path.join(scratch,'claude-desk-images-'));const attachments=path.join(dir,'attachments');fs.mkdirSync(attachments);
+  const engine=new Engine({query:sdk.query,store:new JsonStore(path.join(dir,'state.json')),cliPath:'fake',attachmentRoot:attachments});const t=engine.create(engine.addProject(dir).id);
+  const image=path.join(attachments,'a.png');fs.writeFileSync(image,Buffer.from('89504e470d0a1a0a','hex'));
+  await assert.rejects(()=>engine.send(t.id,'x',{images:[{path:path.join(dir,'state.json'),mediaType:'image/png'}]}),/图片附件无效/);
+  await assert.rejects(()=>engine.send(t.id,'x',{images:[{path:image,mediaType:'image/svg+xml'}]}),/图片附件无效/);
+  await engine.send(t.id,'',{images:[{id:'i1',name:'a.png',path:image,mediaType:'image/png',thumb:'data:image/jpeg;base64,AAAA'}]});await tick();
+  const content=sdk.messages[0].message.content;
+  assert.equal(content[0].type,'image');assert.equal(content[0].source.media_type,'image/png');assert.equal(content[0].source.data,fs.readFileSync(image).toString('base64'));
+  assert.equal(content[1].text,'请查看我附带的图片。');assert.equal(t.turns[0].images[0].name,'a.png');assert.equal(t.title,'图片');
+  await complete(sdk,'seen');await engine.deleteThread(t.id);assert.equal(fs.existsSync(image),false);
+  await engine.shutdown();
+});
+test('pinning, archiving and renaming persist and archiving unpins',async()=>{
+  const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);
+  engine.setMeta(t.id,{pinned:true,title:'  New name  '});assert.equal(t.pinned,true);assert.equal(t.title,'New name');
+  engine.setMeta(t.id,{archived:true});assert.equal(t.archived,true);assert.equal(t.pinned,false);
+  const reloaded=new JsonStore(store.file).state.threads[0];assert.equal(reloaded.archived,true);assert.equal(reloaded.title,'New name');
+  await engine.shutdown();
+});
+test('snapshots reuse settled turns and give live turns a new revision on every update',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);const seen=[];engine.on('thread',x=>seen.push(x));
+  await engine.send(t.id,'first');await tick();await complete(sdk,'one');
+  await engine.send(t.id,'second');await tick();
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'content_block_delta',index:0,delta:{type:'text_delta',text:'a'}}});await tick();
+  const a=engine.threadSnapshot(t),b=engine.threadSnapshot(t);
+  assert.equal(a.turns[0],b.turns[0]);assert.equal(a.turns[0].rev,b.turns[0].rev);
+  assert.notEqual(a.turns[1].rev,b.turns[1].rev);
+  a.turns[1].answer='mutated copy';assert.notEqual(t.turns[1].answer,'mutated copy');
+  await engine.deleteTurn(t.id,t.turns[0].id).catch(()=>{});
+  await complete(sdk,'two');const done=engine.threadSnapshot(t);assert.equal(done.turns.at(-1).status,'done');
+  assert.equal(engine.threadSnapshot(t).turns.at(-1),done.turns.at(-1));
+  assert.ok(seen.length>2&&seen.every(x=>x.turns.every(turn=>Number.isInteger(turn.rev))));
+  await engine.shutdown();
+});
