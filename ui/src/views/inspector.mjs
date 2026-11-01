@@ -27,15 +27,46 @@ export function agentCardsHtml(agents, { home, now = Date.now() }) {
 
 const diffLines = text => text.split('\n').map(line => `<span class="${line.startsWith('+') ? 'diff-add' : line.startsWith('-') ? 'diff-remove' : line.startsWith('@@') ? 'diff-hunk' : ''}">${escape(line)}\n</span>`).join('');
 
-export function createInspector({ store, actions, api, composer, toast, dock, review }) {
+// The bar above the file list for a conversation that runs in its own worktree.
+export function worktreeBarHtml(wt, state) {
+  const text = !state ? '正在读取状态…' : !state.exists ? '工作树已失效，可以移除' : state.dirty ? `${state.dirty} 个未提交的改动` : state.merged ? `已合并到 ${state.target}` : state.ahead ? `${state.ahead} 个提交待合并` : '还没有新的提交';
+  const canMerge = state?.exists && !state.dirty && state.ahead > 0 && !state.merged && state.target;
+  return `<div class="worktree-info"><strong>独立工作树</strong><span title="${escape(wt.path)}">${escape(wt.branch)} · 基于 ${escape(wt.base || wt.baseCommit.slice(0, 7))}</span><span class="worktree-state${state?.merged ? ' merged' : ''}">${text}</span></div><div class="worktree-actions"><button type="button" data-worktree="merge" ${canMerge ? '' : 'disabled'} title="${state?.dirty ? '先在下面提交工作树里的改动' : ''}">合并到 ${escape(state?.target || wt.base || '当前分支')}</button><button type="button" data-worktree="remove">移除</button></div>`;
+}
+
+export function createInspector({ store, actions, api, composer, toast, dock, review, confirm }) {
+  let worktreeState = null;
+  async function worktreeBar(workspace) {
+    const bar = $('#worktree-bar'), wt = workspace?.worktree;
+    bar.hidden = !wt; if (!wt) return;
+    setHtml(bar, worktreeBarHtml(wt, worktreeState?.id === workspace.id ? worktreeState.state : null));
+    try { const state = await api('worktree:status', workspace.id); worktreeState = { id: workspace.id, state }; if (store.workspace()?.id === workspace.id) setHtml(bar, worktreeBarHtml(wt, state)); } catch (e) { toast(e.message); }
+  }
+  $('#worktree-bar').addEventListener('click', guarded(toast, async event => {
+    const button = event.target.closest('[data-worktree]'), workspace = store.workspace(); if (!button || !workspace?.worktree) return;
+    const wt = workspace.worktree, state = worktreeState?.id === workspace.id ? worktreeState.state : await api('worktree:status', workspace.id);
+    if (button.dataset.worktree === 'merge') {
+      if (!await confirm({ title: `合并到 ${state.target}？`, description: `工作树分支 ${wt.branch} 上的 ${state.ahead} 个提交会以一个合并提交并入主目录当前的 ${state.target} 分支。有冲突时会自动取消，主目录不受影响。`, label: '合并', kind: 'neutral' })) return;
+      button.disabled = true;
+      const result = await api('worktree:merge', workspace.id); toast(`已把 ${result.commits} 个提交合并到 ${result.target}`);
+    } else {
+      const lost = state.exists && state.dirty, unmerged = state.ahead > 0 && !state.merged;
+      const description = (lost ? `工作树里有 ${state.dirty} 个未提交的改动，移除后会丢失。` : '') + (unmerged ? `分支 ${wt.branch} 上的提交还没合并，分支会保留，以后可以手动合并。` : '') + '移除后这个会话会在项目目录里继续。';
+      if (!await confirm({ title: '移除独立工作树？', description, preview: wt.path, label: lost ? '丢弃改动并移除' : '移除', kind: lost ? 'danger' : 'neutral' })) return;
+      const result = await api('worktree:remove', workspace.id, lost); await actions.apply(result.thread);
+      toast(result.branchKept ? `工作树已移除，分支 ${wt.branch} 已保留` : '工作树已移除');
+    }
+    worktreeState = null; await refreshFiles();
+  }));
   let generation = 0, lastProject = '', panelKey = '';
   const list = $('#file-list');
 
   async function refreshFiles() {
-    const project = store.currentProject(), current = ++generation;
+    const project = store.workspace(), current = ++generation;
+    worktreeBar(project);
     if (!project) {
       list.dataset.view = 'files';
-      setHtml(list, '<div class="empty-files"><span class="empty-icon">▱</span><strong>尚未选择项目</strong>选择项目后，在这里查看文件与改动。</div>');
+      setHtml(list, '<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>尚未选择项目</strong>选择项目后，在这里查看文件与改动。</div>');
       $('#branch').textContent = '本地项目'; $('#change-count').textContent = '0'; $('#diff-view').hidden = true; return;
     }
     try {
@@ -46,7 +77,7 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
       const files = (await api('project:files', project.id)).map(path => ({ path, status: '' }));
       if (current !== generation) return;
       list.dataset.view = 'files';
-      setHtml(list, files.length ? files.map(f => `<button class="file-row" data-file="${escape(f.path)}" title="${escape(f.path)}"><span class="file-icon">▧</span><span class="file-path">${escape(f.path.replaceAll('\\', '/'))}</span><span class="file-status"></span></button>`).join('') : '<div class="empty-files"><span class="empty-icon">▱</span><strong>没有文件</strong>这个文件夹里还没有可显示的文件。</div>');
+      setHtml(list, files.length ? files.map(f => `<button class="file-row" data-file="${escape(f.path)}" title="${escape(f.path)}"><span class="file-icon">▧</span><span class="file-path">${escape(f.path.replaceAll('\\', '/'))}</span><span class="file-status"></span></button>`).join('') : '<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>没有文件</strong>这个文件夹里还没有可显示的文件。</div>');
     } catch (e) { if (current === generation) setHtml(list, `<div class="empty-files">${escape(e.message)}</div>`); }
   }
 
@@ -77,12 +108,12 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
   $('#tab-changes').addEventListener('click', () => selectTab('changes'));
   $('#tab-files').addEventListener('click', () => selectTab('files'));
   $('#refresh-files').addEventListener('click', refreshFiles);
-  $('#open-folder').addEventListener('click', guarded(toast, () => store.currentProject() && api('project:open', store.currentProject().id)));
+  $('#open-folder').addEventListener('click', guarded(toast, () => store.workspace() && api('project:open', store.workspace().id)));
   $('#close-diff').addEventListener('click', () => { $('#diff-view').hidden = true; });
   list.addEventListener('click', guarded(toast, async event => {
     if (store.panelTab !== 'files') return;
     const file = event.target.closest('[data-file]'); if (!file) return;
-    const text = await api('project:diff', store.currentProject().id, file.dataset.file);
+    const text = await api('project:diff', store.workspace().id, file.dataset.file);
     $('#diff-title').textContent = file.dataset.file; $('#diff-content').innerHTML = diffLines(text); $('#diff-view').hidden = false;
   }));
   $('#agent-list').addEventListener('click', event => {

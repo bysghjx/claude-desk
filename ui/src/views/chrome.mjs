@@ -8,6 +8,8 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   function header() {
     setText($('#project-label'), store.currentProject()?.name || '工作空间');
     setText($('#thread-title'), store.current()?.title || '主页');
+    const wt = store.current()?.worktree, chip = $('#worktree-chip');
+    chip.hidden = !wt || wt.removed; if (wt && !wt.removed) { setText(chip.lastChild, wt.branch); chip.title = `独立工作树：${store.current().cwd}`; }
     $('#new-thread').classList.toggle('selected', !store.current());
     $('#export').disabled = !store.current()?.turns.length;
   }
@@ -28,6 +30,18 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
     await api('settings', { theme });
   }
 
+  // Accent colour for buttons, toggles, links and highlights; none keeps the neutral look.
+  const ACCENTS = { '': '默认', orange: '橙', blue: '蓝', green: '绿', purple: '紫', pink: '粉', yellow: '黄' };
+  function applyAccent() {
+    const accent = ACCENTS[store.state.settings?.accent] && store.state.settings.accent || '';
+    if (accent) document.documentElement.dataset.accent = accent; else delete document.documentElement.dataset.accent;
+    for (const button of $$('[data-accent-choice]')) { const on = button.dataset.accentChoice === accent; button.classList.toggle('selected', on); button.setAttribute('aria-checked', String(on)); }
+    setText($('#accent-name'), ACCENTS[accent]);
+  }
+  async function setAccent(accent) {
+    store.state.settings = { ...store.state.settings, accent }; applyAccent();
+    await api('settings', { accent });
+  }
   // Desktop notifications are on unless turned off.
   async function setNotifications(on) {
     store.state.settings = { ...store.state.settings, notifications: on };
@@ -53,6 +67,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#thread-title').addEventListener('dblclick', () => { if (store.current()) sidebar.startRename(store.current().id); });
   $('#export').addEventListener('click', guarded(toast, async () => { if (store.selected && await api('export', store.selected)) toast('对话已导出'); }));
   $('#settings').addEventListener('click', guarded(toast, openSettings));
+  for (const button of $$('[data-accent-choice]')) button.addEventListener('click', guarded(toast, () => setAccent(button.dataset.accentChoice)));
   for (const button of $$('[data-theme-choice]')) button.addEventListener('click', guarded(toast, () => setTheme(button.dataset.themeChoice)));
   $('#notify-toggle').addEventListener('change', guarded(toast, () => setNotifications($('#notify-toggle').checked)));
   $('#notify-test').addEventListener('click', guarded(toast, async () => { toast(await api('notify:test') ? '已发送测试通知，请看屏幕右下角' : '系统不支持桌面通知，或通知已被 Windows 关闭'); }));
@@ -72,6 +87,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   });
 
   for (const event of ['select', 'threads', 'load']) store.on(event, render);
+  store.on('load', applyAccent);
   store.on('thread', thread => { if (thread.id === store.selected) header(); });
   return { render };
 }

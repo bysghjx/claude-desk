@@ -4,7 +4,7 @@ const fs=require('node:fs');const path=require('node:path');
   const source=path.resolve(__dirname,'..');
   const staging=path.resolve(source,'../../work/desktop-package');
   const target=path.resolve(source,'../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
-  const results=await packager({dir:source,name:'ClaudeDesk',platform:'win32',arch:'x64',out:staging,overwrite:true,icon:path.join(source,'ui/icon.ico'),ignore:/^\/(?:test|scripts)(?:\/|$)/});
+  const results=await packager({dir:source,name:'ClaudeDesk',platform:'win32',arch:'x64',out:staging,overwrite:true,icon:path.join(source,'ui/icon.ico'),asar:{unpack:'**/node_modules/node-pty/**'},ignore:/^\/(?:test|scripts)(?:\/|$)/});
   if(process.argv.includes('--stage-only')){console.log('Staged application:',results[0]);return;}
   fs.mkdirSync(target,{recursive:true});
   for(const entry of fs.readdirSync(results[0]))fs.cpSync(path.join(results[0],entry),path.join(target,entry),{recursive:true,force:true});

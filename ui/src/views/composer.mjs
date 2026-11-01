@@ -124,7 +124,7 @@ export function createComposer({ store, api, toast, actions }) {
     if(token.kind==='command')items=commands.filter(c=>c.name.includes(query)||c.description.includes(query)).map(c=>({command:c,label:c.description,description:'Claude Desk 本地命令',icon:'/'}));
     if(token.kind==='thread')items=store.state.threads.filter(t=>t.id!==store.selected&&t.turns.length&&`${t.title} ${t.turns.map(x=>x.user).join(' ')}`.toLowerCase().includes(query)).sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,12).map(t=>({reference:{kind:'thread',id:t.id,label:t.title},label:t.title,description:`${store.state.projects.find(p=>p.id===t.projectId)?.name||'项目'} · ${t.turns.length} 轮对话`,icon:'@@'}));
     if(token.kind==='file'){
-      const p=store.currentProject();if(!p){hidePromptMenu();toast('请先选择一个项目文件夹');return;}
+      const p=store.workspace();if(!p){hidePromptMenu();toast('请先选择一个项目文件夹');return;}
       if(!filesCache||filesCache.projectId!==p.id){const files=await api('project:files',p.id);if(generation!==menuGeneration)return;filesCache={projectId:p.id,files};}
       items=filesCache.files.filter(file=>file.toLowerCase().includes(query)).slice(0,14).map(file=>({reference:{kind:'file',path:file,label:file},label:file.split(/[\\/]/).at(-1),description:file,icon:'@'}));
     }
@@ -220,10 +220,12 @@ export function createComposer({ store, api, toast, actions }) {
   function setText(text){$('#prompt').value=text;autosize();store.emit('composer');}
   const isEmpty=()=>!$('#prompt').value.trim()&&!images.length;
   // Enter sends (or queues while running); with an empty box the send button stops the run.
+  $('#composer').addEventListener('submit',event=>event.preventDefault());
   $('#composer').addEventListener('submit',guarded(toast,async event=>{event.preventDefault();if(store.running()&&isEmpty())await actions().stop();else await actions().sendMessage();}));
   $('#prompt').addEventListener('keydown',guarded(toast,async event=>{if(keydown(event))return;if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();await actions().sendMessage();}}));
   $('#prompt').addEventListener('input',()=>{autosize();input();store.emit('composer');});
-  return{capture,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,
+  function setMode(mode){if(modes.some(m=>m.id===mode)&&$('#mode').value!==mode){$('#mode').value=mode;optionChanged();}}
+  return{capture,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,
     focus:()=>$('#prompt').focus(),focusProject:()=>$('#home-project')?.focus(),
     initialize(){ready=true;syncPickers();renderModels();save();}};
 }

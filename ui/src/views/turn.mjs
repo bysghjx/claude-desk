@@ -10,7 +10,8 @@ function userHtml(turn) {
   const images = turn.images?.length ? `<div class="user-images">${turn.images.map(image => `<button type="button" class="user-image" data-open-image="${escape(image.id)}" data-image-turn="${escape(turn.id)}" title="${escape(image.name)}">${image.thumb ? `<img src="${escape(image.thumb)}" alt="${escape(image.name)}">` : `<span>${escape(image.name)}</span>`}</button>`).join('')}</div>` : '';
   const references = turn.references?.length ? `<div class="turn-references">${turn.references.map(r => `<span>${r.kind === 'file' ? '@' : '@@'} ${escape(r.label || r.path)}</span>`).join('')}</div>` : '';
   const label = `<div class="assistant-label"><span class="spark">✳</span>${turn.source === 'codex' ? 'Codex · 历史导入' : 'Claude'}${turn.contextRestored ? '<span class="restore" title="应用已从本地历史恢复上下文">从本地历史恢复上下文</span>' : ''}</div>`;
-  return `<div class="user-line">${images}${turn.user ? `<div class="user-message">${escape(turn.user)}</div>` : ''}</div>${references}${label}`;
+  const rewind = `<div class="user-actions"><button type="button" data-rewind="${escape(turn.id)}" title="删除这一轮及之后的问答，可同时把文件恢复到这一轮开始前；提问放回输入框"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 0 1 0 7H7M3.5 6.5 6 4M3.5 6.5 6 9"/></svg>回退到这里</button></div>`;
+  return `<div class="user-line">${images}${turn.user ? `<div class="user-message">${escape(turn.user)}</div>` : ''}${rewind}</div>${references}${label}`;
 }
 
 function footerHtml(turn, threadActive) {

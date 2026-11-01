@@ -1,6 +1,7 @@
 // Run status around the composer: activity bar, send/stop button, queued
 // messages and the approval card for the selected conversation.
-import { $, escape, setHtml, setText } from '../core/dom.mjs';
+import { $, escape, markdown, setHtml, setText } from '../core/dom.mjs';
+import { approvalHtml, collectAnswers, isPlan, pickChoice, questionsOf } from './approval.mjs';
 import { STATUS_LABELS, elapsed, isActive } from '../core/format.mjs';
 import { guarded } from '../core/ui.mjs';
 
@@ -31,8 +32,7 @@ export function createStatus({ store, actions, api, composer, toast }) {
     const agent = thread.turns.flatMap(turn => turn.subagents || []).find(a => a.id === request.agentId || a.aliases?.includes(request.agentId));
     const source = agent?.name || request.agentName || '', key = request.id + '|' + source;
     if (approvalShown === key) return; approvalShown = key;
-    const questions = request.input?.questions;
-    $('#approval').innerHTML = `<div class="approval-title">${source ? escape(source) + ' · ' : ''}${questions ? 'Claude 需要你的回答' : `批准 ${escape(request.name)}？`}</div><p>${escape(request.reason)}</p>${questions ? questions.map((q, i) => `<label class="question">${escape(q.question)}<small>${(q.options || []).map(x => `${escape(x.label)}：${escape(x.description || '')}`).join('<br>')}</small><input data-question="${i}" placeholder="输入你的回答" aria-label="${escape(q.question)}"></label>`).join('') : `<pre>${escape(JSON.stringify(request.input, null, 2))}</pre>`}<div class="approval-actions"><button class="secondary" data-approve="no">${questions ? '取消' : '拒绝'}</button><button class="primary" data-approve="yes">${questions ? '提交回答' : '仅允许这一次'}</button></div>`;
+    $('#approval').innerHTML = approvalHtml(request, source, markdown);
   }
 
   function activity() {
@@ -56,19 +56,27 @@ export function createStatus({ store, actions, api, composer, toast }) {
     const edit = event.target.closest('[data-queue-edit]'); if (edit) return actions.editQueued(edit.dataset.queueEdit);
     const remove = event.target.closest('[data-queue-remove]'); if (remove) return actions.removeQueued(remove.dataset.queueRemove);
   }));
-  $('#approval').addEventListener('click', guarded(toast, async event => {
-    const button = event.target.closest('[data-approve]'); if (!button) return;
+  async function answer(allow, button) {
     const request = pendingApproval(store.current()); if (!request) return;
-    const allow = button.dataset.approve === 'yes'; let answers;
-    if (request.input.questions && allow) {
-      answers = {};
-      for (const input of $('#approval').querySelectorAll('[data-question]')) {
-        if (!input.value.trim()) return toast('请填写回答');
-        answers[request.input.questions[Number(input.dataset.question)].question] = input.value.trim();
-      }
+    const card = $('#approval'), questions = questionsOf(request); let answers, extra;
+    if (questions && allow) {
+      const result = collectAnswers(card, questions);
+      if (result.missing) return toast('还没回答：' + result.missing);
+      answers = result.answers;
     }
-    await api('approval', store.selected, request.id, allow, answers);
+    if (isPlan(request)) extra = allow ? { mode: button?.dataset.planMode || 'default' } : { feedback: card.querySelector('.plan-feedback')?.value.trim() || '' };
+    for (const b of card.querySelectorAll('button')) b.disabled = true;
+    await api('approval', store.selected, request.id, allow, answers, extra);
+    if (extra?.mode) composer.setMode(extra.mode);
+  }
+  $('#approval').addEventListener('click', guarded(toast, async event => {
+    const choice = event.target.closest('.choice');
+    if (choice) { if (pickChoice($('#approval'), choice)) await answer(true); return; }
+    const button = event.target.closest('[data-approve]'); if (button) await answer(button.dataset.approve === 'yes', button);
   }));
+  $('#approval').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && event.target.matches('.choice-input')) { event.preventDefault(); guarded(toast, answer)(true); }
+  });
   $('#stop-inline').addEventListener('click', guarded(toast, actions.stop));
 
   store.on('select', render);

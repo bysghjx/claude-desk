@@ -1,7 +1,7 @@
 // Sidebar tree: pinned conversations, then projects with their conversations.
 // Re-renders only when something it displays changed, not on every streaming event.
 import { $, escape } from '../core/dom.mjs';
-import { STATUS_LABELS, isActive, shortAgo, statusClass } from '../core/format.mjs';
+import { STATUS_LABELS, isActive, shortAgo, threadDot } from '../core/format.mjs';
 import { guarded } from '../core/ui.mjs';
 
 const VISIBLE_LIMIT = 6;
@@ -14,7 +14,7 @@ export function createSidebar({ store, actions, toast }) {
 
   function row(t) {
     const editing = renaming === t.id;
-    return `<div class="thread-row ${t.id === store.selected ? 'selected' : ''} ${t.pinned ? 'pinned' : ''}"><button class="thread-open" data-thread="${escape(t.id)}" title="${escape(t.title)}"><span class="dot ${statusClass(t)}"></span><span class="thread-copy">${editing ? `<input class="thread-rename" data-rename-input="${escape(t.id)}" value="${escape(t.title)}" maxlength="80" aria-label="新的会话名称">` : `<strong>${escape(t.title)}</strong>`}</span>${t.queue?.length ? `<span class="thread-queue" title="排队中的消息">${t.queue.length}</span>` : ''}<span class="thread-time">${isActive(t) ? STATUS_LABELS[t.status] || '' : shortAgo(t.updatedAt)}</span></button><button class="thread-more" data-thread-menu="${escape(t.id)}" title="更多操作" aria-label="会话 ${escape(t.title)} 的更多操作">⋯</button></div>`;
+    return `<div class="thread-row ${t.id === store.selected ? 'selected' : ''} ${t.pinned ? 'pinned' : ''}"><button class="thread-open" data-thread="${escape(t.id)}" title="${escape(t.title)}"><span class="dot thread-dot ${threadDot(t)}" ${threadDot(t) === 'unread' ? 'title="有新回复"' : threadDot(t) === 'error' ? 'title="运行出错，还没查看"' : ''}></span><span class="thread-copy">${editing ? `<input class="thread-rename" data-rename-input="${escape(t.id)}" value="${escape(t.title)}" maxlength="80" aria-label="新的会话名称">` : `<strong>${escape(t.title)}</strong>`}</span>${t.worktree && !t.worktree.removed ? `<span class="thread-worktree" title="独立工作树 · ${escape(t.worktree.branch)}"><svg class="branch-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-2 3-5.5 4"/></svg></span>` : ''}${t.queue?.length ? `<span class="thread-queue" title="排队中的消息">${t.queue.length}</span>` : ''}<span class="thread-time">${isActive(t) ? STATUS_LABELS[t.status] || '' : shortAgo(t.updatedAt)}</span></button><button class="thread-more" data-thread-menu="${escape(t.id)}" title="更多操作" aria-label="会话 ${escape(t.title)} 的更多操作">⋯</button></div>`;
   }
 
   function treeHtml() {
@@ -30,7 +30,7 @@ export function createSidebar({ store, actions, toast }) {
     let html = pinned.length ? `<div class="tree-section">置顶</div>${pinned.map(row).join('')}` : '';
     for (const { p, threads } of groups) {
       const folded = !query && collapsed.has(p.id), limit = expanded.has(p.id) || query ? threads.length : VISIBLE_LIMIT;
-      html += `<div class="project-group ${selectedProject === p.id ? 'selected' : ''}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder">▱</span><span class="project-name">${escape(p.name)}</span></button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
+      html += `<div class="project-group ${selectedProject === p.id ? 'selected' : ''}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><span class="project-name">${escape(p.name)}</span></button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
       if (!folded) html += threads.length ? threads.slice(0, limit).map(row).join('') + (threads.length > limit ? `<button class="tree-more" data-expand-project="${escape(p.id)}">显示其余 ${threads.length - limit} 个</button>` : '') : `<div class="tree-empty">${archivedView ? '没有归档的会话' : '还没有会话'}</div>`;
     }
     if (orphans.length) html += `<div class="tree-section">其他</div>${orphans.map(row).join('')}`;

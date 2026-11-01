@@ -1,6 +1,7 @@
 // Entry point: creates the store, actions and views and connects them to the main process.
 import { $ } from './core/dom.mjs';
 import { createStore } from './core/store.mjs';
+import { isUnread } from './core/format.mjs';
 import { createToast, createConfirm } from './core/ui.mjs';
 import { createActions } from './features/actions.mjs';
 import { createComposer } from './views/composer.mjs';
@@ -12,6 +13,8 @@ import { createReview } from './views/review.mjs';
 import { createDock } from './views/dock.mjs';
 import { createManager } from './views/manager.mjs';
 import { createChrome } from './views/chrome.mjs';
+import { createRewind } from './views/rewind.mjs';
+import { createTerminalPanel } from './views/terminal.mjs';
 
 const desk = window.desk;
 const api = (name, ...args) => desk.invoke(name, ...args);
@@ -24,9 +27,11 @@ const composer = createComposer({ store, api, toast, actions: () => actions });
 actions = createActions({ store, api, composer, toast, confirm });
 const dock = createDock({ $, store, api, toast, onSelectThread: id => actions.selectThread(id) });
 const review = createReview({ store, api, toast, confirm, inspector: () => inspector });
-inspector = createInspector({ store, actions, api, composer, toast, dock, review });
+inspector = createInspector({ store, actions, api, composer, toast, dock, review, confirm });
 const conversation = createConversation({ store, actions, api, composer, toast, reviewPanel: review });
 const status = createStatus({ store, actions, api, composer, toast });
+createRewind({ store, api, actions, composer, toast });
+createTerminalPanel({ store, api, toast, desk });
 const sidebar = createSidebar({ store, actions, toast });
 const manager = createManager({ store, api, toast, confirm });
 createChrome({ store, actions, api, toast, manager, composer, sidebar });
@@ -35,8 +40,11 @@ store.on('composer', () => inspector.renderPanel());
 store.on('removed', id => dock.refresh(id));
 desk.onThread(thread => {
   if (!store.mergeThread(thread)) actions.fetchFull(thread.id).catch(e => toast(e.message));
+  else if (thread.id === store.selected && document.hasFocus() && isUnread(store.thread(thread.id))) actions.markSeen(thread.id);
   dock.refresh(thread.id);
 });
+// A conversation that finished while the window was in the background is read once you come back to it.
+window.addEventListener('focus', () => { if (isUnread(store.current())) actions.markSeen(store.selected); });
 desk.onNavigateThread?.(id => { if (store.thread(id)) actions.selectThread(id); else toast('所属会话已删除'); });
 desk.onStorageError?.(message => { $('#save-indicator').textContent = '保存失败'; $('#save-indicator').classList.add('error'); toast('会话保存失败：' + message); });
 // Elapsed times advance without re-rendering anything else.

@@ -6,6 +6,7 @@ const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {ACTIVE_AGENT,activeAgents,findAgent,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
 
+const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
 const ACTIVE = new Set(['starting', 'waiting', 'thinking', 'generating', 'tool', 'approval', 'stopping']);
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 // Items keep text, thinking and tool calls in the order they happened so the
@@ -94,9 +95,10 @@ class Engine extends EventEmitter {
     if (!p) { p = { id: randomUUID(), name: path.basename(real), path: real }; this.store.state.projects.push(p); this.store.save(); }
     return p;
   }
-  create(projectId) {
+  // `worktree` (from worktree.cjs) makes the conversation run in its own checkout.
+  create(projectId, { worktree } = {}) {
     const p = this.store.state.projects.find(p => p.id === projectId); if (!p) throw Error('先选择一个项目文件夹');
-    const t = { id: randomUUID(), projectId, cwd: p.path, title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), status: 'idle', turns: [], model: this.store.state.settings.model, effort: this.store.state.settings.effort, mode: this.store.state.settings.mode };
+    const t = { id: randomUUID(), projectId, cwd: worktree?.cwd || p.path, ...(worktree ? { worktree } : {}), title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), status: 'idle', seenAt: Date.now(), turns: [], model: this.store.state.settings.model, effort: this.store.state.settings.effort, mode: this.store.state.settings.mode };
     this.store.state.threads.unshift(t); this.store.save(); return t;
   }
   async send(id, text, options = {}) {
@@ -131,6 +133,12 @@ class Engine extends EventEmitter {
     run.turnId = turn.id; run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
     this.setStatus(t, 'starting', '正在启动 Claude');
     this.store.save();
+    // Record the project files first so this turn can be rewound later.
+    if (this.checkpoint) {
+      try { turn.checkpoint = await Promise.race([this.checkpoint(t), new Promise((_, reject) => setTimeout(() => reject(Error('记录文件快照超时')), 30000))]); }
+      catch (e) { turn.checkpointError = String(e.message || e).slice(0, 300); }
+      if (this.runs.get(id) !== run || run.turnId !== turn.id) return t;
+    }
     const content = images.length ? [...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: fs.readFileSync(image.path).toString('base64') } })), { type: 'text', text: prompt }] : prompt;
     run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, message: { role: 'user', content } });
     return t;
@@ -173,11 +181,20 @@ class Engine extends EventEmitter {
     catch (e) { t.queue.unshift(next); t.detail = '排队消息未能发送：' + e.message; this.emit('thread', this.threadSnapshot(t)); }
     finally { this.draining.delete(id); }
   }
+  // After its worktree is removed a conversation continues in the project folder.
+  async detachWorktree(id) {
+    const t = this.thread(id); if (!t.worktree) return t;
+    if (ACTIVE.has(t.status)) throw Error('请先停止当前运行');
+    await this.closeRun(id);
+    t.worktree = { ...t.worktree, removed: true }; t.cwd = this.store.state.projects.find(p => p.id === t.projectId)?.path || t.cwd;
+    this.publish(id); this.store.save(); return t;
+  }
   setMeta(id, value = {}) {
     const t = this.thread(id);
     if (typeof value.pinned === 'boolean') t.pinned = value.pinned;
     if (typeof value.archived === 'boolean') { t.archived = value.archived; if (value.archived) t.pinned = false; }
     if (typeof value.title === 'string' && value.title.trim()) t.title = value.title.trim().slice(0, 80);
+    if (Number.isFinite(value.seenAt)) t.seenAt = Math.min(value.seenAt, Date.now());
     this.publish(id); this.store.save(); return t;
   }
   startRun(t,extensionOptions={},extensionKey=JSON.stringify(extensionOptions)) {
@@ -305,20 +322,25 @@ class Engine extends EventEmitter {
     return new Promise(resolve => {
       let turn=t.turns.find(x=>x.id===run.turnId),agent;
       if(ctx.agentID){const found=findAgent(t,ctx.agentID,null)||ensureAgent(t,turn,{task_id:ctx.agentID});if(found){turn=found.turn;agent=found.agent;agent.status='approval';}}
-      this.pending.set(id, { resolve, threadId: t.id, run, args,turnId:turn?.id,agentId:agent?.id });
+      this.pending.set(id, { resolve, threadId: t.id, run, name, args,turnId:turn?.id,agentId:agent?.id });
       const request = { id, name, input: args, reason: this.redact(ctx.decisionReason || 'Claude 请求执行此操作'), createdAt: Date.now(),agentId:agent?.id,agentName:agent?.name };
       if (turn) {(turn.approvals||=[]).push(request);turn.approval=turn.approvals[0];}
       this.setStatus(t, 'approval', `等待你批准 ${name}`);
       ctx.signal?.addEventListener('abort', () => this.approve(t.id, id, false), { once: true });
     });
   }
-  approve(threadId, requestId, allow, answers) {
+  // A plan approval also picks how the work continues (mode); a rejected plan can carry feedback.
+  approve(threadId, requestId, allow, answers, extra = {}) {
     const p = this.pending.get(requestId); if (!p || p.threadId !== threadId) return false;
     this.pending.delete(requestId); const t = this.thread(threadId); const turn = t.turns.find(x => x.id === (p.turnId||p.run.turnId));
     if(turn){turn.approvals=(turn.approvals||[]).filter(a=>a.id!==requestId);turn.approval=turn.approvals[0];}
     if(p.agentId){const agent=turn?.subagents?.find(a=>a.id===p.agentId||a.aliases?.includes(p.agentId));if(agent?.status==='approval')agent.status='running';}
     const input = answers && p.args.questions ? { ...p.args, answers } : p.args;
-    p.resolve(allow ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: '用户拒绝了此操作，请采用其他方式或解释限制。' });
+    const plan = p.name === 'ExitPlanMode', feedback = String(extra?.feedback || '').trim().slice(0, 4000);
+    const mode = plan && allow ? (['default', 'acceptEdits'].includes(extra?.mode) ? extra.mode : 'default') : null;
+    if (mode) { t.mode = mode; p.run.mode = mode; }
+    p.resolve(allow ? { behavior: 'allow', updatedInput: input, ...(mode ? { updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }] } : {}) }
+      : { behavior: 'deny', message: plan ? (feedback ? `用户希望先修改计划，意见如下：\n${feedback}\n请按意见修改计划后再次提交。` : '用户希望继续修改计划，请询问需要调整的地方。') : questionsOf(p.args) ? '用户跳过了这个问题，请按你的判断继续，或换个方式说明。' : '用户拒绝了此操作，请采用其他方式或解释限制。' });
     if (!p.run.stopping) this.setStatus(t, 'tool', allow ? '已批准，继续执行' : '已拒绝，等待模型处理');
     return true;
   }
@@ -339,19 +361,29 @@ class Engine extends EventEmitter {
       if (!rel.startsWith('..') && !path.isAbsolute(rel)) try { fs.unlinkSync(file); } catch {}
     }
   }
-  async deleteTurn(id, turnId) {
-    const t=this.thread(id);
+  deleteTurn(id, turnId) { return this.removeTurns(id, [turnId], '删除其中一轮问答'); }
+  // Rewinding drops a turn and everything after it. Its text and images come back
+  // for editing; restoring files is up to the caller (see checkpoint.cjs).
+  async rewind(id, turnId) {
+    const t=this.thread(id), index=t.turns.findIndex(turn=>turn.id===turnId);
+    if(index<0)throw Error('这轮问答不存在');
+    const turn=t.turns[index];
+    await this.removeTurns(id, t.turns.slice(index).map(x=>x.id), '回退', new Set((turn.images||[]).map(image=>image.path)));
+    return { thread: t, draft: { text: turn.user, images: turn.images || [], references: turn.references || [] } };
+  }
+  async removeTurns(id, turnIds, action, keepImages=new Set()) {
+    const t=this.thread(id), ids=new Set(turnIds);
     if(this.deleting.has(id))throw Error('会话正在删除，请稍后再试');
-    if(ACTIVE.has(t.status))throw Error('请先停止当前运行，再删除其中一轮问答');
-    if(!t.turns.some(turn=>turn.id===turnId))throw Error('这轮问答不存在');
+    if(ACTIVE.has(t.status))throw Error(`请先停止当前运行，再${action}`);
+    if(!t.turns.some(turn=>ids.has(turn.id)))throw Error('这轮问答不存在');
     this.deleting.add(id);
     try {
       // A retained CLI would still remember removed messages. Rebuild from saved history next time.
       await this.closeRun(id);
       clearTimeout(this.eventTimers.get(id));this.eventTimers.delete(id);
       const autoTitle=t.turns[0]?.user.replace(/\s+/g,' ').slice(0,34);
-      this.removeImages(t.turns.filter(turn=>turn.id===turnId));
-      t.turns=t.turns.filter(turn=>turn.id!==turnId);
+      this.removeImages(t.turns.filter(turn=>ids.has(turn.id)).map(turn=>({images:(turn.images||[]).filter(image=>!keepImages.has(image.path))})));
+      t.turns=t.turns.filter(turn=>!ids.has(turn.id));
       t.contextUsage=null;
       const last=t.turns.at(-1);
       t.status=last?.status||'idle';t.error=last?.error||'';t.detail='';t.updatedAt=Date.now();

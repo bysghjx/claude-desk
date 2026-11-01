@@ -28,3 +28,37 @@ dialog::backdrop{background:#0000002e}
 .switch::after{background:#ffffff;box-shadow:0 1px 2px #00000033}
 .switch-row input:checked+.switch{background:#c4552f}
 .thread-time,.tree-empty{color:#85857f}
+.home-location{background:#efefec;border-color:#e1e1de}
+.home-location button[aria-checked="true"]{background:#ffffff;color:#1d1d1b;box-shadow:0 1px 3px #0000001f,inset 0 0 0 1px #0000000a}
+.worktree-chip{background:#e6f0e0;color:#3d6b2c}
+.thread-worktree{color:#4f7f3d}
+.worktree-bar{background:#f2f7ef;border-color:#cfdec6}
+.worktree-info strong{color:#2f5222}
+.worktree-info span{color:#5f6e57}
+.worktree-info .worktree-state{color:#6b6440}
+.worktree-info .worktree-state.merged{color:#3d7a2c}
+.worktree-actions button{background:#e6f0e0;border-color:#c3d6b8;color:#2f5222}
+.worktree-actions button:hover:not(:disabled){background:#dbe9d3}
+.worktree-actions [data-worktree="remove"]{color:#55554f;border-color:#d6d6d1}
+.user-actions button:hover{background:#0000000a;color:#1d1d1b}
+.choice[aria-pressed="true"]{background:#fbefd9;border-color:#c98a2a;color:#3a2a10}
+.choice[aria-pressed="true"] .choice-key{background:#c98a2a;color:#ffffff}
+.terminal-panel,.terminal-frame{background:#fbfbfa;border-color:#e1e1de}
+.terminal-bar{border-color:#ebebe8}
+.terminal-toggle.active{background:#0000000d;color:#1d1d1b}
+.accent-options button.selected{border-color:#1d1d1b}
+.accent-swatch.neutral{background:linear-gradient(135deg,#1d1d1b 50%,#d6d6d2 50%)}
+.accent-swatch[data-swatch="orange"]{background:#c4552f}
+.accent-swatch[data-swatch="blue"]{background:#2f6fd6}
+.accent-swatch[data-swatch="green"]{background:#23885a}
+.accent-swatch[data-swatch="purple"]{background:#7457d6}
+.accent-swatch[data-swatch="pink"]{background:#c74482}
+.accent-swatch[data-swatch="yellow"]{background:#a77a07}
+:root[data-accent="orange"]{--accent:#c4552f;--accent-ink:#ffffff}
+:root[data-accent="blue"]{--accent:#2f6fd6;--accent-ink:#ffffff}
+:root[data-accent="green"]{--accent:#23885a;--accent-ink:#ffffff}
+:root[data-accent="purple"]{--accent:#7457d6;--accent-ink:#ffffff}
+:root[data-accent="pink"]{--accent:#c74482;--accent-ink:#ffffff}
+:root[data-accent="yellow"]{--accent:#a77a07;--accent-ink:#ffffff}
+.thread-dot{background:transparent}
+.thread-dot.unread{background:#2f8a4c}

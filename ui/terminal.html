@@ -1,0 +1,7 @@
+<!doctype html>
+<!-- The terminal lives in its own frame: xterm writes its colours into <style> tags, which this page's
+     policy allows while the main window keeps style-src 'self'. Scripts stay limited to bundled files. -->
+<html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>终端</title><link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css"><link rel="stylesheet" href="terminal.css"></head>
+<body><div id="terms"></div>
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script><script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script type="module" src="src/terminal-host.mjs"></script>
+</body></html>

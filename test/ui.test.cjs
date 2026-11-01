@@ -94,3 +94,18 @@ test('dock tab keys survive HTML attributes and closing the last tab removes its
   assert.equal(frame.removed,true);assert.equal(panel.hidden,true);assert.equal(tabs.innerHTML,'');dock.refresh('thread');assert.equal(panel.hidden,true);
   dock.open('thread','agent');assert.equal(panel.hidden,false);assert.equal($('#agent-dock-views').frames.length,2);
 });
+
+test('sidebar dots: only running, waiting, or something new to read', async()=>{
+  const {threadDot,isUnread}=await import('../ui/src/core/format.mjs');
+  const t=(status,extra={})=>({status,turns:[],...extra});
+  assert.equal(threadDot(t('done',{seenAt:200,finishedAt:100})),'','read conversations have no dot');
+  assert.equal(threadDot(t('done',{seenAt:100,finishedAt:200})),'unread');
+  assert.equal(threadDot(t('error',{seenAt:100,finishedAt:200})),'error');
+  assert.equal(threadDot(t('error',{seenAt:300,finishedAt:200})),'','a failure you have seen is not flagged again');
+  assert.equal(threadDot(t('idle',{seenAt:100})),'');
+  assert.equal(threadDot(t('done',{finishedAt:200})),'','conversations from before tracking count as read');
+  assert.equal(threadDot(t('thinking',{seenAt:100,finishedAt:200})),'active');
+  assert.equal(threadDot(t('approval')),'approval');
+  assert.equal(isUnread(t('stopped',{seenAt:1,finishedAt:2})),false,'stopping it yourself is not news');
+  assert.equal(isUnread(null),false);
+});

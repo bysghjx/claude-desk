@@ -11,7 +11,7 @@ export function createReview({ store, api, toast, confirm, inspector }) {
   function render(p,changes){
     const sig=JSON.stringify([p.id,changes]),list=$('#file-list');if(sig===signature&&project?.id===p.id&&list.dataset.view==='review')return finishOpen();
     project=p;model=changes;signature=sig;list.dataset.view='review';
-    if(!changes.isGit){list.innerHTML='<div class="empty-files"><span class="empty-icon">▱</span><strong>这是一个本地文件夹</strong>不是 Git 仓库，无法审查和提交改动。<br>切换到「文件」浏览项目内容。</div>';return;}
+    if(!changes.isGit){list.innerHTML='<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>这是一个本地文件夹</strong>不是 Git 仓库，无法审查和提交改动。<br>切换到「文件」浏览项目内容。</div>';return;}
     if(!changes.files.length){list.innerHTML=`<div class="empty-files"><span class="empty-icon">✓</span><strong>工作区很干净</strong>Claude 产生的文件改动会显示在这里，可以逐个审查、撤销或提交。</div>`;$('#diff-view').hidden=true;return finishOpen();}
     const staged=changes.files.filter(f=>f.staged&&f.worktree===' ').length,anyStaged=changes.files.some(f=>f.staged);
     const added=changes.files.reduce((n,f)=>n+(f.added||0),0),removed=changes.files.reduce((n,f)=>n+(f.removed||0),0);

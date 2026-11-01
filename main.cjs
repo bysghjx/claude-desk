@@ -4,7 +4,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { Engine, JsonStore } = require('./engine.cjs');
+const { Engine, JsonStore, ACTIVE } = require('./engine.cjs');
 const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
@@ -13,9 +13,12 @@ const {CodexImporter}=require('./codex-import.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
+const {Checkpoints}=require('./checkpoint.cjs');
+const {Worktrees}=require('./worktree.cjs');
+const {Terminals}=require('./terminal.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
-let win, engine, extensions, agentWindows, quitting = false;
+let win, engine, extensions, agentWindows, terminals, quitting = false;
 app.setName('Claude Desk');
 // Windows shows toasts only for an app id that a Start menu shortcut carries.
 const APP_ID='com.claudedesk.app';
@@ -28,13 +31,13 @@ const attachmentRoot=path.join(dataRoot,'attachments');
 // The main window loads from app://desk/ so the renderer can use ES modules under a
 // strict CSP. Only the UI folder and the two bundled renderer libraries are served.
 protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
-const SERVED_FILES=new Set(['node_modules/marked/lib/marked.umd.js','node_modules/dompurify/dist/purify.min.js']);
+const SERVED_FILES=new Set(['node_modules/marked/lib/marked.umd.js','node_modules/dompurify/dist/purify.min.js','node_modules/@xterm/xterm/lib/xterm.js','node_modules/@xterm/xterm/css/xterm.css','node_modules/@xterm/addon-fit/lib/addon-fit.js']);
 const MIME={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.png':'image/png','.ico':'image/x-icon','.svg':'image/svg+xml'};
 async function serveApp(request){
   const url=new URL(request.url),relative=decodeURIComponent(url.pathname).replace(/^\/+/,'');
   const file=path.resolve(__dirname,relative),inside=path.relative(__dirname,file).replace(/\\/g,'/');
   if(url.host!=='desk'||inside.startsWith('..')||!(inside.startsWith('ui/')||SERVED_FILES.has(inside)))return new Response('Not found',{status:404});
-  try{return new Response(await fs.promises.readFile(file),{headers:{'content-type':(MIME[path.extname(file)]||'application/octet-stream')+'; charset=utf-8'}});}
+  try{return new Response(await fs.promises.readFile(file),{headers:{'content-type':(MIME[path.extname(file)]||'application/octet-stream')+'; charset=utf-8','cache-control':'no-cache'}});}
   catch{return new Response('Not found',{status:404});}
 }
 const primaryInstance=app.requestSingleInstanceLock();
@@ -96,6 +99,8 @@ function saveImages(list){
 }
 function dropSaved(images,original){for(const image of images)if(!original?.some(x=>x?.path===image.path))try{fs.unlinkSync(image.path);}catch{}}
 function project(id) { const p = engine.store.state.projects.find(p => p.id === id); if(!p) throw Error('项目不存在'); return p; }
+// Panels address a project by id, or a conversation that runs in its own worktree by the conversation id.
+function folder(id) { const t = engine.store.state.threads.find(t => t.id === id); return t?.worktree && !t.worktree.removed ? t.cwd : project(id).path; }
 function within(root, relative) {
   if(typeof relative !== 'string' || !relative || relative.length > 2000) throw Error('文件路径无效');
   const target = path.resolve(root, relative); const realRoot = fs.realpathSync(root); const rel = path.relative(realRoot, target);
@@ -154,6 +159,8 @@ if(primaryInstance)app.whenReady().then(async () => {
   engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot });
   applyTheme(engine.store.state.settings.theme);
   ensureStartMenuShortcut();
+  const checkpoints=new Checkpoints(path.join(dataRoot,'checkpoints'));
+  engine.checkpoint=t=>checkpoints.snapshot(t.cwd);
   extensions=new ExtensionsManager({cliPath:engine.cliPath,dataRoot,store:engine.store});
   engine.sessionOptions=()=>extensions.sessionOptions();
   const legacyLibrary=legacy.map(file=>path.join(path.dirname(file),'extensions')).find(folder=>fs.existsSync(folder));
@@ -207,7 +214,21 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('ui:save',value=>saveUi(value));
   ipcMain.on('ui:sync',(event,value)=>{try{if(event.sender!==win?.webContents||event.senderFrame!==win.webContents.mainFrame)throw Error('无效来源');event.returnValue=saveUi(value);}catch{event.returnValue=false;}});
   handle('project:add', async () => { const r = await dialog.showOpenDialog(win, { title: '选择项目文件夹', properties: ['openDirectory'] }); return r.canceled ? null : engine.addProject(r.filePaths[0]); });
-  handle('thread:create', id => threadOut(engine.create(id)));
+  const worktrees=new Worktrees(path.join(dataRoot,'worktrees'));
+  handle('thread:create', async (id, options={}) => threadOut(engine.create(id, options?.worktree ? { worktree: await worktrees.create(project(id).path) } : {})));
+  const worktreeOf=id=>{const t=engine.thread(id);if(!t.worktree||t.worktree.removed)throw Error('这个会话没有独立工作树');return t.worktree;};
+  // Terminal panel: one shell per workspace folder, opened on demand.
+  terminals=new Terminals({send:event=>{if(win&&!win.isDestroyed())win.webContents.send('terminal:event',event);}});
+  handle('terminal:open',id=>terminals.open(folder(id)));
+  handle('terminal:write',(id,data)=>terminals.write(id,data));
+  handle('terminal:resize',(id,cols,rows)=>terminals.resize(id,cols,rows));
+  handle('terminal:close',id=>terminals.close(id));
+  handle('clipboard:read',()=>clipboard.readText().slice(0,100000));
+  handle('worktree:status', id => worktrees.status(worktreeOf(id)));
+  handle('worktree:merge', id => worktrees.merge(worktreeOf(id)));
+  handle('worktree:remove', async (id, force) => { const wt=worktreeOf(id); if(ACTIVE.has(engine.thread(id).status))throw Error('请先停止当前运行');
+    // The conversation's CLI process and any shell there keep the folder locked on Windows.
+    await engine.closeRun(id); terminals.closeIn(wt.path); const result=await worktrees.remove(wt,{force:Boolean(force)}); await engine.detachWorktree(id); return {...result, thread: threadOut(id)}; });
   handle('thread:send', async (id, text, opts={}) => {
     if(!engine.cliPath) throw Error('找不到 Claude CLI，请先安装官方原生版');
     const images=saveImages(opts.images);
@@ -227,15 +248,35 @@ if(primaryInstance)app.whenReady().then(async () => {
     return shell.openPath(image.path);
   });
   handle('thread:stop', id => engine.stop(id));
-  handle('thread:delete',async id=>{const result=await engine.deleteThread(id);sentRevs.delete(id);notifications.forget(id);agentWindows.refresh(id);return result;});
+  handle('thread:delete',async id=>{const wt=engine.thread(id).worktree;const result=await engine.deleteThread(id);
+    // A clean worktree goes with the conversation; one with uncommitted work stays on disk.
+    if(result&&wt&&!wt.removed){terminals.closeIn(wt.path);await worktrees.remove(wt).catch(()=>{});}sentRevs.delete(id);notifications.forget(id);agentWindows.refresh(id);return result;});
+  // Rewind: preview which files would change, then drop the turn (and later ones) and optionally restore files.
+  const rewindTurn=(id,turnId)=>{const t=engine.thread(id),turn=t.turns.find(x=>x.id===turnId);if(!turn)throw Error('这轮问答不存在');return{t,turn};};
+  handle('thread:rewind-preview',async(id,turnId)=>{
+    const {t,turn}=rewindTurn(id,turnId);
+    if(!turn.checkpoint)return{available:false,reason:turn.checkpointError||'这一轮开始前没有记录文件快照（较早的对话或快照失败）',later:t.turns.length-t.turns.indexOf(turn)-1};
+    const {files}=await checkpoints.changes(t.cwd,turn.checkpoint);
+    return{available:true,files:files.slice(0,200),count:files.length,later:t.turns.length-t.turns.indexOf(turn)-1};
+  });
+  handle('thread:rewind',async(id,turnId,restoreFiles)=>{
+    const {t,turn}=rewindTurn(id,turnId);
+    if(ACTIVE.has(t.status))throw Error('请先停止当前运行，再回退');
+    let restored=0;
+    if(restoreFiles){if(!turn.checkpoint)throw Error('这一轮没有文件快照，无法恢复文件');restored=(await checkpoints.restore(t.cwd,turn.checkpoint)).files.length;}
+    const result=await engine.rewind(id,turnId);
+    return{thread:threadOut(result.thread),draft:result.draft,restored};
+  });
   handle('turn:delete',async(id,turnId)=>threadOut(await engine.deleteTurn(id,turnId)));
   handle('thread:rename', (id, name) => { const t = engine.thread(id); t.title = String(name).trim().slice(0,80) || t.title; engine.publish(id); engine.store.save(); return threadOut(t); });
-  handle('approval', (id, request, allow, answers) => engine.approve(id, request, Boolean(allow), answers));
+  handle('approval', (id, request, allow, answers, extra) => engine.approve(id, request, Boolean(allow), answers, extra && typeof extra === 'object' ? extra : {}));
   handle('settings', async value => {
     const settings = engine.store.state.settings;
     for(const key of ['model','effort','mode']) if(typeof value[key] === 'string') settings[key] = value[key].slice(0,150);
     if(THEMES.has(value.theme)){ settings.theme = value.theme; applyTheme(value.theme); }
     if(typeof value.notifications === 'boolean') settings.notifications = value.notifications;
+    if(['local','worktree'].includes(value.location)) settings.location = value.location;
+    if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;
     engine.store.save(); return settings;
   });
   handle('notify:test',()=>showNotice({title:'Claude Desk 通知已开启',body:'任务完成、需要你批准或回答问题时，会在这里提醒你。'},{force:true}));
@@ -248,9 +289,9 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(!response.ok) throw Error('读取模型列表失败：HTTP ' + response.status);
     const json = await response.json();const models=(json.data || []).map(x => x.id).filter(x => typeof x === 'string' && x.length < 150);engine.store.state.availableModels=models;engine.store.save();return models;
   });
-  handle('project:changes', id => review.changes(project(id).path));
+  handle('project:changes', id => review.changes(folder(id)));
   handle('project:diff', async (id, relative) => {
-    const p = project(id); const target = within(p.path, relative);
+    const p = { path: folder(id) }; const target = within(p.path, relative);
     let diff = ''; try { diff = await git(p.path, ['diff','--no-ext-diff','--no-textconv','HEAD','--',relative]); } catch {}
     if(!diff && fs.existsSync(target) && fs.statSync(target).isFile()) {
       if(fs.statSync(target).size > 1024*1024) return '文件超过 1 MB，请在编辑器中查看。';
@@ -258,17 +299,17 @@ if(primaryInstance)app.whenReady().then(async () => {
     }
     return diff.slice(0,300000) || '文件已删除，或暂时没有可展示的文本改动。';
   });
-  handle('project:review-diff', (id, relative) => review.diff(project(id).path, relative));
-  handle('project:stage', (id, paths, staged) => review.stage(project(id).path, paths, Boolean(staged)));
-  handle('project:revert', (id, relative) => review.revert(project(id).path, relative));
-  handle('project:commit', (id, message, all) => review.commit(project(id).path, message, Boolean(all)));
+  handle('project:review-diff', (id, relative) => review.diff(folder(id), relative));
+  handle('project:stage', (id, paths, staged) => review.stage(folder(id), paths, Boolean(staged)));
+  handle('project:revert', (id, relative) => review.revert(folder(id), relative));
+  handle('project:commit', (id, message, all) => review.commit(folder(id), message, Boolean(all)));
   handle('project:files', async id => {
-    const p = project(id); const files = [];
+    const p = { path: folder(id) }; const files = [];
     try{return [...new Set((await git(p.path,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(Boolean))].sort().slice(0,2500);}catch{}
     function walk(dir, depth = 0) { if(depth > 8 || files.length >= 2500) return; for(const ent of fs.readdirSync(dir,{withFileTypes:true})) { if(['.git','node_modules','.next','dist','.venv'].includes(ent.name) || ent.isSymbolicLink()) continue; const full = path.join(dir, ent.name); if(ent.isDirectory()) walk(full,depth+1); else files.push(path.relative(p.path,full)); if(files.length>=2500) break; } }
     walk(p.path); return files;
   });
-  handle('project:open', id => shell.openPath(project(id).path));
+  handle('project:open', id => shell.openPath(folder(id)));
   handle('config:open', () => shell.openPath(providerInfo().configPath));
   handle('data:open',()=>shell.openPath(dataRoot));
   handle('copy', text => clipboard.writeText(String(text).slice(0,1000000)));
@@ -280,7 +321,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('window', action => { if(action === 'min') win.minimize(); if(action === 'max') win.isMaximized()?win.unmaximize():win.maximize(); if(action === 'close') win.close(); });
   const icon = nativeImage.createFromPath(path.join(__dirname,'ui/icon.png'));
   win = new BrowserWindow({ width: 1480, height: 970, minWidth: 1040, minHeight: 690, title: 'Claude Desk', backgroundColor:windowBackground(), autoHideMenuBar:true, icon, titleBarStyle:'hidden', webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true} });
-  win.on('closed',()=>agentWindows.close());
+  win.on('closed',()=>{agentWindows.close();terminals?.closeAll();});
   win.on('focus',()=>win.flashFrame(false));
   win.webContents.setWindowOpenHandler(() => ({action:'deny'}));
   win.webContents.on('will-navigate', e => e.preventDefault());
@@ -292,5 +333,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());

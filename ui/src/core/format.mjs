@@ -19,6 +19,17 @@ export function shortAgo(time, now = Date.now()) {
   if (s < 86400 * 30) return `${Math.floor(s / 86400)} 天`;
   return new Date(time).toLocaleDateString();
 }
+// A finished turn you have not opened yet. Conversations from before this was tracked count as read.
+export function isUnread(thread) {
+  return Number.isFinite(thread?.seenAt) && !isActive(thread) && ['done', 'error'].includes(thread.status) && (thread.finishedAt || 0) > thread.seenAt;
+}
+// Sidebar marker: running, waiting for you, or something new to read; nothing otherwise.
+export function threadDot(thread) {
+  if (thread.status === 'approval') return 'approval';
+  if (isActive(thread)) return 'active';
+  if (!isUnread(thread)) return '';
+  return thread.status === 'error' ? 'error' : 'unread';
+}
 export function statusClass(thread) {
   if (thread.status === 'error') return 'error';
   if (thread.status === 'approval') return 'approval';

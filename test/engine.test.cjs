@@ -223,3 +223,46 @@ test('snapshots reuse settled turns and give live turns a new revision on every 
   assert.ok(seen.length>2&&seen.every(x=>x.turns.every(turn=>Number.isInteger(turn.rev))));
   await engine.shutdown();
 });
+
+test('rewind drops the turn and later ones, returns its prompt and rebuilds context without them',async()=>{
+  const sessions=[];const query=args=>{const sdk=fakeSdk();sessions.push(sdk);return sdk.query(args);};
+  const {engine,t}=setup(query);
+  for(const [text,answer] of [['KEEP_ONE','a1'],['DROP_TWO','a2'],['DROP_THREE','a3']]){await engine.send(t.id,text);await tick();await complete(sessions[0],answer);}
+  const {draft}=await engine.rewind(t.id,t.turns[1].id);
+  assert.equal(draft.text,'DROP_TWO');
+  assert.deepEqual(t.turns.map(x=>x.user),['KEEP_ONE']);
+  assert.equal(engine.runs.size,0,'the live CLI that remembers dropped turns is closed');
+  await engine.send(t.id,'next');await tick();
+  const prompt=sessions[1].messages[0].message.content;
+  assert.match(prompt,/KEEP_ONE/);assert.doesNotMatch(prompt,/DROP_TWO|DROP_THREE/);
+  await assert.rejects(()=>engine.rewind(t.id,t.turns[0].id),/先停止/);
+  await engine.shutdown();
+});
+
+test('each turn records a file checkpoint before the prompt goes out; failures do not block',async()=>{
+  const sdk=fakeSdk();const{engine,t}=setup(sdk.query);const seen=[];
+  engine.checkpoint=async thread=>{seen.push(sdk.messages.length);return 'tree-'+thread.turns.length;};
+  await engine.send(t.id,'first');await tick();
+  assert.deepEqual(seen,[0],'checkpoint taken before the message reached the CLI');
+  assert.equal(t.turns[0].checkpoint,'tree-1');
+  await complete(sdk);
+  engine.checkpoint=async()=>{throw Error('disk busy');};
+  await engine.send(t.id,'second');await tick();
+  assert.equal(sdk.messages.length,2);assert.equal(t.turns[1].checkpoint,undefined);assert.equal(t.turns[1].checkpointError,'disk busy');
+  await engine.shutdown();
+});
+
+test('approving a plan switches the permission mode; rejecting it passes feedback; skipped questions say so',async()=>{
+  const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'plan it',{mode:'plan'});await tick();
+  const ok=sdk.contexts[0].canUseTool('ExitPlanMode',{plan:'1. x'},{toolUseID:'p1'});
+  engine.approve(t.id,'p1',true,undefined,{mode:'acceptEdits'});
+  assert.deepEqual((await ok).updatedPermissions,[{type:'setMode',mode:'acceptEdits',destination:'session'}]);
+  assert.equal(t.mode,'acceptEdits');assert.equal(engine.runs.get(t.id).mode,'acceptEdits','next send keeps the live CLI');
+  const no=sdk.contexts[0].canUseTool('ExitPlanMode',{plan:'2. y'},{toolUseID:'p2'});
+  engine.approve(t.id,'p2',false,undefined,{feedback:'先写测试'});
+  assert.match((await no).message,/先写测试/);
+  const ask=sdk.contexts[0].canUseTool('AskUserQuestion',{questions:[{question:'Q?'}]},{toolUseID:'q1'});
+  engine.approve(t.id,'q1',false);
+  assert.match((await ask).message,/跳过/);
+  await engine.shutdown();
+});

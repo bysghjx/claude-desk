@@ -1,7 +1,7 @@
 // Everything that changes conversations or selection goes through these actions.
 // They talk to the main process via `api`, to the input box via `composer`, and
 // never touch the DOM, so they can be tested with plain fakes.
-import { isActive } from '../core/format.mjs';
+import { isActive, isUnread } from '../core/format.mjs';
 
 export function createActions({ store, api, composer, toast, confirm }) {
   let sending = false;
@@ -22,9 +22,12 @@ export function createActions({ store, api, composer, toast, confirm }) {
     const draft = store.drafts.get(id || 'new');
     composer.restore(draft, draft?.options?.model ? draft.options : (thread || store.state.settings));
     store.ready = true;
+    if (isUnread(thread)) markSeen(thread.id);
     store.emit('select', store.selected);
     composer.save();
   }
+  // Opening a conversation (or watching it finish) clears its "new" dot.
+  function markSeen(id) { api('thread:meta', id, { seenAt: Date.now() }).then(apply).catch(() => {}); }
   function showHome() { store.projectId = null; selectThread(null); composer.focus(); }
   function selectProject(projectId) { store.projectId = projectId || null; selectThread(null); composer.focus(); }
 
@@ -36,7 +39,7 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function newThread() {
     const project = store.currentProject();
     if (!project) return addProject();
-    const thread = await apply(await api('thread:create', project.id));
+    const thread = await apply(await api('thread:create', project.id, { worktree: store.state.settings?.location === 'worktree' }));
     selectThread(thread.id); composer.focus(); return thread;
   }
 
@@ -93,6 +96,11 @@ export function createActions({ store, api, composer, toast, confirm }) {
     toast(archived ? '会话已归档，可在侧栏底部「已归档」中找回' : '已取消归档');
   }
 
+  // Where new conversations run: the project folder or a fresh worktree.
+  async function setLocation(location) {
+    store.state.settings = { ...store.state.settings, location }; store.emit('threads');
+    await api('settings', { location });
+  }
   async function sendQueuedNow(queueId) { await api('queue:send', store.selected, queueId); }
   async function removeQueued(queueId) { await api('queue:remove', store.selected, queueId); }
   async function editQueued(queueId) {
@@ -105,5 +113,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
 }
