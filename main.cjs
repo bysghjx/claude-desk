@@ -9,7 +9,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -234,6 +234,10 @@ if(primaryInstance)app.whenReady().then(async () => {
   const worktreeOf=id=>{const t=engine.thread(id);if(!t.worktree||t.worktree.removed)throw Error('这个会话没有独立工作树');return t.worktree;};
   // Terminal panel: one shell per workspace folder, opened on demand.
   terminals=new Terminals({send:event=>{if(win&&!win.isDestroyed())win.webContents.send('terminal:event',event);}});
+  const storageUsage=new StorageUsage({dataRoot,state:()=>engine.store.state,checkpointKey:cwd=>checkpoints.key(cwd),worktreeStatus:wt=>worktrees.status(wt),
+    removeWorktree:async t=>{if(ACTIVE.has(t.status))throw Error('对话正在运行');await engine.closeRun(t.id);terminals.closeIn(t.worktree.path);await worktrees.remove(t.worktree);await engine.detachWorktree(t.id);}});
+  handle('storage:usage',()=>storageUsage.scan());
+  handle('storage:clean',key=>storageUsage.clean(String(key)));
   handle('terminal:open',id=>terminals.open(folder(id)));
   handle('terminal:write',(id,data)=>terminals.write(id,data));
   handle('terminal:resize',(id,cols,rows)=>terminals.resize(id,cols,rows));

@@ -97,6 +97,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#open-config').addEventListener('click', guarded(toast, () => api('config:open')));
   $('#open-data').addEventListener('click', guarded(toast, () => api('data:open')));
   $('#import-codex').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('import'); rail('rail-import'); });
+  $('#open-storage').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('storage'); rail(''); });
   $('#import-claude').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('claude-import'); rail('rail-import'); });
   $('#backup-data').addEventListener('click', guarded(toast, async () => { if (await api('storage:export')) $('#settings-result').textContent = '全部会话、草稿和用量已备份。'; }));
   $('#refresh-models').addEventListener('click', guarded(toast, async () => {

@@ -1266,3 +1266,8 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .wrap-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .turn.just-finished .wrap-up{animation:rise-in var(--motion-slow) var(--ease-out) both}
 :root[data-accent] .task-active .task-mark{border-color:var(--accent);border-top-color:transparent}
+/* Storage page: one bar per kind of data, scaled to the largest. */
+.storage-card .manager-card-copy{flex:1}
+.storage-bar{height:4px;border-radius:2px;background:#333;margin:8px 0 6px;overflow:hidden}
+.storage-bar span{display:block;height:100%;background:#9a9a9a;border-radius:2px}
+:root[data-accent] .storage-bar span{background:var(--accent)}

@@ -29,7 +29,8 @@ export function createPalette({ store, api, actions, composer, toast }) {
     { id: 'import-claude', label: '导入 Claude Code 对话', icon: 'action', keywords: 'claude code import 导入', run: click('#import-claude') },
     { id: 'mcp', label: 'MCP 服务器', icon: 'action', keywords: 'mcp server', run: click('#manage-mcp') },
     { id: 'skills', label: '技能', icon: 'action', keywords: 'skills', run: click('#manage-skills') },
-    { id: 'usage', label: '累计用量', icon: 'action', keywords: 'usage cost token', run: click('#manage-usage') }
+    { id: 'usage', label: '累计用量', icon: 'action', keywords: 'usage cost token', run: click('#manage-usage') },
+    { id: 'storage', label: '存储占用', icon: 'action', keywords: 'storage disk 空间 清理', run: click('#open-storage') }
   ];
 
   function render() {

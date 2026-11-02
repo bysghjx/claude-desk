@@ -612,6 +612,8 @@
   .wrap-up{border:1px solid #ececeb;background:#f7f7f7}
   .wrap-recap{color:#3a372e}
   .wrap-ask{color:#1e1e1e}
+  .storage-bar{background:#ebebeb}
+  .storage-bar span{background:#5b5b5b}
 }
 
 /* Hand-tuned light theme details */

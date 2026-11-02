@@ -1,8 +1,8 @@
-// Workspace manager window: MCP servers, plugins, skills, usage, and Codex / Claude Code imports.
+// Workspace manager window: MCP servers, plugins, skills, usage, storage, and Codex / Claude Code imports.
 import { $, escape } from '../core/dom.mjs';
 
 export function createManager({ store, api, toast, confirm }) {
-  let page='plugins',lastImport='import',catalog=null,mcpRows=null,summary=null,query='',pluginFilter='installed',limit=50,scope='user',period='30d',busy=false,generation=0,editor=null;
+  let page='plugins',lastImport='import',catalog=null,mcpRows=null,storage=null,summary=null,query='',pluginFilter='installed',limit=50,scope='user',period='30d',busy=false,generation=0,editor=null;
   // Each import source is its own tab with its own list, selection and preview.
   const IMPORTS={
     import:{source:'codex',name:'Codex',note:'从本机 Codex 的 sessions / archived_sessions 读取历史。每次最多选择 20 条，先预览再导入；原文件保持不变。重复会话会跳过，导入的旧用量不计入 Claude 累计统计。',after:'导入后继续聊天使用当前 Claude 模型；Codex 原始模型、后台进程、加密思考和图片附件不会迁移。分支或回退版本使用最新日志，预览可核对轮次。'},
@@ -13,6 +13,7 @@ export function createManager({ store, api, toast, confirm }) {
   const dialog=$('#manager-dialog'),content=$('#manager-content'),controls=$('#manager-controls');
   const project=()=>$('#manager-project').value||'';
   const format=value=>Number(value||0).toLocaleString();
+  const bytes=value=>{const units=['B','KB','MB','GB','TB'];let n=Number(value||0),i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return(i?n.toFixed(n<10?1:0):n)+' '+units[i];};
   const currency=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:4}).format(value||0);
   function status(message,error=false){$('#manager-status').textContent=message;$('#manager-status').classList.toggle('error',error);}
   function tabs(){document.querySelectorAll('[data-manager-tab]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.managerTab===page)));}
@@ -25,8 +26,13 @@ export function createManager({ store, api, toast, confirm }) {
     content.innerHTML=`<p class="manager-note">${info.note}</p>`+(importPreview?`<div class="import-preview"><h3>导入预览</h3>${importPreview.items.map(item=>`<article><strong>${item.turns} 轮问答 · ${item.tools} 条工具记录</strong><small>${escape(item.cwd)} · ${escape(item.model||'未记录模型')}</small><p>${escape(item.first)}</p><p class="muted">最后回复：${escape(item.last||'无文本回复')}</p>${item.warnings?'<p class="error">存在 '+item.warnings+' 条无法解析的日志行，未导入这些行。</p>':''}</article>`).join('')}<button id="import-commit" class="manager-primary">确认导入 ${importPreview.items.length} 条会话</button></div>`:'')+(items.length?items.map(item=>`<article class="manager-card"><label class="skill-selection"><input type="checkbox" data-import-id="${escape(item.id)}" aria-label="选择 ${escape(item.title)}" ${importSelected.has(item.id)?'checked':''} ${item.imported?'disabled':''}></label><div class="manager-card-copy"><h3>${escape(item.title)}${item.imported?'<span class="manager-tag">已导入</span>':''}${item.archived?'<span class="manager-tag">已归档</span>':''}</h3><p>${escape(item.cwd)}</p><small>${new Date(item.updatedAt).toLocaleString()}</small></div></article>`).join(''):`<div class="manager-empty">没有找到匹配的 ${info.name} 对话。</div>`)+`<p class="manager-note">${info.after}</p>`;
     $('#import-commit')?.addEventListener('click',async()=>{const state=current(),token=state.preview.token;if(busy)return;busy=true;disabled();try{const result=await api(info.source+':import',token);const fresh=await api('state');store.load(fresh);state.selected.clear();state.preview=null;await load();status(`已导入 ${result.imported} 条，跳过 ${result.skipped} 条重复会话`);}catch(e){status(e.message,true);}finally{busy=false;disabled();}});
   }
+  function renderStorage(){
+    const max=Math.max(1,...storage.groups.map(g=>g.size));
+    content.innerHTML=`<p class="manager-note">Claude Desk 的数据都在 ${escape(storage.root)}。只会清理已经没有对话在用的内容；有未提交改动的工作树不会被清理。</p>${storage.disk?`<div class="usage-kpis"><div class="usage-kpi"><span>本应用占用</span><strong>${bytes(storage.total)}</strong><small>以下各项合计</small></div><div class="usage-kpi"><span>磁盘剩余</span><strong>${bytes(storage.disk.free)}</strong><small>共 ${bytes(storage.disk.total)}</small></div></div>`:''}`+storage.groups.map(g=>`<article class="manager-card storage-card"><div class="manager-card-copy"><h3>${escape(g.label)}<span class="manager-tag">${bytes(g.size)}</span></h3><p>${escape(g.note)}</p><div class="storage-bar"><span style="width:${Math.max(g.size?1:0,Math.round(g.size/max*100))}%"></span></div><small>${g.count.toLocaleString()} 个文件${g.clean.count?` · 可清理 ${g.clean.count} 项（${bytes(g.clean.size)}）：${escape(g.clean.items.join('、'))}${g.clean.count>g.clean.items.length?' 等':''}`:''}</small></div>${g.clean.count?`<div class="manager-actions"><button class="destructive" data-storage-clean="${escape(g.key)}">清理</button></div>`:''}</article>`).join('');
+  }
   function tools(){
-    $('#manager-project').closest('.manager-scope').hidden=isImport(page);
+    $('#manager-project').closest('.manager-scope').hidden=isImport(page)||page==='storage';
+    if(page==='storage')controls.innerHTML='<button id="storage-refresh">重新计算</button>';
     if(isImport(page))controls.innerHTML=`<input id="extension-search" aria-label="搜索 ${IMPORTS[page].name} 对话" placeholder="搜索标题或项目路径" value="${escape(query)}"><button id="import-scan">重新扫描</button><button id="import-preview">预览所选（${current().selected.size}）</button>`;
 
     if(page==='mcp')controls.innerHTML='<button id="mcp-check">检查连接</button><button id="mcp-create" class="manager-primary">添加服务器</button>';
@@ -52,6 +58,7 @@ export function createManager({ store, api, toast, confirm }) {
       $('#skill-create').onclick=()=>openEditor();
       $('#skill-import').onclick=()=>perform(()=>api('skills:import'),'正在导入技能…','技能列表已更新');
     }
+    if(page==='storage')$('#storage-refresh').onclick=()=>load();
     if(page==='usage'){$('#usage-period').value=period;$('#usage-period').onchange=()=>{period=$('#usage-period').value;load();};$('#usage-export').onclick=()=>api('usage:export',{period,projectId:project()}).catch(e=>status(e.message,true));}
     if(page==='mcp'){
       $('#mcp-create').onclick=()=>{$('#mcp-name').value='';$('#mcp-json').value='';$('#mcp-error').textContent='';$('#mcp-scope').value=project()?'local':'user';[...$('#mcp-scope').options].forEach(option=>option.disabled=option.value!=='user'&&!project());$('#mcp-dialog').showModal();$('#mcp-name').focus();};
@@ -77,13 +84,13 @@ export function createManager({ store, api, toast, confirm }) {
     const daily=s.daily||[],tokens=row=>row.input+row.output+row.cacheRead+row.cacheWrite,max=Math.max(1,...daily.map(tokens));
     content.innerHTML=`<div class="usage-kpis">${values.map(([label,value,note])=>`<div class="usage-kpi"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`).join('')}</div><h3 class="usage-section-title">最近日期趋势 · tokens</h3><div class="usage-chart">${daily.length?`<svg viewBox="0 0 720 110" role="img" aria-label="每日 token 用量">${daily.map((day,i)=>{const width=720/daily.length,height=tokens(day)/max*100,bar=Math.min(36,Math.max(2,width-5));return`<rect x="${i*width+(width-bar)/2}" y="${105-height}" width="${bar}" height="${height}" rx="2"><title>${escape(day.date)} · ${format(tokens(day))} tokens</title></rect>`;}).join('')}</svg><div class="usage-chart-labels"><span>${daily[0].date}</span><span>${daily.at(-1).date}</span></div>`:'<p class="context-empty">此时间范围暂无用量记录</p>'}</div><h3 class="usage-section-title">按模型汇总</h3><div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>模型</th><th>输入</th><th>输出</th><th>缓存读取</th><th>缓存写入</th><th>估算费用</th></tr></thead><tbody>${s.models.length?s.models.map(m=>`<tr><td title="${escape(m.model)}">${escape(m.model)}</td><td>${format(m.input)}</td><td>${format(m.output)}</td><td>${format(m.cacheRead)}</td><td>${format(m.cacheWrite)}</td><td>${currency(m.cost)}</td></tr>`).join(''):'<tr><td colspan="6">暂无记录</td></tr>'}</tbody></table></div><p class="manager-note">统计来自本应用保存的 CLI 用量。模型累计返回值按增量计算，避免多轮重复累加；包含 CLI 报告的主任务与子任务调用。删除会话后，用量计数仍保留，不保留聊天正文。${s.partial?`其中 ${s.partial} 轮来自旧版或仅主任务统计，明细可能不完整。`:''}服务商账户额度未在此推算。</p>`;
   }
-  function render(){if(isImport(page)){if(current().list)renderImport();}else if(page==='mcp'){if(mcpRows)renderMcp();}else if(page==='usage'){if(summary)renderUsage();}else if(catalog){page==='plugins'?renderPlugins():renderSkills();}disabled();}
+  function render(){if(isImport(page)){if(current().list)renderImport();}else if(page==='mcp'){if(mcpRows)renderMcp();}else if(page==='usage'){if(summary)renderUsage();}else if(page==='storage'){if(storage)renderStorage();}else if(catalog){page==='plugins'?renderPlugins():renderSkills();}disabled();}
   async function load(refresh=false){
     const token=++generation;status('正在读取…');$('#manager-refresh').disabled=true;
     try{
-      const requestedPage=page;const data=isImport(requestedPage)?await api(IMPORTS[requestedPage].source+':list'):requestedPage==='mcp'?await api('mcp:list',project()):requestedPage==='usage'?await api('usage:summary',{period,projectId:project()}):await api('extensions:list',project(),refresh);
-      if(token!==generation)return;if(isImport(requestedPage))imports[requestedPage].list=data;else if(requestedPage==='mcp')mcpRows=data;else if(requestedPage==='usage')summary=data;else catalog=data;tools();render();
-      status(isImport(page)?`${current().list.items.length} 条可见历史 · ${current().list.home}`:page==='mcp'?`${mcpRows.length} 个 MCP 配置 · 列表不展示凭据`:page==='usage'?'本地累计统计 · 按所选项目及时间筛选':catalog.warning||`${catalog.installed.length} 个已安装插件 · ${catalog.skills.length} 个技能 · ${catalog.available.length} 个市场条目`,Boolean(catalog?.warning&&!['usage','mcp'].includes(page)&&!isImport(page)));
+      const requestedPage=page;const data=isImport(requestedPage)?await api(IMPORTS[requestedPage].source+':list'):requestedPage==='mcp'?await api('mcp:list',project()):requestedPage==='usage'?await api('usage:summary',{period,projectId:project()}):requestedPage==='storage'?await api('storage:usage'):await api('extensions:list',project(),refresh);
+      if(token!==generation)return;if(isImport(requestedPage))imports[requestedPage].list=data;else if(requestedPage==='mcp')mcpRows=data;else if(requestedPage==='usage')summary=data;else if(requestedPage==='storage')storage=data;else catalog=data;tools();render();
+      status(isImport(page)?`${current().list.items.length} 条可见历史 · ${current().list.home}`:page==='mcp'?`${mcpRows.length} 个 MCP 配置 · 列表不展示凭据`:page==='usage'?'本地累计统计 · 按所选项目及时间筛选':page==='storage'?'已重新计算占用':catalog.warning||`${catalog.installed.length} 个已安装插件 · ${catalog.skills.length} 个技能 · ${catalog.available.length} 个市场条目`,Boolean(catalog?.warning&&!['usage','mcp','storage'].includes(page)&&!isImport(page)));
     }catch(e){if(token===generation){content.innerHTML='<div class="manager-empty">读取失败，请刷新重试。</div>';status(e.message,true);}}
     finally{if(token===generation)disabled();}
   }
@@ -107,6 +114,8 @@ export function createManager({ store, api, toast, confirm }) {
     }catch(e){status(e.message,true);}
   }
   content.onclick=event=>{
+    const clean=event.target.closest('[data-storage-clean]');if(clean)return(async()=>{const group=storage.groups.find(g=>g.key===clean.dataset.storageClean);if(!group||!await confirm({title:`清理${group.label}？`,description:'删除已经没有对话在用的内容，无法撤销。有未提交改动的工作树会保留。',preview:`${group.clean.count} 项 · ${bytes(group.clean.size)}`,label:'清理',kind:'danger'}))return;
+      if(busy)return;busy=true;disabled();status('正在清理…');try{const result=await api('storage:clean',group.key);store.load(await api('state'));await load();status(`已清理 ${result.removed} 项${result.failed.length?`，${result.failed.length} 项失败：${result.failed[0]}`:''}`,Boolean(result.failed.length));}catch(e){status(e.message,true);}finally{busy=false;disabled();}})();
     const mcp=event.target.closest('[data-mcp-remove]');if(mcp)return(async()=>{const name=mcp.dataset.mcpRemove,scope=mcp.dataset.mcpScope;if(await confirm({title:'移除 MCP 服务器？',description:'移除此范围内的连接配置，不卸载服务器程序，也不删除会话。',preview:name+' · '+scopeLabel(scope),label:'移除服务器'}))await perform(()=>api('mcp:action','remove',name,scope,project()),'正在移除 MCP…','MCP 配置已移除，下次发送生效');})();
 
     const plugin=event.target.closest('[data-plugin-action]');if(plugin)return pluginAction(plugin.dataset.pluginAction,plugin.dataset.pluginId,plugin.dataset.pluginScope||$('#plugin-scope').value);
