@@ -178,3 +178,8 @@ v0.11.1：最左侧新增图标栏：主页、MCP、插件、技能、累计用�
 - **并行会话提议**：desk 服务器新增 `propose_session` 工具。Claude 发现和当前任务无关、但值得单独做的事时，在回复下方放一张卡片（标题 + 可展开的任务说明）。点「开始」才会在同一个项目、用同样的模型 / 权限 / 思考强度开一个新会话，把说明作为第一条消息发出；之后卡片变成「打开会话」。点「不用了」收起（`engine.startProposal`、`dismissProposal`）。
 - **PR 和 CI**：右侧面板新增「拉取请求」。用 GitHub CLI（`gh pr view`）读取当前分支的 PR、审查状态和检查结果，失败的检查可以点开；每轮结束后刷新，检查进行中时每分钟刷新，结束时提示。检查失败或有合并冲突时，可以点「让 Claude 处理」。没装 gh、没登录、没有 GitHub 远程时显示原因（`pr.cjs`）。只读，不会推送或合并。
 - **浏览器预览**：顶部新增「浏览器」按钮，和终端共用右侧位置。每个会话有自己的页面（`<webview>`，独立分区，无 Node、无权限、只允许 http(s)）。Claude 可以用 `preview_open`、`preview_screenshot`、`preview_text`、`preview_click`、`preview_fill`、`preview_eval`、`preview_console` 打开并检查页面；窗口或面板隐藏时截图改用 DevTools 协议，仍然能截到（`preview.cjs`、`ui/src/views/preview.mjs`）。地址栏可以直接输入端口，例如 `5173`。
+
+### v0.24.0：全局提示词和项目提示词
+- 输入框底栏新增「提示词」按钮（设置了以后按钮上有一个点），在一个对话框里编辑两种提示词：**全局提示词**对所有会话生效，**项目提示词**只对这个项目里的会话生效；两者冲突时以项目为准。项目的右键菜单 / ⋯ 里也有「项目提示词」。
+- 提示词加在 Claude Desk 自己那段系统提示词后面（`<global_instructions>`、`<project_instructions>`），每段最多 20,000 字符。保存在设置和项目数据里（`engine.setInstructions`，IPC `instructions:set`）。
+- 系统提示词在 Claude 进程启动时固定，所以改了提示词以后，每个会话从下一条消息开始重新启动 Claude 并带上之前的对话；正在运行的那一轮不受影响。不属于项目的对话只用全局提示词。

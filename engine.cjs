@@ -9,6 +9,10 @@ const {WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT:DESK_PROMPT,wrapUpOf,proposalOf}=requir
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
 const ACTIVE = new Set(['starting', 'waiting', 'thinking', 'generating', 'tool', 'approval', 'stopping']);
+// The user's own prompts, added after Claude Desk's part of the system prompt:
+// a global one for every conversation and one per project, which wins on conflicts.
+const INSTRUCTIONS_MAX = 20000;
+const instructionsPrompt = ({ global, project }) => (global ? `\n\n<global_instructions>\n用户对所有会话的要求，与上面的默认做法冲突时以这里为准：\n${global}\n</global_instructions>` : '') + (project ? `\n\n<project_instructions>\n用户对这个项目的要求，与上面的默认做法或全局要求冲突时以这里为准：\n${project}\n</project_instructions>` : '');
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 // Items keep text, thinking and tool calls in the order they happened so the
 // renderer can show the work leading up to the final answer.
@@ -157,7 +161,8 @@ class Engine extends EventEmitter {
     const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort) ? options.effort : t.effort || 'high';
     const extensionOptions=this.sessionOptions(t);const extensionKey=JSON.stringify(extensionOptions);
     let run = this.runs.get(id);
-    if (run && (run.model !== model || run.mode !== mode || run.effort !== effort || run.extensionKey!==extensionKey)) { await this.closeRun(id); run = null; }
+    // The system prompt is fixed when the CLI starts, so a changed global or project prompt restarts it.
+    if (run && (run.model !== model || run.mode !== mode || run.effort !== effort || run.extensionKey!==extensionKey || run.instructions !== JSON.stringify(this.instructionsOf(t)))) { await this.closeRun(id); run = null; }
     const history = t.turns.filter(x => x.answer || x.tools?.length).map(x => ({ user: x.user, ...(x.images?.length ? { images: `[附带 ${x.images.length} 张图片，图片本身未包含在历史中]` } : {}), context:x.context, answer: x.answer, tools: x.tools?.map(y => ({ name: y.name, input: y.input, output: y.output })) }));
     Object.assign(t, { model, mode, effort, updatedAt: Date.now(), error: '', startedAt: Date.now(), finishedAt: null });
     if (!t.turns.length) t.title = (text || '图片').replace(/\s+/g, ' ').slice(0, 34);
@@ -254,6 +259,20 @@ class Engine extends EventEmitter {
     t.worktree = { ...t.worktree, removed: true }; t.cwd = this.store.state.projects.find(p => p.id === t.projectId)?.path || t.cwd;
     this.publish(id); this.store.save(); return t;
   }
+  instructionsOf(t) {
+    const project = t.projectId && this.store.state.projects.find(p => p.id === t.projectId);
+    return { global: this.store.state.settings.instructions || '', project: project?.instructions || '' };
+  }
+  // scope 'global' or 'project'. Takes effect from each conversation's next message;
+  // a running turn keeps the prompt it started with.
+  setInstructions(scope, projectId, text) {
+    const value = String(text ?? '').replace(/\r\n/g, '\n').trim();
+    if (value.length > INSTRUCTIONS_MAX) throw Error(`提示词最多 ${INSTRUCTIONS_MAX.toLocaleString()} 个字符`);
+    const target = scope === 'global' ? this.store.state.settings : scope === 'project' ? this.store.state.projects.find(p => p.id === projectId) : null;
+    if (!target) throw Error(scope === 'project' ? '项目不存在' : '提示词范围不对');
+    if (value) target.instructions = value; else delete target.instructions;
+    this.store.save(); return value;
+  }
   setMeta(id, value = {}) {
     const t = this.thread(id);
     if (typeof value.pinned === 'boolean') t.pinned = value.pinned;
@@ -264,7 +283,7 @@ class Engine extends EventEmitter {
   }
   startRun(t,extensionOptions={},extensionKey=JSON.stringify(extensionOptions)) {
     const abort = new AbortController(); const input = new InputQueue();
-    const run = { input, abort, extensionKey, model: t.model, mode: t.mode, effort: t.effort, turnId: null, finished: false, sessionId: '', seen: new Set(), blocks: new Map() };
+    const run = { input, abort, extensionKey, instructions: JSON.stringify(this.instructionsOf(t)), model: t.model, mode: t.mode, effort: t.effort, turnId: null, finished: false, sessionId: '', seen: new Set(), blocks: new Map() };
     this.runs.set(t.id, run);
     const env = { ...this.env }; delete env.CLAUDECODE; delete env.ELECTRON_RUN_AS_NODE;
     // Each conversation owns a live CLI process; app history is persisted separately.
@@ -277,7 +296,7 @@ class Engine extends EventEmitter {
       model: t.model, thinking: { type: 'adaptive' }, effort: t.effort,
       permissionMode: t.mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: t.mode === 'bypassPermissions',
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + (this.deskServer ? DESK_PROMPT : '') },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + (this.deskServer ? DESK_PROMPT : '') + instructionsPrompt(this.instructionsOf(t)) },
       includePartialMessages: true, persistSession: false, abortController: abort,
       canUseTool: (name, args, ctx) => this.requestApproval(t, run, name, args, ctx),
       stderr: text => { run.stderr = (run.stderr || '').concat(text).slice(-8000); this.emit('diagnostic', { threadId: t.id, message: text.slice(-1500) }); }

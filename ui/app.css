@@ -1316,3 +1316,13 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .preview-view.behind{z-index:0}
 .preview-empty{position:absolute;inset:0;z-index:2;display:grid;place-items:center;padding:30px;text-align:center;color:#929292;font-size:12.5px;line-height:1.7;background:#141413}
 .preview-empty[hidden]{display:none}
+/* Global and project prompts: a dot on the button once either applies here. */
+.instructions-toggle{position:relative;color:#9b9890;font-size:11px}
+.instructions-toggle svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.instructions-toggle.set{color:#d7d7d7}
+.instructions-toggle.set::after{content:"";position:absolute;top:5px;left:17px;width:6px;height:6px;border-radius:50%;background:#d7d7d7}
+:root[data-accent] .instructions-toggle.set::after{background:var(--accent)}
+.instructions-meta{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#929292}
+.instructions-meta .error{color:#e59b95}
+#instructions-global,#instructions-project{min-height:130px;line-height:1.6}
+.instructions-scope{margin-left:8px;font-size:11px;color:#929292;font-weight:400}

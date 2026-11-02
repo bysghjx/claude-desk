@@ -255,6 +255,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('worktree:remove', async (id, force) => { const wt=worktreeOf(id); if(ACTIVE.has(engine.thread(id).status))throw Error('请先停止当前运行');
     // The conversation's CLI process and any shell there keep the folder locked on Windows.
     await engine.closeRun(id); terminals.closeIn(wt.path); const result=await worktrees.remove(wt,{force:Boolean(force)}); await engine.detachWorktree(id); return {...result, thread: threadOut(id)}; });
+  handle('instructions:set', (scope, projectId, text) => engine.setInstructions(String(scope), projectId, text));
   handle('proposal:start', async (id, proposalId) => { const child = await engine.startProposal(id, String(proposalId)); return { thread: threadOut(id), child: threadOut(child) }; });
   handle('proposal:dismiss', (id, proposalId) => threadOut(engine.dismissProposal(id, String(proposalId))));
   handle('thread:send', async (id, text, opts={}) => {

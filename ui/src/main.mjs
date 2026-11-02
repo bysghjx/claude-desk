@@ -14,6 +14,7 @@ import { createDock } from './views/dock.mjs';
 import { createManager } from './views/manager.mjs';
 import { createPrPanel } from './views/pr.mjs';
 import { createPreviewPanel } from './views/preview.mjs';
+import { createInstructions } from './views/instructions.mjs';
 import { createChrome } from './views/chrome.mjs';
 import { createRewind } from './views/rewind.mjs';
 import { createTerminalPanel } from './views/terminal.mjs';
@@ -38,7 +39,8 @@ const terminal = createTerminalPanel({ store, api, toast, desk });
 createPreviewPanel({ store, api, toast, desk, terminal });
 createPalette({ store, api, actions, composer, toast });
 createPrPanel({ store, api, actions, toast });
-const sidebar = createSidebar({ api, store, actions, toast });
+const instructions = createInstructions({ store, api, toast });
+const sidebar = createSidebar({ api, store, actions, toast, editInstructions: id => instructions.open('project', id) });
 const manager = createManager({ store, api, toast, confirm });
 createChrome({ store, actions, api, toast, manager, composer, sidebar });
 

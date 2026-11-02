@@ -9,7 +9,7 @@ const PIN_ICON = '<svg class="pin-icon" viewBox="0 0 16 16" aria-hidden="true"><
 // Pinned projects first, each part in the user's drag order.
 export const orderedProjects = projects => [...projects.filter(p => p.pinned), ...projects.filter(p => !p.pinned)];
 
-export function createSidebar({ store, api, actions, toast }) {
+export function createSidebar({ store, api, actions, toast, editInstructions }) {
   const list = $('#threads'), menu = $('#thread-menu');
   const expanded = new Set();
   const collapsed = new Set((() => { try { return JSON.parse(localStorage.getItem('collapsedProjects') || '[]'); } catch { return []; } })());
@@ -72,7 +72,7 @@ export function createSidebar({ store, api, actions, toast }) {
   function openProjectMenu(id, at) {
     const p = store.state.projects.find(x => x.id === id); if (!p) return;
     menu.dataset.thread = ''; menu.dataset.project = id;
-    showMenu(`<button data-menu-action="project-pin">${p.pinned ? '取消置顶' : '置顶项目'}</button><button data-menu-action="project-new">新建任务</button><button data-menu-action="project-open">在资源管理器中打开</button>`, at);
+    showMenu(`<button data-menu-action="project-pin">${p.pinned ? '取消置顶' : '置顶项目'}</button><button data-menu-action="project-new">新建任务</button><button data-menu-action="project-instructions">项目提示词${p.instructions ? ' · 已设置' : ''}</button><button data-menu-action="project-open">在资源管理器中打开</button>`, at);
   }
   function startRename(id) { closeMenu(); renaming = id; signature = ''; render(); }
   async function finishRename(id, value) {
@@ -88,6 +88,7 @@ export function createSidebar({ store, api, actions, toast }) {
       const p = store.state.projects.find(x => x.id === projectId); closeMenu(); if (!p) return;
       if (action === 'project-pin') { await actions.setProjectPinned(projectId, !p.pinned); return toast(p.pinned ? '已取消置顶' : `已置顶「${p.name}」`); }
       if (action === 'project-new') { collapsed.delete(projectId); return actions.selectProject(projectId); }
+      if (action === 'project-instructions') return editInstructions(projectId);
       if (action === 'project-open') return api('project:open', projectId);
       return;
     }
