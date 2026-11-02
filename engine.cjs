@@ -98,7 +98,7 @@ class Engine extends EventEmitter {
     const real = fs.realpathSync(directory);
     if (!fs.statSync(real).isDirectory()) throw Error('请选择文件夹');
     let p = this.store.state.projects.find(x => x.path.toLowerCase() === real.toLowerCase());
-    if (!p) { p = { id: randomUUID(), name: path.basename(real), path: real }; this.store.state.projects.unshift(p); this.store.save(); }
+    if (!p) { p = { id: randomUUID(), name: path.basename(real), path: real }; this.store.state.projects.splice(this.store.state.projects.filter(x => x.pinned).length, 0, p); this.store.save(); }
     return p;
   }
   // `ids` is the full project list in its new order (dragged in the sidebar).
@@ -107,6 +107,14 @@ class Engine extends EventEmitter {
     if (!Array.isArray(ids) || ids.length !== projects.length || new Set(ids).size !== ids.length || ids.some(id => !projects.some(p => p.id === id))) throw Error('项目列表已变化，请重试');
     projects.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)); this.store.save();
     return projects.map(p => p.id);
+  }
+  // A pinned project goes to the top of the pinned ones; an unpinned one to the top of the rest.
+  setProjectPinned(id, pinned) {
+    const projects = this.store.state.projects, p = projects.find(x => x.id === id); if (!p) throw Error('项目不存在');
+    projects.splice(projects.indexOf(p), 1);
+    if (pinned) p.pinned = true; else delete p.pinned;
+    projects.splice(pinned ? 0 : projects.filter(x => x.pinned).length, 0, p); this.store.save();
+    return structuredClone(projects);
   }
   // `worktree` (from worktree.cjs) makes the conversation run in its own checkout.
   // Without a project the conversation is a chat: it works in its own empty folder under chatRoot.

@@ -5,8 +5,11 @@ import { STATUS_LABELS, isActive, shortAgo, threadDot } from '../core/format.mjs
 import { guarded } from '../core/ui.mjs';
 
 const VISIBLE_LIMIT = 6;
+const PIN_ICON = '<svg class="pin-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.8 2.2 13.8 6.2M11.8 4.2 9 7l-3.2-.6-1.4 1.4 3.8 3.8 1.4-1.4L9 7M6.1 9.9 2.5 13.5"/></svg>';
+// Pinned projects first, each part in the user's drag order.
+export const orderedProjects = projects => [...projects.filter(p => p.pinned), ...projects.filter(p => !p.pinned)];
 
-export function createSidebar({ store, actions, toast }) {
+export function createSidebar({ store, api, actions, toast }) {
   const list = $('#threads'), menu = $('#thread-menu');
   const expanded = new Set();
   const collapsed = new Set((() => { try { return JSON.parse(localStorage.getItem('collapsedProjects') || '[]'); } catch { return []; } })());
@@ -22,7 +25,7 @@ export function createSidebar({ store, actions, toast }) {
     const matches = t => !query || `${t.title} ${t.turns.map(x => x.user).join(' ')}`.toLowerCase().includes(query);
     const visible = store.state.threads.filter(t => Boolean(t.archived) === archivedView && matches(t)).sort((a, b) => b.updatedAt - a.updatedAt);
     const pinned = archivedView ? [] : visible.filter(t => t.pinned);
-    const groups = store.state.projects.map(p => ({ p, threads: visible.filter(t => t.projectId === p.id && !pinned.includes(t)) }))
+    const groups = orderedProjects(store.state.projects).map(p => ({ p, threads: visible.filter(t => t.projectId === p.id && !pinned.includes(t)) }))
       .filter(g => g.threads.length || (!query && !archivedView));
     const chats = visible.filter(t => !pinned.includes(t) && !t.projectId);
     const orphans = visible.filter(t => !pinned.includes(t) && t.projectId && !store.state.projects.some(p => p.id === t.projectId));
@@ -32,7 +35,7 @@ export function createSidebar({ store, actions, toast }) {
     if (!archivedView && !query || chats.length) html += `<div class="chat-group" data-drop-project=""><div class="tree-section chats-head">对话<button class="project-new" data-new-chat title="新对话（不属于任何项目）" aria-label="新对话">+</button></div>${chats.length ? chats.slice(0, expanded.has('chats') || query ? chats.length : VISIBLE_LIMIT).map(row).join('') + (chats.length > VISIBLE_LIMIT && !expanded.has('chats') && !query ? `<button class="tree-more" data-expand-project="chats">显示其余 ${chats.length - VISIBLE_LIMIT} 个</button>` : '') : `<div class="tree-empty">${archivedView ? '没有归档的对话' : '不选项目直接提问，会出现在这里'}</div>`}</div><div class="tree-section">项目</div>`;
     for (const { p, threads } of groups) {
       const folded = !query && collapsed.has(p.id), limit = expanded.has(p.id) || query ? threads.length : VISIBLE_LIMIT;
-      html += `<div class="project-block" data-project-block="${escape(p.id)}"><div class="project-group ${selectedProject === p.id ? 'selected' : ''}" data-drop-project="${escape(p.id)}" draggable="true" data-drag-project="${escape(p.id)}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><span class="project-name">${escape(p.name)}</span></button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
+      html += `<div class="project-block" data-project-block="${escape(p.id)}"><div class="project-group ${selectedProject === p.id ? 'selected' : ''}" data-drop-project="${escape(p.id)}" draggable="true" data-drag-project="${escape(p.id)}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><span class="project-name">${escape(p.name)}</span>${p.pinned ? `<span class="project-pin" title="已置顶">${PIN_ICON}</span>` : ''}</button><button class="thread-more project-more" data-project-menu="${escape(p.id)}" title="更多操作" aria-label="项目 ${escape(p.name)} 的更多操作">⋯</button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
       if (!folded) html += threads.length ? threads.slice(0, limit).map(row).join('') + (threads.length > limit ? `<button class="tree-more" data-expand-project="${escape(p.id)}">显示其余 ${threads.length - limit} 个</button>` : '') : `<div class="tree-empty">${archivedView ? '没有归档的会话' : '还没有会话'}</div>`;
       html += '</div>';
     }
@@ -53,14 +56,23 @@ export function createSidebar({ store, actions, toast }) {
     const input = list.querySelector('[data-rename-input]'); if (input) { input.focus(); input.select(); }
   }
 
-  function closeMenu() { menu.hidden = true; menu.dataset.thread = ''; }
-  function openMenu(id, anchor) {
-    const t = store.thread(id); if (!t) return;
-    menu.innerHTML = `<button data-menu-action="rename">重命名</button><button data-menu-action="pin">${t.pinned ? '取消置顶' : '置顶'}</button><button data-menu-action="archive">${t.archived ? '取消归档' : '归档'}</button><div class="menu-line"></div><button data-menu-action="delete" class="danger">删除会话</button>`;
-    menu.dataset.thread = id; menu.hidden = false;
-    const rect = anchor.getBoundingClientRect();
-    menu.style.left = Math.min(rect.right - 4, window.innerWidth - 180) + 'px'; menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 170) + 'px';
+  function closeMenu() { menu.hidden = true; menu.dataset.thread = ''; menu.dataset.project = ''; }
+  // `at` is the ⋯ button (menu below it) or a right-click point.
+  function showMenu(html, at) {
+    menu.innerHTML = html; menu.hidden = false;
+    const rect = at.getBoundingClientRect?.(), x = rect ? rect.right - 4 : at.x, y = rect ? rect.bottom + 4 : at.y;
+    menu.style.left = Math.min(x, window.innerWidth - 180) + 'px'; menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
     menu.querySelector('button').focus();
+  }
+  function openMenu(id, at) {
+    const t = store.thread(id); if (!t) return;
+    menu.dataset.project = ''; menu.dataset.thread = id;
+    showMenu(`<button data-menu-action="rename">重命名</button><button data-menu-action="pin">${t.pinned ? '取消置顶' : '置顶'}</button><button data-menu-action="archive">${t.archived ? '取消归档' : '归档'}</button><div class="menu-line"></div><button data-menu-action="delete" class="danger">删除会话</button>`, at);
+  }
+  function openProjectMenu(id, at) {
+    const p = store.state.projects.find(x => x.id === id); if (!p) return;
+    menu.dataset.thread = ''; menu.dataset.project = id;
+    showMenu(`<button data-menu-action="project-pin">${p.pinned ? '取消置顶' : '置顶项目'}</button><button data-menu-action="project-new">新建任务</button><button data-menu-action="project-open">在资源管理器中打开</button>`, at);
   }
   function startRename(id) { closeMenu(); renaming = id; signature = ''; render(); }
   async function finishRename(id, value) {
@@ -71,7 +83,14 @@ export function createSidebar({ store, actions, toast }) {
   function cancelRename() { renaming = null; signature = ''; render(); }
 
   menu.addEventListener('click', guarded(toast, async event => {
-    const action = event.target.closest('[data-menu-action]')?.dataset.menuAction, id = menu.dataset.thread;
+    const action = event.target.closest('[data-menu-action]')?.dataset.menuAction, id = menu.dataset.thread, projectId = menu.dataset.project;
+    if (action && projectId) {
+      const p = store.state.projects.find(x => x.id === projectId); closeMenu(); if (!p) return;
+      if (action === 'project-pin') { await actions.setProjectPinned(projectId, !p.pinned); return toast(p.pinned ? '已取消置顶' : `已置顶「${p.name}」`); }
+      if (action === 'project-new') { collapsed.delete(projectId); return actions.selectProject(projectId); }
+      if (action === 'project-open') return api('project:open', projectId);
+      return;
+    }
     if (!action || !id) return;
     const t = store.thread(id); closeMenu(); if (!t) return;
     if (action === 'rename') return startRename(id);
@@ -79,7 +98,14 @@ export function createSidebar({ store, actions, toast }) {
     if (action === 'archive') return actions.setArchived(id, !t.archived);
     if (action === 'delete') return actions.deleteThread(id);
   }));
-  document.addEventListener('mousedown', event => { if (!menu.hidden && !event.target.closest?.('#thread-menu,[data-thread-menu]')) closeMenu(); });
+  document.addEventListener('mousedown', event => { if (!menu.hidden && event.button === 0 && !event.target.closest?.('#thread-menu,[data-thread-menu],[data-project-menu]')) closeMenu(); });
+  // Right-click a conversation or a project header for the same menu as its ⋯ button.
+  list.addEventListener('contextmenu', event => {
+    const rowEl = event.target.closest?.('[data-drag-thread]'), head = event.target.closest?.('[data-drag-project]');
+    if (event.target.closest?.('[data-rename-input]') || (!rowEl && !head)) return;
+    event.preventDefault();
+    rowEl ? openMenu(rowEl.dataset.dragThread, { x: event.clientX, y: event.clientY }) : openProjectMenu(head.dataset.dragProject, { x: event.clientX, y: event.clientY });
+  });
   list.addEventListener('keydown', event => {
     const input = event.target.closest?.('[data-rename-input]'); if (!input) return;
     if (event.key === 'Enter') { event.preventDefault(); finishRename(input.dataset.renameInput, input.value).catch(e => toast(e.message)); }
@@ -92,6 +118,8 @@ export function createSidebar({ store, actions, toast }) {
     if (target.closest('[data-rename-input]')) return;
     const more = target.closest('[data-thread-menu]');
     if (more) { event.stopPropagation(); return menu.dataset.thread === more.dataset.threadMenu && !menu.hidden ? closeMenu() : openMenu(more.dataset.threadMenu, more); }
+    const projectMore = target.closest('[data-project-menu]');
+    if (projectMore) { event.stopPropagation(); return menu.dataset.project === projectMore.dataset.projectMenu && !menu.hidden ? closeMenu() : openProjectMenu(projectMore.dataset.projectMenu, projectMore); }
     const open = target.closest('[data-thread]'); if (open) return actions.selectThread(open.dataset.thread);
     if (target.closest('[data-new-chat]')) return actions.showHome();
     const fresh = target.closest('[data-new-in-project]'); if (fresh) { collapsed.delete(fresh.dataset.newInProject); return actions.selectProject(fresh.dataset.newInProject); }
@@ -108,14 +136,16 @@ export function createSidebar({ store, actions, toast }) {
   // Where the dragged project would land: before or after the block under the pointer.
   function projectSlot(event) {
     const block = event.target.closest?.('[data-project-block]'); if (!block || !draggingProject) return null;
+    const pinned = id => Boolean(store.state.projects.find(p => p.id === id)?.pinned);
+    if (pinned(block.dataset.projectBlock) !== pinned(draggingProject)) return null;
     const rect = block.getBoundingClientRect(), after = event.clientY > rect.top + rect.height / 2;
     return { block, id: block.dataset.projectBlock, after };
   }
   function reordered(slot) {
-    const ids = store.state.projects.map(p => p.id).filter(id => id !== draggingProject);
+    const shown = orderedProjects(store.state.projects).map(p => p.id), ids = shown.filter(id => id !== draggingProject);
     const at = ids.indexOf(slot.id); if (at < 0) return null;
     ids.splice(at + (slot.after ? 1 : 0), 0, draggingProject);
-    return ids.join() === store.state.projects.map(p => p.id).join() ? null : ids;
+    return ids.join() === shown.join() ? null : ids;
   }
   list.addEventListener('dragstart', event => {
     const head = event.target.closest?.('[data-drag-project]');

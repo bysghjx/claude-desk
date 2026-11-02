@@ -222,6 +222,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   const worktrees=new Worktrees(path.join(dataRoot,'worktrees'));
   handle('thread:create', async (id, options={}) => threadOut(engine.create(id || null, id && options?.worktree ? { worktree: await worktrees.create(project(id).path) } : {})));
   handle('project:reorder', ids => engine.reorderProjects(ids));
+  handle('project:pin', (id, pinned) => engine.setProjectPinned(id, Boolean(pinned)));
   handle('thread:move', async (id, projectId) => threadOut(await engine.moveThread(id, projectId || null)));
   const worktreeOf=id=>{const t=engine.thread(id);if(!t.worktree||t.worktree.removed)throw Error('这个会话没有独立工作树');return t.worktree;};
   // Terminal panel: one shell per workspace folder, opened on demand.

@@ -306,3 +306,17 @@ test('projects keep the order the user drags them into',async()=>{
   assert.deepEqual(engine.store.state.projects.map(p=>p.id),[added.id,'p0','p2','p1'],'the dragged order survives a restart');
   await engine.shutdown();
 });
+
+test('pinned projects stay above the others',async()=>{
+  const dir=fs.mkdtempSync(path.join(scratch,'claude-desk-pin-'));const file=path.join(dir,'state.json');
+  const engine=new Engine({query:()=>{throw Error('unused');},store:new JsonStore(file),cliPath:'fake'});
+  const add=n=>{const f=path.join(dir,n);fs.mkdirSync(f);return engine.addProject(f).id;};
+  const a=add('a'),b=add('b'),c=add('c');const order=()=>engine.store.state.projects.map(p=>p.id);
+  assert.deepEqual(order(),[c,b,a]);
+  engine.setProjectPinned(a,true);assert.deepEqual(order(),[a,c,b]);
+  const listed=engine.setProjectPinned(b,true);assert.deepEqual(order(),[b,a,c],'the newest pin goes first');assert.equal(listed[0].pinned,true);
+  const d=add('d');assert.deepEqual(order(),[b,a,d,c],'a new folder goes below the pinned projects');
+  engine.setProjectPinned(b,false);assert.deepEqual(order(),[a,b,d,c],'unpinned goes to the top of the rest');assert.equal('pinned' in engine.store.state.projects[1],false);
+  assert.throws(()=>engine.setProjectPinned('missing',true),/项目不存在/);
+  await engine.shutdown();
+});

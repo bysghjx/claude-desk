@@ -1245,3 +1245,8 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .project-block.drop-before::before{top:2px}
 .project-block.drop-after::after{bottom:-3px}
 :root[data-accent] .project-block.drop-before::before,:root[data-accent] .project-block.drop-after::after{background:var(--accent)}
+
+/* Pinned projects and the project ⋯ menu */
+.project-pin{display:inline-flex;flex:none;margin-left:5px;color:#8f8f8a}
+.pin-icon{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.project-group:hover .project-more,.project-more:focus-visible{opacity:1}

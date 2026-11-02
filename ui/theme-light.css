@@ -600,6 +600,7 @@
   .brand-search{color:#5f5e58}
   .brand-search:hover{background:#0f0f0f10;color:#26251c}
   .project-block.drop-before::before,.project-block.drop-after::after{background:#3a3831}
+  .project-pin{color:#656561}
 }
 
 /* Hand-tuned light theme details */

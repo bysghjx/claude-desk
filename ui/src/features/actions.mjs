@@ -113,6 +113,9 @@ export function createActions({ store, api, composer, toast, confirm }) {
     store.state.projects = ids.map(id => byId.get(id)).filter(Boolean); store.emit('threads');
     try { await api('project:reorder', ids); } catch (error) { store.state.projects = before; store.emit('threads'); throw error; }
   }
+  async function setProjectPinned(id, pinned) {
+    store.state.projects = await api('project:pin', id, pinned); store.emit('threads');
+  }
   async function sendQueuedNow(queueId) { await api('queue:send', store.selected, queueId); }
   async function removeQueued(queueId) { await api('queue:remove', store.selected, queueId); }
   async function editQueued(queueId) {
@@ -125,5 +128,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
 }
