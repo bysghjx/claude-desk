@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -9,7 +9,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -157,11 +157,12 @@ if(primaryInstance)app.whenReady().then(async () => {
   const materialOf=()=>{const m=engine?.store.state.settings.material;return materialSupported?(MATERIALS.has(m)?m:'mica'):'none';};
   const applyMaterial=w=>{if(!w||w.isDestroyed())return;const m=materialOf();if(materialSupported)w.setBackgroundMaterial(m);w.setBackgroundColor(m==='none'?windowBackground():'#00000000');};
   nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed()){if(w===win)applyMaterial(w);else w.setBackgroundColor(windowBackground());}});
-  const { query, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');const { z } = require('zod');
+  const { query, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
+  const preview=new BrowserPreview({nativeImage,send:event=>{if(win&&!win.isDestroyed())win.webContents.send('preview:event',event);}});const { z } = require('zod');
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
   const legacy=[path.join(dataRoot,'bootstrap.json'),path.join(appData,'ClaudeDesk/data/workspace.json'),path.join(shadowRoot,'ClaudeDesk/data/workspace.json'),path.join(appData,'Claude Desk/data/workspace.json'),path.join(appData,'claude-desk/data/workspace.json'),path.join(projectRoot,'work/claude-desk-ui/workspace.json'),path.join(projectRoot,'work/claude-desk-v2-qa/workspace.json')];
-  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z }) });
+  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z, preview }) });
   const keepAwake=new KeepAwake(powerSaveBlocker);
   const updateAwake=()=>keepAwake.update(engine.store.state.settings.keepAwake!==false&&engine.store.state.threads.some(x=>ACTIVE.has(x.status)));
   applyTheme(engine.store.state.settings.theme);
@@ -236,6 +237,8 @@ if(primaryInstance)app.whenReady().then(async () => {
   terminals=new Terminals({send:event=>{if(win&&!win.isDestroyed())win.webContents.send('terminal:event',event);}});
   const storageUsage=new StorageUsage({dataRoot,state:()=>engine.store.state,checkpointKey:cwd=>checkpoints.key(cwd),worktreeStatus:wt=>worktrees.status(wt),
     removeWorktree:async t=>{if(ACTIVE.has(t.status))throw Error('对话正在运行');await engine.closeRun(t.id);terminals.closeIn(t.worktree.path);await worktrees.remove(t.worktree);await engine.detachWorktree(t.id);}});
+  // The 浏览器 panel reports each conversation's page once its <webview> is attached.
+  handle('preview:attach',(threadId,id)=>{const contents=webContents.fromId(Number(id));if(!contents||contents.hostWebContents!==win?.webContents)throw Error('不是浏览器面板里的页面');preview.attach(String(threadId),contents);return true;});
   handle('storage:usage',()=>storageUsage.scan());
   const pullRequests=new PullRequests();
   handle('pr:status',id=>{const t=engine.thread(id);return t.projectId?pullRequests.status(t.cwd):{available:false,reason:'不属于项目的对话没有拉取请求。'};});
@@ -349,7 +352,10 @@ if(primaryInstance)app.whenReady().then(async () => {
   });
   handle('window', action => { if(action === 'min') win.minimize(); if(action === 'max') win.isMaximized()?win.unmaximize():win.maximize(); if(action === 'close') win.close(); });
   const icon = nativeImage.createFromPath(path.join(__dirname,'ui/icon.png'));
-  win = new BrowserWindow({ width: 1480, height: 970, minWidth: 1040, minHeight: 690, title: 'Claude Desk', backgroundColor:materialOf()==='none'?windowBackground():'#00000000', ...(materialOf()!=='none'?{backgroundMaterial:materialOf()}:{}), autoHideMenuBar:true, icon, titleBarStyle:'hidden', webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true} });
+  win = new BrowserWindow({ width: 1480, height: 970, minWidth: 1040, minHeight: 690, title: 'Claude Desk', backgroundColor:materialOf()==='none'?windowBackground():'#00000000', ...(materialOf()!=='none'?{backgroundMaterial:materialOf()}:{}), autoHideMenuBar:true, icon, titleBarStyle:'hidden', webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webviewTag:true} });
+  // Pages in the 浏览器 panel: no preload or Node, http(s) only, no permissions, links that open a window load in place.
+  win.webContents.on('will-attach-webview',(event,prefs,params)=>{delete prefs.preload;Object.assign(prefs,{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true});if(!PAGE_URL.test(params.src||'about:blank'))event.preventDefault();});
+  win.webContents.on('did-attach-webview',(_event,contents)=>{contents.setWindowOpenHandler(({url})=>{if(PAGE_URL.test(url))contents.loadURL(url);return{action:'deny'};});contents.on('will-navigate',(e,url)=>{if(!PAGE_URL.test(url))e.preventDefault();});contents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));});
   win.on('closed',()=>{agentWindows.close();terminals?.closeAll();});
   win.on('focus',()=>win.flashFrame(false));
   // The title bar swaps its maximise / restore icon.

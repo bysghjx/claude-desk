@@ -273,7 +273,7 @@ class Engine extends EventEmitter {
       cwd: t.cwd, pathToClaudeCodeExecutable: this.cliPath, env,
       ...(extensionOptions.skills!==undefined?{skills:extensionOptions.skills}:{}),
       ...(extensionOptions.plugins?.length?{plugins:extensionOptions.plugins}:{}),
-      ...(this.deskServer?{mcpServers:{desk:this.deskServer()},allowedTools:DESK_TOOLS}:{}),
+      ...(this.deskServer?{mcpServers:{desk:this.deskServer(t.id)},allowedTools:DESK_TOOLS}:{}),
       model: t.model, thinking: { type: 'adaptive' }, effort: t.effort,
       permissionMode: t.mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: t.mode === 'bypassPermissions',

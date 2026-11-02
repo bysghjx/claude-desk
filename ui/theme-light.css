@@ -629,6 +629,13 @@
   .pr-state-passed .pr-checks::before{background:#4c805f}
   .pr-state-failed .pr-checks::before{background:#c5372c}
   .pr-failing{color:#c5372c}
+  .preview-panel{background:#fafafa;border-left:1px solid #ececeb}
+  .preview-bar{border-bottom:1px solid #f0f0ef}
+  .preview-bar button{color:#3f3f3f}
+  .preview-bar button:hover{background:#f0f0f0}
+  .preview-bar input{border:1px solid #ececeb;background:#f7f7f7;color:#1e1e1e}
+  .preview-views{background:#0f0f0f}
+  .preview-empty{color:#606060;background:#fafafa}
 }
 
 /* Hand-tuned light theme details */

@@ -13,6 +13,7 @@ import { createReview } from './views/review.mjs';
 import { createDock } from './views/dock.mjs';
 import { createManager } from './views/manager.mjs';
 import { createPrPanel } from './views/pr.mjs';
+import { createPreviewPanel } from './views/preview.mjs';
 import { createChrome } from './views/chrome.mjs';
 import { createRewind } from './views/rewind.mjs';
 import { createTerminalPanel } from './views/terminal.mjs';
@@ -33,7 +34,8 @@ inspector = createInspector({ store, actions, api, composer, toast, dock, review
 const conversation = createConversation({ store, actions, api, composer, toast, reviewPanel: review });
 const status = createStatus({ store, actions, api, composer, toast });
 createRewind({ store, api, actions, composer, toast });
-createTerminalPanel({ store, api, toast, desk });
+const terminal = createTerminalPanel({ store, api, toast, desk });
+createPreviewPanel({ store, api, toast, desk, terminal });
 createPalette({ store, api, actions, composer, toast });
 createPrPanel({ store, api, actions, toast });
 const sidebar = createSidebar({ api, store, actions, toast });

@@ -172,3 +172,9 @@ v0.11.1：最左侧新增图标栏：主页、MCP、插件、技能、累计用�
 - **收尾框**：Claude Desk 通过 Agent SDK 的进程内 MCP 服务器给 Claude 加了一个 `wrap_up` 工具（`desk-tools.cjs`，服务器名 `desk`）。改了文件、运行了命令或做完多步工作时，Claude 在最后的回复之前调用它：回复下方出现小结，需要你决定时带一个问题和 1–2 个按钮，点按钮等于把按钮文字发给 Claude。这个工具不需要批准，也不出现在步骤列表里；按钮只在最新一轮、会话空闲时可点。
 - **防休眠**：有会话在运行时阻止电脑进入睡眠（Electron `powerSaveBlocker`，`awake.cjs`），屏幕仍按系统设置关闭；全部结束后恢复。设置 → 防休眠可以关掉。
 - `zod` 改为直接依赖（`wrap_up` 的参数定义需要它）。
+
+### v0.23.0：存储占用、并行会话提议、PR 和 CI、浏览器预览
+- **存储占用**：工作空间窗口新增「存储」标签（设置 → 存储占用，或 Ctrl+K）。按类显示会话数据、图片附件、文件快照、独立工作树、对话文件夹和迁移备份各占多少空间，以及磁盘剩余。只清理已经没人用的内容：没有消息引用的图片、已删除对话的快照和对话文件夹、已删除或已归档对话里没有未提交改动的工作树（`storage-usage.cjs`，IPC `storage:usage` / `storage:clean`）。
+- **并行会话提议**：desk 服务器新增 `propose_session` 工具。Claude 发现和当前任务无关、但值得单独做的事时，在回复下方放一张卡片（标题 + 可展开的任务说明）。点「开始」才会在同一个项目、用同样的模型 / 权限 / 思考强度开一个新会话，把说明作为第一条消息发出；之后卡片变成「打开会话」。点「不用了」收起（`engine.startProposal`、`dismissProposal`）。
+- **PR 和 CI**：右侧面板新增「拉取请求」。用 GitHub CLI（`gh pr view`）读取当前分支的 PR、审查状态和检查结果，失败的检查可以点开；每轮结束后刷新，检查进行中时每分钟刷新，结束时提示。检查失败或有合并冲突时，可以点「让 Claude 处理」。没装 gh、没登录、没有 GitHub 远程时显示原因（`pr.cjs`）。只读，不会推送或合并。
+- **浏览器预览**：顶部新增「浏览器」按钮，和终端共用右侧位置。每个会话有自己的页面（`<webview>`，独立分区，无 Node、无权限、只允许 http(s)）。Claude 可以用 `preview_open`、`preview_screenshot`、`preview_text`、`preview_click`、`preview_fill`、`preview_eval`、`preview_console` 打开并检查页面；窗口或面板隐藏时截图改用 DevTools 协议，仍然能截到（`preview.cjs`、`ui/src/views/preview.mjs`）。地址栏可以直接输入端口，例如 `5173`。

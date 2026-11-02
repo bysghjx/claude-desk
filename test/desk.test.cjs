@@ -1,5 +1,5 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
-const {Engine,JsonStore,InputQueue}=require('../engine.cjs');const {WRAP_UP,PROPOSE,wrapUpOf,proposalOf,deskServerFactory}=require('../desk-tools.cjs');const {KeepAwake}=require('../awake.cjs');
+const {Engine,JsonStore,InputQueue}=require('../engine.cjs');const {WRAP_UP,PROPOSE,DESK_TOOLS,wrapUpOf,proposalOf,deskServerFactory}=require('../desk-tools.cjs');const {KeepAwake}=require('../awake.cjs');
 const worklog=()=>import('../ui/src/lib/worklog.mjs');
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -23,7 +23,7 @@ test('desk server factory builds one wrap_up tool per call',()=>{
 test('engine gives Claude the desk tools, records the wrap-up box and never asks to approve it',async()=>{
   const{engine,t,outputs,contexts}=setup(()=>({type:'sdk',name:'desk'}));
   await engine.send(t.id,'fix it');await tick();
-  const options=contexts[0];assert.equal(options.mcpServers.desk.name,'desk');assert.deepEqual(options.allowedTools,[WRAP_UP,PROPOSE]);assert.match(options.systemPrompt.append,/wrap_up/);
+  const options=contexts[0];assert.equal(options.mcpServers.desk.name,'desk');assert.deepEqual(options.allowedTools,DESK_TOOLS);assert.match(options.systemPrompt.append,/wrap_up/);
   assert.deepEqual(await options.canUseTool(WRAP_UP,{recap:'r'},{toolUseID:'w1'}),{behavior:'allow',updatedInput:{recap:'r'}});
   outputs.push({type:'assistant',uuid:'a1',message:{content:[{type:'tool_use',id:'w1',name:WRAP_UP,input:{recap:'Fixed the bug.',ask:'Commit?',actions:['Commit','Wait']}}]}});
   outputs.push({type:'result',subtype:'success',is_error:false,result:'Done',usage:{output_tokens:1},total_cost_usd:0});await tick();

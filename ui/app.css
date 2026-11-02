@@ -1297,3 +1297,22 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .pr-link{all:unset;cursor:pointer;color:inherit}
 .pr-link:hover{text-decoration:underline}
 .pr-card .small{justify-self:start;margin-top:2px}
+/* 浏览器 panel: same place and width handling as the terminal; one <webview> per conversation. */
+:root{--preview-width:46%}
+.preview-panel{position:absolute;right:0;top:0;bottom:0;width:var(--preview-width);display:flex;flex-direction:column;background:#141413;border-left:1px solid #33332f;z-index:6}
+.preview-panel[hidden]{display:none}
+.preview-panel:not([hidden]){animation:slide-in-right var(--motion) var(--ease-out)}
+.preview-open .main-area{padding-right:var(--preview-width)}
+.preview-open .context-panel{display:none}
+.preview-open .messages,.preview-open .composer-wrap{padding-left:20px;padding-right:20px}
+.preview-open .composer-bottom{flex-wrap:wrap}
+.preview-bar{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #2b2b28}
+.preview-bar button{flex:none;width:28px;height:28px;border-radius:7px;color:#bdbdbd}
+.preview-bar button:hover{background:#2a2a28}
+.preview-bar input{flex:1;min-width:0;height:28px;border-radius:7px;border:1px solid #33332f;background:#1d1d1c;color:#ececec;padding:0 10px;font-size:12px}
+.preview-views{position:relative;flex:1;min-height:0;background:#fff}
+.preview-view{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+/* Pages of other conversations keep rendering behind the current one. */
+.preview-view.behind{z-index:0}
+.preview-empty{position:absolute;inset:0;z-index:2;display:grid;place-items:center;padding:30px;text-align:center;color:#929292;font-size:12.5px;line-height:1.7;background:#141413}
+.preview-empty[hidden]{display:none}
