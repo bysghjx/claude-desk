@@ -183,3 +183,7 @@ v0.11.1：最左侧新增图标栏：主页、MCP、插件、技能、累计用�
 - 输入框底栏新增「提示词」按钮（设置了以后按钮上有一个点），在一个对话框里编辑两种提示词：**全局提示词**对所有会话生效，**项目提示词**只对这个项目里的会话生效；两者冲突时以项目为准。项目的右键菜单 / ⋯ 里也有「项目提示词」。
 - 提示词加在 Claude Desk 自己那段系统提示词后面（`<global_instructions>`、`<project_instructions>`），每段最多 20,000 字符。保存在设置和项目数据里（`engine.setInstructions`，IPC `instructions:set`）。
 - 系统提示词在 Claude 进程启动时固定，所以改了提示词以后，每个会话从下一条消息开始重新启动 Claude 并带上之前的对话；正在运行的那一轮不受影响。不属于项目的对话只用全局提示词。
+
+### v0.24.1：内置 Claude Code
+- 打包时把 Agent SDK 自带的 Claude Code（`claude.exe`）放到 `resources/app.asar.unpacked` 里，可以直接运行。找 Claude 的顺序：先用电脑上自己装的 Claude Code（`~/.local/bin`、`~/.claude/bin`、PATH），都没有才用内置的。设置里会标出用的是内置版本。
+- 设置新增「打开 Claude 命令行」：在命令行窗口里运行当前用的 Claude Code，没登录过的电脑可以在里面输入 `/login` 登录。

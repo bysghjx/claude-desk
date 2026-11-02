@@ -1,7 +1,7 @@
 {
   "name": "claude-desk",
   "productName": "Claude Desk",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "Local Claude Code desktop workspace",
   "main": "main.cjs",
   "private": true,

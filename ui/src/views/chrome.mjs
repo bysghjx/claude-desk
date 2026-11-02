@@ -71,7 +71,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   async function openSettings() {
     themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false;
     const p = store.state.provider;
-    $('#config-details').innerHTML = [['服务商', p.host], ['Claude CLI', p.cliPath || '未找到官方原生 Claude'], ['凭据', p.configured ? '已从现有配置读取（界面不显示密钥）' : '未发现 API 配置；CLI 将使用其现有登录'], ['配置文件', p.configPath], ['会话目录', p.dataRoot]].map(([key, value]) => `<div class="config-row"><span>${key}</span><span>${escape(value)}</span></div>`).join('');
+    $('#config-details').innerHTML = [['服务商', p.host], ['Claude CLI', p.cliPath ? p.cliPath + (p.cliBundled ? '（Claude Desk 内置；没登录过的话点「打开 Claude 命令行」输入 /login）' : '') : '未找到官方原生 Claude'], ['凭据', p.configured ? '已从现有配置读取（界面不显示密钥）' : '未发现 API 配置；CLI 将使用其现有登录'], ['配置文件', p.configPath], ['会话目录', p.dataRoot]].map(([key, value]) => `<div class="config-row"><span>${key}</span><span>${escape(value)}</span></div>`).join('');
     $('#settings-result').textContent = ''; $('#settings-dialog').showModal(); rail('settings');
     try {
       const info = await api('storage:info');
@@ -95,6 +95,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#notify-test').addEventListener('click', guarded(toast, async () => { toast(await api('notify:test') ? '已发送测试通知，请看屏幕右下角' : '系统不支持桌面通知，或通知已被 Windows 关闭'); }));
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close());
   $('#open-config').addEventListener('click', guarded(toast, () => api('config:open')));
+  $('#open-cli').addEventListener('click', guarded(toast, () => api('cli:open')));
   $('#open-data').addEventListener('click', guarded(toast, () => api('data:open')));
   $('#import-codex').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('import'); rail('rail-import'); });
   $('#open-storage').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('storage'); rail(''); });

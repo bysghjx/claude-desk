@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, prot
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const { Engine, JsonStore, ACTIVE } = require('./engine.cjs');
 const {ExtensionsManager}=require('./extensions.cjs');
@@ -70,17 +70,22 @@ function showNotice(notice,{force=false}={}){
   if(!force&&win&&!win.isDestroyed()&&!win.isFocused())win.flashFrame(true);
   return true;
 }
+// The Claude Code CLI that ships with the Agent SDK, unpacked next to app.asar in the packaged app.
+function bundledCli() {
+  try { const file = path.join(path.dirname(require.resolve('@anthropic-ai/claude-agent-sdk-win32-x64/package.json')), 'claude.exe').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1'); return fs.existsSync(file) ? file : ''; } catch { return ''; }
+}
+// The user's own Claude Code comes first (it keeps itself updated); the bundled one is the fallback.
 function findCli() {
   const candidates = [path.join(os.homedir(), '.local/bin/claude.exe'), path.join(os.homedir(), '.claude/bin/claude.exe')];
   for (const dir of (process.env.PATH || '').split(path.delimiter)) if(dir) candidates.push(path.join(dir, 'claude.exe'));
-  return candidates.find(p => fs.existsSync(p)) || '';
+  return candidates.find(p => fs.existsSync(p)) || bundledCli();
 }
 function providerInfo() {
   let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/settings.json'), 'utf8')); } catch {}
   const env = cfg.env || {};
   const base = process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
   let host; try { host = new URL(base).host; } catch { host = '地址格式错误'; }
-  return { host, configured: Boolean(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY), cliPath: findCli(), configPath: path.join(os.homedir(), '.claude/settings.json'), dataRoot };
+  return { host, configured: Boolean(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY), cliPath: findCli(), cliBundled: Boolean(findCli()) && findCli() === bundledCli(), configPath: path.join(os.homedir(), '.claude/settings.json'), dataRoot };
 }
 async function git(cwd, args) { return (await exec('git', ['--no-optional-locks', '-C', cwd, ...args], { windowsHide: true, timeout: 10000, maxBuffer: 3 * 1024 * 1024 })).stdout; }
 // Pasted or dropped images are written once to the data folder; the engine reads them when sending.
@@ -344,6 +349,8 @@ if(primaryInstance)app.whenReady().then(async () => {
   });
   handle('project:open', id => shell.openPath(folder(id)));
   handle('config:open', () => shell.openPath(providerInfo().configPath));
+  // A console window running Claude Code, for logging in (/login) when it was never set up on this computer.
+  handle('cli:open', () => { const cli = findCli(); if (!cli) throw Error('没有找到 Claude Code'); spawn('cmd.exe', ['/d', '/s', '/c', `start "Claude Code" "${cli}"`], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsVerbatimArguments: true }).unref(); return true; });
   handle('data:open',()=>shell.openPath(dataRoot));
   handle('copy', text => clipboard.writeText(String(text).slice(0,1000000)));
   handle('export', async id => {
