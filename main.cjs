@@ -221,6 +221,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('project:add', async () => { const r = await dialog.showOpenDialog(win, { title: '选择项目文件夹', properties: ['openDirectory'] }); return r.canceled ? null : engine.addProject(r.filePaths[0]); });
   const worktrees=new Worktrees(path.join(dataRoot,'worktrees'));
   handle('thread:create', async (id, options={}) => threadOut(engine.create(id || null, id && options?.worktree ? { worktree: await worktrees.create(project(id).path) } : {})));
+  handle('project:reorder', ids => engine.reorderProjects(ids));
   handle('thread:move', async (id, projectId) => threadOut(await engine.moveThread(id, projectId || null)));
   const worktreeOf=id=>{const t=engine.thread(id);if(!t.worktree||t.worktree.removed)throw Error('这个会话没有独立工作树');return t.worktree;};
   // Terminal panel: one shell per workspace folder, opened on demand.

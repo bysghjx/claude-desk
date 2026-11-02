@@ -66,3 +66,4 @@ dialog::backdrop{background:#0000002e}
 .palette::backdrop{background:#0000002e}
 .palette-item.active{background:#0000000a;color:#1d1d1b}
 .palette-tabs button.selected{background:#0000000d;color:#1d1d1b}
+.project-block.drop-before::before,.project-block.drop-after::after{background:#55554f}

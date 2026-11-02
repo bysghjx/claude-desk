@@ -107,6 +107,12 @@ export function createActions({ store, api, composer, toast, confirm }) {
     if (store.selected === id) { store.projectId = projectId || null; store.emit('select', id); }
     toast(projectId ? `已移到「${store.state.projects.find(p => p.id === projectId)?.name || '项目'}」` : '已移到「对话」');
   }
+  // Optimistic: the sidebar moves at once; a failure puts the old order back.
+  async function reorderProjects(ids) {
+    const before = store.state.projects, byId = new Map(before.map(p => [p.id, p]));
+    store.state.projects = ids.map(id => byId.get(id)).filter(Boolean); store.emit('threads');
+    try { await api('project:reorder', ids); } catch (error) { store.state.projects = before; store.emit('threads'); throw error; }
+  }
   async function sendQueuedNow(queueId) { await api('queue:send', store.selected, queueId); }
   async function removeQueued(queueId) { await api('queue:remove', store.selected, queueId); }
   async function editQueued(queueId) {
@@ -119,5 +125,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
 }

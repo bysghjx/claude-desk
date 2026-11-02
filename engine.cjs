@@ -48,6 +48,12 @@ class Engine extends EventEmitter {
   constructor({ query, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='', chatRoot='' }) {
     super(); Object.assign(this, { query, store, cliPath, env, sessionOptions, attachmentRoot, chatRoot }); this.runs = new Map(); this.pending = new Map();
     this.saveTimer = null; this.eventTimers = new Map(); this.closing = false; this.deleting = new Set(); this.draining = new Set(); this.snapshots = new WeakMap(); this.revision = 0;
+    // Projects used to be listed by recent activity; keep that order once, then the user's drag order wins.
+    const state = this.store.state;
+    if (!state.migrations?.projectOrder) {
+      const latest = id => Math.max(0, ...state.threads.filter(t => t.projectId === id).map(t => t.updatedAt || 0));
+      state.projects.sort((a, b) => latest(b.id) - latest(a.id)); state.migrations = { ...state.migrations, projectOrder: true };
+    }
   }
   thread(id) { const t = this.store.state.threads.find(x => x.id === id); if (!t) throw Error('会话不存在'); return t; }
   syncAgentStatus(t,run){
@@ -92,8 +98,15 @@ class Engine extends EventEmitter {
     const real = fs.realpathSync(directory);
     if (!fs.statSync(real).isDirectory()) throw Error('请选择文件夹');
     let p = this.store.state.projects.find(x => x.path.toLowerCase() === real.toLowerCase());
-    if (!p) { p = { id: randomUUID(), name: path.basename(real), path: real }; this.store.state.projects.push(p); this.store.save(); }
+    if (!p) { p = { id: randomUUID(), name: path.basename(real), path: real }; this.store.state.projects.unshift(p); this.store.save(); }
     return p;
+  }
+  // `ids` is the full project list in its new order (dragged in the sidebar).
+  reorderProjects(ids) {
+    const projects = this.store.state.projects;
+    if (!Array.isArray(ids) || ids.length !== projects.length || new Set(ids).size !== ids.length || ids.some(id => !projects.some(p => p.id === id))) throw Error('项目列表已变化，请重试');
+    projects.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)); this.store.save();
+    return projects.map(p => p.id);
   }
   // `worktree` (from worktree.cjs) makes the conversation run in its own checkout.
   // Without a project the conversation is a chat: it works in its own empty folder under chatRoot.

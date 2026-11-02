@@ -1237,3 +1237,11 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .brand-search{margin-left:4px;flex:none;display:grid;place-items:center;width:30px;height:30px;padding:0;border-radius:8px;color:#9d9b95;-webkit-app-region:no-drag}
 .brand-search:hover{background:#ffffff10;color:#ecebe5}
 .brand-search svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
+
+/* Reordering projects by dragging their header */
+.project-block{position:relative}
+.project-block.dragging{opacity:.45}
+.project-block.drop-before::before,.project-block.drop-after::after{content:"";position:absolute;left:8px;right:8px;height:2px;border-radius:2px;background:#cfcdc6;pointer-events:none;z-index:1}
+.project-block.drop-before::before{top:2px}
+.project-block.drop-after::after{bottom:-3px}
+:root[data-accent] .project-block.drop-before::before,:root[data-accent] .project-block.drop-after::after{background:var(--accent)}

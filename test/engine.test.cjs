@@ -288,3 +288,21 @@ test('chats without a project get their own folder and can move into a project a
   assert.equal(engine.isChatFolder(chat.cwd),true);assert.equal(engine.isChatFolder(project.path),false);
   await engine.shutdown();
 });
+
+test('projects keep the order the user drags them into',async()=>{
+  const dir=fs.mkdtempSync(path.join(scratch,'claude-desk-order-'));const file=path.join(dir,'state.json');
+  const folders=['a','b','c'].map(n=>{const f=path.join(dir,n);fs.mkdirSync(f);return f;});
+  // Before this feature the list followed recent activity: the first launch keeps that order once.
+  fs.writeFileSync(file,JSON.stringify({projects:folders.map((f,i)=>({id:'p'+i,name:path.basename(f),path:f})),threads:[{id:'t1',projectId:'p2',title:'x',turns:[],updatedAt:200},{id:'t2',projectId:'p1',title:'y',turns:[],updatedAt:100}],migrations:{unifiedDataV2:true}}));
+  let engine=new Engine({query:()=>{throw Error('unused');},store:new JsonStore(file),cliPath:'fake'});
+  assert.deepEqual(engine.store.state.projects.map(p=>p.id),['p2','p1','p0']);
+  assert.deepEqual(engine.reorderProjects(['p0','p2','p1']),['p0','p2','p1']);
+  assert.throws(()=>engine.reorderProjects(['p0','p2']),/项目列表已变化/);
+  assert.throws(()=>engine.reorderProjects(['p0','p2','p2']),/项目列表已变化/);
+  const added=engine.addProject(fs.mkdtempSync(path.join(scratch,'claude-desk-new-')));
+  assert.equal(engine.store.state.projects[0].id,added.id,'a newly opened folder goes to the top');
+  await engine.shutdown();
+  engine=new Engine({query:()=>{throw Error('unused');},store:new JsonStore(file),cliPath:'fake'});
+  assert.deepEqual(engine.store.state.projects.map(p=>p.id),[added.id,'p0','p2','p1'],'the dragged order survives a restart');
+  await engine.shutdown();
+});

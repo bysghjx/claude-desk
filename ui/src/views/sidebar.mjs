@@ -23,8 +23,7 @@ export function createSidebar({ store, actions, toast }) {
     const visible = store.state.threads.filter(t => Boolean(t.archived) === archivedView && matches(t)).sort((a, b) => b.updatedAt - a.updatedAt);
     const pinned = archivedView ? [] : visible.filter(t => t.pinned);
     const groups = store.state.projects.map(p => ({ p, threads: visible.filter(t => t.projectId === p.id && !pinned.includes(t)) }))
-      .filter(g => g.threads.length || (!query && !archivedView))
-      .sort((a, b) => (b.threads[0]?.updatedAt || 0) - (a.threads[0]?.updatedAt || 0));
+      .filter(g => g.threads.length || (!query && !archivedView));
     const chats = visible.filter(t => !pinned.includes(t) && !t.projectId);
     const orphans = visible.filter(t => !pinned.includes(t) && t.projectId && !store.state.projects.some(p => p.id === t.projectId));
     const selectedProject = !store.current() && store.currentProject()?.id;
@@ -33,8 +32,9 @@ export function createSidebar({ store, actions, toast }) {
     if (!archivedView && !query || chats.length) html += `<div class="chat-group" data-drop-project=""><div class="tree-section chats-head">对话<button class="project-new" data-new-chat title="新对话（不属于任何项目）" aria-label="新对话">+</button></div>${chats.length ? chats.slice(0, expanded.has('chats') || query ? chats.length : VISIBLE_LIMIT).map(row).join('') + (chats.length > VISIBLE_LIMIT && !expanded.has('chats') && !query ? `<button class="tree-more" data-expand-project="chats">显示其余 ${chats.length - VISIBLE_LIMIT} 个</button>` : '') : `<div class="tree-empty">${archivedView ? '没有归档的对话' : '不选项目直接提问，会出现在这里'}</div>`}</div><div class="tree-section">项目</div>`;
     for (const { p, threads } of groups) {
       const folded = !query && collapsed.has(p.id), limit = expanded.has(p.id) || query ? threads.length : VISIBLE_LIMIT;
-      html += `<div class="project-group ${selectedProject === p.id ? 'selected' : ''}" data-drop-project="${escape(p.id)}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><span class="project-name">${escape(p.name)}</span></button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
+      html += `<div class="project-block" data-project-block="${escape(p.id)}"><div class="project-group ${selectedProject === p.id ? 'selected' : ''}" data-drop-project="${escape(p.id)}" draggable="true" data-drag-project="${escape(p.id)}"><button class="project-head" data-project-toggle="${escape(p.id)}" title="${escape(p.path)}" aria-expanded="${!folded}"><span class="project-chevron ${folded ? 'collapsed' : ''}">▾</span><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><span class="project-name">${escape(p.name)}</span></button><button class="project-new" data-new-in-project="${escape(p.id)}" title="在 ${escape(p.name)} 中新建任务" aria-label="在 ${escape(p.name)} 中新建任务">＋</button></div>`;
       if (!folded) html += threads.length ? threads.slice(0, limit).map(row).join('') + (threads.length > limit ? `<button class="tree-more" data-expand-project="${escape(p.id)}">显示其余 ${threads.length - limit} 个</button>` : '') : `<div class="tree-empty">${archivedView ? '没有归档的会话' : '还没有会话'}</div>`;
+      html += '</div>';
     }
     if (orphans.length) html += `<div class="tree-section">其他</div>${orphans.map(row).join('')}`;
     if (html) return html;
@@ -101,16 +101,42 @@ export function createSidebar({ store, actions, toast }) {
   }));
   $('#search').addEventListener('input', render);
   // Drag a conversation onto a project, or onto 对话, to move it.
-  let dragging = null;
+  // Drag a project header above or below another project to reorder the list.
+  let dragging = null, draggingProject = null;
   const dropZone = event => event.target.closest?.('[data-drop-project]');
-  const clearDrop = () => list.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+  const clearDrop = () => list.querySelectorAll('.drop-target,.drop-before,.drop-after').forEach(el => el.classList.remove('drop-target', 'drop-before', 'drop-after'));
+  // Where the dragged project would land: before or after the block under the pointer.
+  function projectSlot(event) {
+    const block = event.target.closest?.('[data-project-block]'); if (!block || !draggingProject) return null;
+    const rect = block.getBoundingClientRect(), after = event.clientY > rect.top + rect.height / 2;
+    return { block, id: block.dataset.projectBlock, after };
+  }
+  function reordered(slot) {
+    const ids = store.state.projects.map(p => p.id).filter(id => id !== draggingProject);
+    const at = ids.indexOf(slot.id); if (at < 0) return null;
+    ids.splice(at + (slot.after ? 1 : 0), 0, draggingProject);
+    return ids.join() === store.state.projects.map(p => p.id).join() ? null : ids;
+  }
   list.addEventListener('dragstart', event => {
+    const head = event.target.closest?.('[data-drag-project]');
+    if (head) {
+      draggingProject = head.dataset.dragProject; event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', store.state.projects.find(p => p.id === draggingProject)?.name || '');
+      head.closest('[data-project-block]')?.classList.add('dragging'); closeMenu(); return;
+    }
     const rowEl = event.target.closest?.('[data-drag-thread]'); if (!rowEl) return;
     dragging = rowEl.dataset.dragThread; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', store.thread(dragging)?.title || '');
     rowEl.classList.add('dragging'); closeMenu();
   });
-  list.addEventListener('dragend', event => { event.target.closest?.('[data-drag-thread]')?.classList.remove('dragging'); dragging = null; clearDrop(); });
+  list.addEventListener('dragend', () => { list.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging')); dragging = null; draggingProject = null; clearDrop(); });
   list.addEventListener('dragover', event => {
+    if (draggingProject) {
+      const slot = projectSlot(event); if (!slot || !reordered(slot)) { clearDrop(); return; }
+      event.preventDefault(); event.dataTransfer.dropEffect = 'move';
+      const name = slot.after ? 'drop-after' : 'drop-before';
+      if (!slot.block.classList.contains(name)) { clearDrop(); slot.block.classList.add(name); }
+      return;
+    }
     const zone = dropZone(event), thread = dragging && store.thread(dragging); if (!zone || !thread) return;
     if ((thread.projectId || '') === zone.dataset.dropProject) { clearDrop(); return; }
     event.preventDefault(); event.dataTransfer.dropEffect = 'move';
@@ -119,6 +145,11 @@ export function createSidebar({ store, actions, toast }) {
   list.addEventListener('dragleave', event => { if (!list.contains(event.relatedTarget)) clearDrop(); });
   // Read the target synchronously: dragend (which clears `dragging`) fires right after drop.
   list.addEventListener('drop', event => {
+    if (draggingProject) {
+      const slot = projectSlot(event), ids = slot && reordered(slot); clearDrop(); draggingProject = null;
+      if (ids) { event.preventDefault(); guarded(toast, actions.reorderProjects)(ids); }
+      return;
+    }
     const zone = dropZone(event), id = dragging; clearDrop(); if (!zone || !id) return;
     event.preventDefault(); dragging = null;
     guarded(toast, actions.moveThread)(id, zone.dataset.dropProject || null);
