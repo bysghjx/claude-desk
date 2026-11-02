@@ -35,9 +35,10 @@ export function createConversation({ store, actions, api, composer, toast, revie
     for (const [id, view] of views) if (!ids.has(id)) { view.root.remove(); views.delete(id); }
     let previous = null;
     for (const turn of thread.turns) {
+      const latest = turn === thread.turns.at(-1), turnContext = latest ? { ...context, latest, turns: thread.turns } : context;
       let view = views.get(turn.id);
-      if (!view) { view = createTurn(turn, context); views.set(turn.id, view); if (!switched) animateIn(view.root); }
-      else updateTurn(view, turn, context);
+      if (!view) { view = createTurn(turn, turnContext); views.set(turn.id, view); if (!switched) animateIn(view.root); }
+      else updateTurn(view, turn, turnContext);
       if (view.root.previousSibling !== previous || view.root.parentNode !== box) previous ? previous.after(view.root) : box.prepend(view.root);
       previous = view.root;
     }
@@ -58,6 +59,8 @@ export function createConversation({ store, actions, api, composer, toast, revie
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }
     const copy = target.closest('[data-copy]'); if (copy) return actions.copyAnswer(copy.dataset.copy);
     const retry = target.closest('[data-retry]'); if (retry) return actions.retry(retry.dataset.retry);
+    // A wrap-up button sends its own text as the reply.
+    const reply = target.closest('[data-wrap-reply]'); if (reply) { reply.disabled = true; try { await actions.sendMessage(reply.dataset.wrapReply); } finally { reply.disabled = false; } return; }
   }));
   box.addEventListener('change', event => { if (event.target.id === 'home-project') actions.selectProject(event.target.value); });
 

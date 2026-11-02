@@ -62,8 +62,14 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
     await api('settings', { notifications: on });
   }
 
+  // Keeping the computer awake while Claude works is on unless turned off.
+  async function setKeepAwake(on) {
+    store.state.settings = { ...store.state.settings, keepAwake: on };
+    await api('settings', { keepAwake: on });
+  }
+
   async function openSettings() {
-    themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false;
+    themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false;
     const p = store.state.provider;
     $('#config-details').innerHTML = [['服务商', p.host], ['Claude CLI', p.cliPath || '未找到官方原生 Claude'], ['凭据', p.configured ? '已从现有配置读取（界面不显示密钥）' : '未发现 API 配置；CLI 将使用其现有登录'], ['配置文件', p.configPath], ['会话目录', p.dataRoot]].map(([key, value]) => `<div class="config-row"><span>${key}</span><span>${escape(value)}</span></div>`).join('');
     $('#settings-result').textContent = ''; $('#settings-dialog').showModal(); rail('settings');
@@ -85,6 +91,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   for (const button of $$('[data-accent-choice]')) button.addEventListener('click', guarded(toast, () => setAccent(button.dataset.accentChoice)));
   for (const button of $$('[data-theme-choice]')) button.addEventListener('click', guarded(toast, () => setTheme(button.dataset.themeChoice)));
   $('#notify-toggle').addEventListener('change', guarded(toast, () => setNotifications($('#notify-toggle').checked)));
+  $('#awake-toggle').addEventListener('change', guarded(toast, () => setKeepAwake($('#awake-toggle').checked)));
   $('#notify-test').addEventListener('click', guarded(toast, async () => { toast(await api('notify:test') ? '已发送测试通知，请看屏幕右下角' : '系统不支持桌面通知，或通知已被 Windows 关闭'); }));
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close());
   $('#open-config').addEventListener('click', guarded(toast, () => api('config:open')));

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -9,7 +9,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -157,11 +157,13 @@ if(primaryInstance)app.whenReady().then(async () => {
   const materialOf=()=>{const m=engine?.store.state.settings.material;return materialSupported?(MATERIALS.has(m)?m:'mica'):'none';};
   const applyMaterial=w=>{if(!w||w.isDestroyed())return;const m=materialOf();if(materialSupported)w.setBackgroundMaterial(m);w.setBackgroundColor(m==='none'?windowBackground():'#00000000');};
   nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed()){if(w===win)applyMaterial(w);else w.setBackgroundColor(windowBackground());}});
-  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+  const { query, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');const { z } = require('zod');
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
   const legacy=[path.join(dataRoot,'bootstrap.json'),path.join(appData,'ClaudeDesk/data/workspace.json'),path.join(shadowRoot,'ClaudeDesk/data/workspace.json'),path.join(appData,'Claude Desk/data/workspace.json'),path.join(appData,'claude-desk/data/workspace.json'),path.join(projectRoot,'work/claude-desk-ui/workspace.json'),path.join(projectRoot,'work/claude-desk-v2-qa/workspace.json')];
-  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats') });
+  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z }) });
+  const keepAwake=new KeepAwake(powerSaveBlocker);
+  const updateAwake=()=>keepAwake.update(engine.store.state.settings.keepAwake!==false&&engine.store.state.threads.some(x=>ACTIVE.has(x.status)));
   applyTheme(engine.store.state.settings.theme);
   ensureStartMenuShortcut();
   const checkpoints=new Checkpoints(path.join(dataRoot,'checkpoints'));
@@ -181,6 +183,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     return{...snapshot,turns:snapshot.turns.map(turn=>{sent.set(turn.id,turn.rev);return before.get(turn.id)===turn.rev?{id:turn.id,rev:turn.rev,same:true}:turn;})};
   };
   const threadOut=value=>value&&forRenderer(engine.threadSnapshot(engine.thread(value.id||value)));
+  engine.on('thread', updateAwake);
   engine.on('thread', t => { if(!win?.isDestroyed()) win?.webContents.send('thread:update', forRenderer(t)); agentWindows.refresh(t.id); for(const notice of notifications.update(t))showNotice(notice); });
   handle('thread:get', id => { sentRevs.delete(id); return threadOut(id); });
   handle('agent:open',(threadId,agentId)=>agentWindows.open(threadId,agentId));
@@ -290,6 +293,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(THEMES.has(value.theme)){ settings.theme = value.theme; applyTheme(value.theme); }
     if(MATERIALS.has(value.material)){ settings.material = value.material; applyMaterial(win); }
     if(typeof value.notifications === 'boolean') settings.notifications = value.notifications;
+    if(typeof value.keepAwake === 'boolean'){ settings.keepAwake = value.keepAwake; updateAwake(); }
     if(['local','worktree'].includes(value.location)) settings.location = value.location;
     if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;
     engine.store.save(); return settings;

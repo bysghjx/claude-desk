@@ -1250,3 +1250,19 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .project-pin{display:inline-flex;flex:none;margin-left:5px;color:#8f8f8a}
 .pin-icon{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .project-group:hover .project-more,.project-more:focus-visible{opacity:1}
+/* Task list Claude keeps (TodoWrite / TaskCreate), pinned to the bottom while the latest turn scrolls. */
+.task-list{position:sticky;bottom:0;z-index:2;margin:16px 0 4px;border:1px solid #33332f;border-radius:12px;background:#1d1d1c;padding:10px 14px 11px;font-size:12.5px}
+.task-list-head{display:flex;justify-content:space-between;color:#9b9890;font-size:11.5px;margin-bottom:6px}
+.task-list ol{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.task-list li{display:flex;align-items:flex-start;gap:9px;color:#d3d0c7;line-height:1.5}
+.task-mark{flex:none;width:13px;height:13px;margin-top:3px;border:1.5px solid #5a5853;border-radius:50%;box-sizing:border-box}
+.task-active .task-mark{border-color:#d7d7d7;border-top-color:transparent;animation:spin 1.1s linear infinite}
+.task-done{color:#7d7b75}.task-done span:last-child{text-decoration:line-through;text-decoration-color:#5a5853}
+.task-done .task-mark{border-color:#7d7b75;background:#7d7b75}
+/* Wrap-up box: recap of the turn and, when Claude needs a decision, one question with reply buttons. */
+.wrap-up{margin:16px 0 4px;border:1px solid #33332f;border-radius:12px;background:#1d1d1c;padding:12px 15px;font-size:13px;line-height:1.65}
+.wrap-recap{margin:0;color:#d3d0c7}
+.wrap-ask{margin:9px 0 0;color:#ececec;font-weight:500}
+.wrap-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.turn.just-finished .wrap-up{animation:rise-in var(--motion-slow) var(--ease-out) both}
+:root[data-accent] .task-active .task-mark{border-color:var(--accent);border-top-color:transparent}

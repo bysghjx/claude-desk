@@ -101,8 +101,10 @@ export function fileChanges(turn,cwd){
   }
   return[...map.values()];
 }
+// Claude Desk's own wrap_up tool draws the box under the turn, not a step row.
+export const WRAP_UP='mcp__desk__wrap_up';
 export function splitTurn(turn){
-  const tools=new Map((turn?.tools||[]).map(t=>[t.id,t]));
+  const tools=new Map((turn?.tools||[]).filter(t=>t.name!==WRAP_UP).map(t=>[t.id,t]));
   let items=Array.isArray(turn?.items)&&turn.items.length?turn.items:[...(turn?.thinking?[{type:'thinking',text:turn.thinking}]:[]),...(turn?.tools||[]).map(t=>({type:'tool',id:t.id})),...(turn?.answer?[{type:'text',text:turn.answer}]:[])];
   items=items.filter(item=>item.type==='tool'?tools.has(item.id):String(item.text||'').trim());
   let last=-1;items.forEach((item,i)=>{if(item.type==='tool')last=i;});
@@ -138,4 +140,39 @@ export function changesHtml(changes,escape){
   if(!changes.length)return'';
   const added=changes.reduce((n,f)=>n+f.added,0),removed=changes.reduce((n,f)=>n+f.removed,0);
   return `<div class="turn-changes"><div class="turn-changes-head"><strong>${changes.length} 个文件已更改</strong>${deltaHtml(added,removed)}<button type="button" data-review-file="${escape(changes[0].path)}">审查改动</button></div>${changes.map(f=>`<button type="button" class="turn-change-row" data-review-file="${escape(f.path)}" title="${escape(f.path)}"><span class="change-name">${escape(baseName(f.path))}</span><span class="change-dir">${escape(f.path.includes('/')?f.path.slice(0,f.path.lastIndexOf('/')):'')}</span>${deltaHtml(f.added,f.removed)}</button>`).join('')}</div>`;
+}
+
+// The task list Claude keeps, as of the end of `turns`: TodoWrite replaces the
+// whole list; TaskCreate / TaskUpdate add and change one task at a time.
+const TASK_TOOLS=new Set(['TodoWrite','TaskCreate','TaskUpdate']);
+const taskStatus=status=>status==='completed'?'done':status==='in_progress'?'active':'pending';
+export function taskList(turns){
+  let items=[];const byId=new Map();
+  for(const turn of turns||[])for(const tool of turn?.tools||[]){
+    const input=tool?.input&&typeof tool.input==='object'?tool.input:{};
+    if(tool.name==='TodoWrite'){items=todoList(input.todos);byId.clear();}
+    else if(tool.name==='TaskCreate'&&tool.status!=='error'){
+      const output=String(tool.output||''),id=(output.match(/#(\d+)/)||output.match(/"id"\s*:\s*"?(\d+)/)||output.match(/(\d+)/))?.[1]||String(byId.size+1),item={text:String(input.subject||''),status:'pending'};
+      byId.set(id,item);items.push(item);
+    }
+    else if(tool.name==='TaskUpdate'){
+      const item=byId.get(String(input.taskId));if(!item)continue;
+      if(input.status==='deleted'){items=items.filter(x=>x!==item);byId.delete(String(input.taskId));continue;}
+      if(input.subject)item.text=String(input.subject);if(input.status)item.status=taskStatus(input.status);
+    }
+  }
+  return items.filter(x=>x.text);
+}
+// Shown under the latest turn only, and only when that turn touched the list.
+export function taskListHtml(turns,escape){
+  const latest=turns?.at(-1);if(!(latest?.tools||[]).some(t=>TASK_TOOLS.has(t.name)))return'';
+  const items=taskList(turns);if(!items.length)return'';
+  const done=items.filter(x=>x.status==='done').length;
+  return `<section class="task-list" aria-label="任务清单"><div class="task-list-head"><span>任务</span><span>${done}/${items.length}</span></div><ol>${items.map(x=>`<li class="task-${x.status}"><span class="task-mark" aria-hidden="true"></span><span>${escape(x.text)}</span></li>`).join('')}</ol></section>`;
+}
+// Buttons answer the question, so they only work on the newest turn of an idle conversation.
+export function wrapUpHtml(turn,{escape,latest,threadActive}){
+  const box=turn?.wrapUp;if(!box?.recap||turn.status==='running')return'';
+  const live=latest&&!threadActive&&box.ask&&box.actions?.length;
+  return `<section class="wrap-up" aria-label="本轮小结"><p class="wrap-recap">${escape(box.recap)}</p>${box.ask?`<p class="wrap-ask">${escape(box.ask)}</p>`:''}${live?`<div class="wrap-actions">${box.actions.map((label,i)=>`<button type="button" class="${i?'secondary':'primary'}" data-wrap-reply="${escape(label)}">${escape(label)}</button>`).join('')}</div>`:''}</section>`;
 }

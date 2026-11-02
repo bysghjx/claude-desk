@@ -3,7 +3,7 @@
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
 import { elapsed } from '../core/format.mjs';
-import { splitTurn, stepParts, fileChanges, changesHtml } from '../lib/worklog.mjs';
+import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
 function userHtml(turn) {
@@ -97,9 +97,10 @@ export function createTurn(turn, context) {
   return view;
 }
 
-export function updateTurn(view, turn, { threadActive }) {
-  if (view.rev === turn.rev && view.threadActive === threadActive && turn.rev != null) return false;
-  view.rev = turn.rev; view.threadActive = threadActive;
+// `turns` is the whole conversation, passed for the latest turn only: its task list is built from every turn.
+export function updateTurn(view, turn, { threadActive, latest = false, turns = null }) {
+  if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && turn.rev != null) return false;
+  view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest;
   const live = turn.status === 'running';
   const { work, final } = splitTurn(turn);
   setHtml(view.head, userHtml(turn));
@@ -109,6 +110,7 @@ export function updateTurn(view, turn, { threadActive }) {
   if (view.ready && view.live && !live) animateIn(view.root, 'just-finished');
   view.live = live;
   const changes = live ? [] : fileChanges(turn, view.cwd);
-  setHtml(view.tail, `${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape)}${footerHtml(turn, threadActive)}`);
+  const tasks = latest && turns ? taskListHtml(turns, escape) : '';
+  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape)}${wrapUpHtml(turn, { escape, latest, threadActive })}${footerHtml(turn, threadActive)}`);
   return true;
 }

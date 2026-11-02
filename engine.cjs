@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {ACTIVE_AGENT,activeAgents,findAgent,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
+const {WRAP_UP,PROMPT:DESK_PROMPT,wrapUpOf}=require('./desk-tools.cjs');
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
 const ACTIVE = new Set(['starting', 'waiting', 'thinking', 'generating', 'tool', 'approval', 'stopping']);
@@ -45,8 +46,9 @@ class JsonStore {
   }
 }
 class Engine extends EventEmitter {
-  constructor({ query, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='', chatRoot='' }) {
-    super(); Object.assign(this, { query, store, cliPath, env, sessionOptions, attachmentRoot, chatRoot }); this.runs = new Map(); this.pending = new Map();
+  // deskServer creates the in-process MCP server with Claude Desk's own tools (see desk-tools.cjs).
+  constructor({ query, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='', chatRoot='', deskServer=null }) {
+    super(); Object.assign(this, { query, store, cliPath, env, sessionOptions, attachmentRoot, chatRoot, deskServer }); this.runs = new Map(); this.pending = new Map();
     this.saveTimer = null; this.eventTimers = new Map(); this.closing = false; this.deleting = new Set(); this.draining = new Set(); this.snapshots = new WeakMap(); this.revision = 0;
     // Projects used to be listed by recent activity; keep that order once, then the user's drag order wins.
     const state = this.store.state;
@@ -252,10 +254,11 @@ class Engine extends EventEmitter {
       cwd: t.cwd, pathToClaudeCodeExecutable: this.cliPath, env,
       ...(extensionOptions.skills!==undefined?{skills:extensionOptions.skills}:{}),
       ...(extensionOptions.plugins?.length?{plugins:extensionOptions.plugins}:{}),
+      ...(this.deskServer?{mcpServers:{desk:this.deskServer()},allowedTools:[WRAP_UP]}:{}),
       model: t.model, thinking: { type: 'adaptive' }, effort: t.effort,
       permissionMode: t.mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: t.mode === 'bypassPermissions',
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + (this.deskServer ? DESK_PROMPT : '') },
       includePartialMessages: true, persistSession: false, abortController: abort,
       canUseTool: (name, args, ctx) => this.requestApproval(t, run, name, args, ctx),
       stderr: text => { run.stderr = (run.stderr || '').concat(text).slice(-8000); this.emit('diagnostic', { threadId: t.id, message: text.slice(-1500) }); }
@@ -325,6 +328,7 @@ class Engine extends EventEmitter {
       run.partialText = false;
       for (const b of blocks) if (b.type === 'tool_use') {
         agentFromTool(t,turn,b);
+        if (b.name === WRAP_UP) { const box = wrapUpOf(b.input); if (box) turn.wrapUp = box; }
         if (!turn.tools.some(x => x.id === b.id)) { turn.tools.push({ id: b.id, name: b.name, input: b.input, output: '', status: 'running', startedAt: Date.now() }); addItem(turn, 'tool', b.id); }
         if (t.status !== 'approval') this.setStatus(t, 'tool', `执行 ${b.name}`);
       }
@@ -362,6 +366,8 @@ class Engine extends EventEmitter {
   }
   requestApproval(t, run, name, args, ctx = {}) {
     if (run.stopping || run.abort.signal.aborted) return Promise.resolve({ behavior: 'deny', message: '运行已停止' });
+    // The wrap-up box only draws on screen; it never needs the user's approval.
+    if (name === WRAP_UP) return Promise.resolve({ behavior: 'allow', updatedInput: args });
     const id = ctx.toolUseID || randomUUID();
     return new Promise(resolve => {
       let turn=t.turns.find(x=>x.id===run.turnId),agent;
