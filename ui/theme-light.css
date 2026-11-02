@@ -614,6 +614,12 @@
   .wrap-ask{color:#1e1e1e}
   .storage-bar{background:#ebebeb}
   .storage-bar span{background:#5b5b5b}
+  .proposal-card{border:1px solid #ececeb;background:#f7f7f7}
+  .proposal-kicker{color:#636059}
+  .proposal-head strong{color:#1e1e1e}
+  .proposal-brief{color:#504d45}
+  .proposal-brief summary{color:#636059}
+  .proposal-state{color:#636059}
 }
 
 /* Hand-tuned light theme details */

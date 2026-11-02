@@ -101,10 +101,11 @@ export function fileChanges(turn,cwd){
   }
   return[...map.values()];
 }
-// Claude Desk's own wrap_up tool draws the box under the turn, not a step row.
-export const WRAP_UP='mcp__desk__wrap_up';
+// Claude Desk's own tools draw cards under the turn, not step rows.
+export const WRAP_UP='mcp__desk__wrap_up',PROPOSE='mcp__desk__propose_session';
+const CARD_TOOLS=new Set([WRAP_UP,PROPOSE]);
 export function splitTurn(turn){
-  const tools=new Map((turn?.tools||[]).filter(t=>t.name!==WRAP_UP).map(t=>[t.id,t]));
+  const tools=new Map((turn?.tools||[]).filter(t=>!CARD_TOOLS.has(t.name)).map(t=>[t.id,t]));
   let items=Array.isArray(turn?.items)&&turn.items.length?turn.items:[...(turn?.thinking?[{type:'thinking',text:turn.thinking}]:[]),...(turn?.tools||[]).map(t=>({type:'tool',id:t.id})),...(turn?.answer?[{type:'text',text:turn.answer}]:[])];
   items=items.filter(item=>item.type==='tool'?tools.has(item.id):String(item.text||'').trim());
   let last=-1;items.forEach((item,i)=>{if(item.type==='tool')last=i;});
@@ -175,4 +176,9 @@ export function wrapUpHtml(turn,{escape,latest,threadActive}){
   const box=turn?.wrapUp;if(!box?.recap||turn.status==='running')return'';
   const live=latest&&!threadActive&&box.ask&&box.actions?.length;
   return `<section class="wrap-up" aria-label="本轮小结"><p class="wrap-recap">${escape(box.recap)}</p>${box.ask?`<p class="wrap-ask">${escape(box.ask)}</p>`:''}${live?`<div class="wrap-actions">${box.actions.map((label,i)=>`<button type="button" class="${i?'secondary':'primary'}" data-wrap-reply="${escape(label)}">${escape(label)}</button>`).join('')}</div>`:''}</section>`;
+}
+// Conversations Claude proposed with propose_session. A started one links to its conversation.
+export function proposalsHtml(turn,{escape}){
+  const list=(turn?.proposals||[]).filter(p=>p.status!=='dismissed');if(!list.length)return'';
+  return list.map(p=>`<section class="proposal-card" aria-label="提议的新会话"><div class="proposal-head"><span class="proposal-kicker">提议新会话</span><strong>${escape(p.title)}</strong></div><details class="proposal-brief"><summary>任务说明</summary><div>${escape(p.prompt)}</div></details><div class="proposal-actions">${p.status==='started'?`<button type="button" class="secondary" data-open-thread="${escape(p.threadId)}">打开会话</button><span class="proposal-state">已开始</span>`:`<button type="button" class="primary" data-proposal-start="${escape(p.id)}">开始</button><button type="button" class="secondary" data-proposal-dismiss="${escape(p.id)}">不用了</button>`}</div></section>`).join('');
 }

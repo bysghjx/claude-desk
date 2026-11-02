@@ -59,6 +59,10 @@ export function createConversation({ store, actions, api, composer, toast, revie
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }
     const copy = target.closest('[data-copy]'); if (copy) return actions.copyAnswer(copy.dataset.copy);
     const retry = target.closest('[data-retry]'); if (retry) return actions.retry(retry.dataset.retry);
+    const open = target.closest('[data-open-thread]'); if (open) return actions.selectThread(open.dataset.openThread);
+    const start = target.closest('[data-proposal-start]');
+    if (start) { start.disabled = true; try { const result = await api('proposal:start', store.selected, start.dataset.proposalStart); await actions.apply(result.thread); await actions.apply(result.child); toast('新会话已开始，在左侧可以看到进度'); } finally { start.disabled = false; } return; }
+    const dismiss = target.closest('[data-proposal-dismiss]'); if (dismiss) return actions.apply(await api('proposal:dismiss', store.selected, dismiss.dataset.proposalDismiss));
     // A wrap-up button sends its own text as the reply.
     const reply = target.closest('[data-wrap-reply]'); if (reply) { reply.disabled = true; try { await actions.sendMessage(reply.dataset.wrapReply); } finally { reply.disabled = false; } return; }
   }));

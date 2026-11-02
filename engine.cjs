@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {ACTIVE_AGENT,activeAgents,findAgent,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
-const {WRAP_UP,PROMPT:DESK_PROMPT,wrapUpOf}=require('./desk-tools.cjs');
+const {WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT:DESK_PROMPT,wrapUpOf,proposalOf}=require('./desk-tools.cjs');
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
 const ACTIVE = new Set(['starting', 'waiting', 'thinking', 'generating', 'tool', 'approval', 'stopping']);
@@ -83,7 +83,7 @@ class Engine extends EventEmitter {
   // until their content fingerprint changes, so unchanged history is not re-cloned.
   turnSnapshot(turn) {
     const live = turn.status === 'running' || turn.approvals?.length || (turn.subagents || []).some(a => ACTIVE_AGENT.has(a.status));
-    const fingerprint = live ? null : [turn.status, turn.finishedAt, turn.error, turn.answer?.length, turn.thinking?.length, turn.items?.length, turn.tools?.length, (turn.tools || []).map(x => x.status + (x.output?.length || 0)).join(), (turn.subagents || []).map(a => a.status + (a.tools?.length || 0) + (a.answer?.length || 0)).join(), turn.usage?.output].join('|');
+    const fingerprint = live ? null : [turn.status, turn.finishedAt, turn.error, turn.answer?.length, turn.thinking?.length, turn.items?.length, turn.tools?.length, (turn.tools || []).map(x => x.status + (x.output?.length || 0)).join(), (turn.subagents || []).map(a => a.status + (a.tools?.length || 0) + (a.answer?.length || 0)).join(), turn.usage?.output, (turn.proposals || []).map(p => p.status).join()].join('|');
     const cached = this.snapshots.get(turn);
     if (cached && fingerprint !== null && cached.fingerprint === fingerprint) return cached.copy;
     const copy = { ...structuredClone(turn), rev: ++this.revision };
@@ -125,6 +125,25 @@ class Engine extends EventEmitter {
     const id = randomUUID(), cwd = worktree?.cwd || p?.path || this.chatFolder(id);
     const t = { id, projectId: p ? projectId : null, cwd, ...(worktree ? { worktree } : {}), title: '新对话', createdAt: Date.now(), updatedAt: Date.now(), status: 'idle', seenAt: Date.now(), turns: [], model: this.store.state.settings.model, effort: this.store.state.settings.effort, mode: this.store.state.settings.mode };
     this.store.state.threads.unshift(t); this.store.save(); return t;
+  }
+  // Starts a conversation Claude proposed with propose_session: same project and
+  // settings as the conversation it came from, the brief as its first message.
+  async startProposal(id, proposalId) {
+    const t = this.thread(id), turn = t.turns.find(x => (x.proposals || []).some(p => p.id === proposalId)), proposal = turn?.proposals.find(p => p.id === proposalId);
+    if (!proposal) throw Error('找不到这个提议');
+    if (proposal.status === 'started') throw Error('这个提议已经开始了');
+    const child = this.create(t.projectId); child.parentId = t.id;
+    proposal.status = 'started'; proposal.threadId = child.id; this.publish(t.id);
+    try { await this.send(child.id, proposal.prompt, { model: t.model, mode: t.mode, effort: t.effort }); }
+    catch (e) { proposal.status = 'pending'; delete proposal.threadId; this.publish(t.id); this.store.save(); throw e; }
+    child.title = proposal.title; this.publish(child.id); this.store.save();
+    return child;
+  }
+  dismissProposal(id, proposalId) {
+    const t = this.thread(id), proposal = t.turns.flatMap(x => x.proposals || []).find(p => p.id === proposalId);
+    if (!proposal) throw Error('找不到这个提议');
+    if (proposal.status === 'pending') proposal.status = 'dismissed';
+    this.publish(t.id); this.store.save(); return t;
   }
   async send(id, text, options = {}) {
     if(this.deleting.has(id))throw Error('会话正在删除，请稍后再试');
@@ -254,7 +273,7 @@ class Engine extends EventEmitter {
       cwd: t.cwd, pathToClaudeCodeExecutable: this.cliPath, env,
       ...(extensionOptions.skills!==undefined?{skills:extensionOptions.skills}:{}),
       ...(extensionOptions.plugins?.length?{plugins:extensionOptions.plugins}:{}),
-      ...(this.deskServer?{mcpServers:{desk:this.deskServer()},allowedTools:[WRAP_UP]}:{}),
+      ...(this.deskServer?{mcpServers:{desk:this.deskServer()},allowedTools:DESK_TOOLS}:{}),
       model: t.model, thinking: { type: 'adaptive' }, effort: t.effort,
       permissionMode: t.mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: t.mode === 'bypassPermissions',
@@ -329,6 +348,7 @@ class Engine extends EventEmitter {
       for (const b of blocks) if (b.type === 'tool_use') {
         agentFromTool(t,turn,b);
         if (b.name === WRAP_UP) { const box = wrapUpOf(b.input); if (box) turn.wrapUp = box; }
+        if (b.name === PROPOSE && !(turn.proposals || []).some(p => p.id === b.id)) { const proposal = proposalOf(b.input, b.id); if (proposal) (turn.proposals ||= []).push(proposal); }
         if (!turn.tools.some(x => x.id === b.id)) { turn.tools.push({ id: b.id, name: b.name, input: b.input, output: '', status: 'running', startedAt: Date.now() }); addItem(turn, 'tool', b.id); }
         if (t.status !== 'approval') this.setStatus(t, 'tool', `执行 ${b.name}`);
       }
@@ -366,8 +386,8 @@ class Engine extends EventEmitter {
   }
   requestApproval(t, run, name, args, ctx = {}) {
     if (run.stopping || run.abort.signal.aborted) return Promise.resolve({ behavior: 'deny', message: '运行已停止' });
-    // The wrap-up box only draws on screen; it never needs the user's approval.
-    if (name === WRAP_UP) return Promise.resolve({ behavior: 'allow', updatedInput: args });
+    // Desk tools only draw on screen; they never need the user's approval.
+    if (DESK_TOOLS.includes(name)) return Promise.resolve({ behavior: 'allow', updatedInput: args });
     const id = ctx.toolUseID || randomUUID();
     return new Promise(resolve => {
       let turn=t.turns.find(x=>x.id===run.turnId),agent;

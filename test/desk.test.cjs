@@ -1,5 +1,5 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
-const {Engine,JsonStore,InputQueue}=require('../engine.cjs');const {WRAP_UP,wrapUpOf,deskServerFactory}=require('../desk-tools.cjs');const {KeepAwake}=require('../awake.cjs');
+const {Engine,JsonStore,InputQueue}=require('../engine.cjs');const {WRAP_UP,PROPOSE,wrapUpOf,proposalOf,deskServerFactory}=require('../desk-tools.cjs');const {KeepAwake}=require('../awake.cjs');
 const worklog=()=>import('../ui/src/lib/worklog.mjs');
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -18,12 +18,12 @@ test('wrap-up input is trimmed, needs a recap, and keeps at most two buttons onl
 });
 test('desk server factory builds one wrap_up tool per call',()=>{
   const made=[];const factory=deskServerFactory({createSdkMcpServer:o=>{made.push(o);return{type:'sdk',name:o.name};},tool:(name,description,schema,handler)=>({name,description,schema,handler}),z:{string:()=>({optional:()=>'opt'}),array:()=>({max:()=>({optional:()=>'arr'})})}});
-  factory();factory();assert.equal(made.length,2);assert.equal(made[0].name,'desk');assert.deepEqual(made[0].tools.map(t=>t.name),['wrap_up']);assert.equal('mcp__'+made[0].name+'__'+made[0].tools[0].name,WRAP_UP);
+  factory();factory();assert.equal(made.length,2);assert.equal(made[0].name,'desk');assert.deepEqual(made[0].tools.map(t=>t.name),['wrap_up','propose_session']);assert.equal('mcp__'+made[0].name+'__'+made[0].tools[0].name,WRAP_UP);
 });
 test('engine gives Claude the desk tools, records the wrap-up box and never asks to approve it',async()=>{
   const{engine,t,outputs,contexts}=setup(()=>({type:'sdk',name:'desk'}));
   await engine.send(t.id,'fix it');await tick();
-  const options=contexts[0];assert.equal(options.mcpServers.desk.name,'desk');assert.deepEqual(options.allowedTools,[WRAP_UP]);assert.match(options.systemPrompt.append,/wrap_up/);
+  const options=contexts[0];assert.equal(options.mcpServers.desk.name,'desk');assert.deepEqual(options.allowedTools,[WRAP_UP,PROPOSE]);assert.match(options.systemPrompt.append,/wrap_up/);
   assert.deepEqual(await options.canUseTool(WRAP_UP,{recap:'r'},{toolUseID:'w1'}),{behavior:'allow',updatedInput:{recap:'r'}});
   outputs.push({type:'assistant',uuid:'a1',message:{content:[{type:'tool_use',id:'w1',name:WRAP_UP,input:{recap:'Fixed the bug.',ask:'Commit?',actions:['Commit','Wait']}}]}});
   outputs.push({type:'result',subtype:'success',is_error:false,result:'Done',usage:{output_tokens:1},total_cost_usd:0});await tick();
@@ -60,4 +60,33 @@ test('wrap-up box hides its tool row, waits for the turn to finish and only offe
   assert.doesNotMatch(wrapUpHtml(turn,{escape,latest:false,threadActive:false}),/data-wrap-reply/);
   assert.doesNotMatch(wrapUpHtml(turn,{escape,latest:true,threadActive:true}),/data-wrap-reply/);
   assert.equal(wrapUpHtml({...turn,status:'running'},{escape,latest:true,threadActive:true}),'');
+});
+
+test('proposal input needs a title and a brief and keeps the line breaks of the brief',()=>{
+  assert.equal(proposalOf({title:'x'},'t1'),null);assert.equal(proposalOf({prompt:'do it'},'t1'),null);
+  assert.deepEqual(proposalOf({title:'  Fix   lint ',prompt:'Step 1\nStep 2 '},'t1'),{id:'t1',title:'Fix lint',prompt:'Step 1\nStep 2',status:'pending'});
+});
+test('a proposed session starts only when asked, in the same project with the same settings',async()=>{
+  const{engine,t,outputs,contexts}=setup(()=>({type:'sdk',name:'desk'}));
+  await engine.send(t.id,'review',{model:'model-x',mode:'acceptEdits',effort:'low'});await tick();
+  assert.deepEqual(await contexts[0].canUseTool(PROPOSE,{title:'a',prompt:'b'},{toolUseID:'p1'}),{behavior:'allow',updatedInput:{title:'a',prompt:'b'}});
+  outputs.push({type:'assistant',uuid:'a1',message:{content:[{type:'tool_use',id:'p1',name:PROPOSE,input:{title:'Fix flaky test',prompt:'The order test fails at random.'}},{type:'tool_use',id:'p2',name:PROPOSE,input:{title:'Other'}}]}});
+  outputs.push({type:'assistant',uuid:'a1',message:{content:[{type:'tool_use',id:'p1',name:PROPOSE,input:{title:'Fix flaky test',prompt:'dup'}}]}});
+  outputs.push({type:'result',subtype:'success',is_error:false,result:'Done',usage:{output_tokens:1},total_cost_usd:0});await tick();
+  const turn=engine.thread(t.id).turns[0];assert.deepEqual(turn.proposals.map(p=>[p.id,p.status]),[['p1','pending']]);
+  const before=engine.store.state.threads.length;
+  const child=await engine.startProposal(t.id,'p1');await tick();
+  assert.equal(engine.store.state.threads.length,before+1);assert.equal(child.projectId,t.projectId);assert.equal(child.parentId,t.id);assert.equal(child.title,'Fix flaky test');
+  assert.equal(child.turns[0].user,'The order test fails at random.');assert.equal(child.model,'model-x');assert.equal(child.mode,'acceptEdits');assert.equal(child.effort,'low');
+  assert.deepEqual([turn.proposals[0].status,turn.proposals[0].threadId],['started',child.id]);
+  await assert.rejects(()=>engine.startProposal(t.id,'p1'),/已经开始/);await assert.rejects(()=>engine.startProposal(t.id,'nope'),/找不到/);
+  engine.dismissProposal(t.id,'p1');assert.equal(turn.proposals[0].status,'started');
+  await engine.shutdown();
+});
+test('proposal cards show start and dismiss, then a link once started; desk tool rows stay out of the steps',async()=>{
+  const {proposalsHtml,splitTurn}=await worklog();
+  const turn={status:'done',tools:[{id:'p',name:PROPOSE,input:{}},{id:'b',name:'Bash',input:{}}],items:[{type:'tool',id:'p'},{type:'tool',id:'b'},{type:'text',text:'Reply'}],proposals:[{id:'p',title:'Fix <it>',prompt:'brief',status:'pending'},{id:'q',title:'Gone',prompt:'x',status:'dismissed'}]};
+  const html=proposalsHtml(turn,{escape});assert.match(html,/Fix &lt;it&gt;/);assert.match(html,/data-proposal-start="p"/);assert.match(html,/data-proposal-dismiss="p"/);assert.doesNotMatch(html,/Gone/);
+  assert.match(proposalsHtml({proposals:[{id:'p',title:'T',prompt:'b',status:'started',threadId:'th9'}]},{escape}),/data-open-thread="th9"/);
+  assert.deepEqual(splitTurn(turn).work.map(i=>i.id),['b']);
 });

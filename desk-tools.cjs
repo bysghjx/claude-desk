@@ -1,9 +1,12 @@
-// Tools Claude Desk gives Claude on top of Claude Code's own. wrap_up fills the
-// box under a finished turn: a short recap and, when the user has a decision to
-// make, one question with reply buttons.
-const WRAP_UP='mcp__desk__wrap_up';
+// Tools Claude Desk gives Claude on top of Claude Code's own.
+// - wrap_up fills the box under a finished turn: a short recap and, when the
+//   user has a decision to make, one question with reply buttons.
+// - propose_session puts a card under the turn for work worth its own
+//   conversation; nothing starts until the user clicks it.
+const WRAP_UP='mcp__desk__wrap_up',PROPOSE='mcp__desk__propose_session',DESK_TOOLS=[WRAP_UP,PROPOSE];
 const DESCRIPTION='在本轮工作结束、写最后的回复之前调用，填写回复下方的收尾框。recap：两三句话说明现在是什么状态、还有什么没做或没验证。只有需要用户做决定或操作时才填 ask（一句话的问题，不写理由）和 actions（1–2 个按钮文字，每个 1–4 个词，第一个是你推荐的；用户点按钮等于把这段文字发给你）。';
-const PROMPT='如果这一轮改了文件、运行了命令或完成了多步工作，在写最后的回复之前调用 wrap_up 工具填写收尾框；简单问答和闲聊不要调用。收尾框不代替回复：调用之后照常写出完整的最后回复，并且不要在回复里重复收尾框里的问题。';
+const PROPOSE_DESCRIPTION='提议一个单独的新会话：用户会在回复下方看到一张卡片，点「开始」才会在同一个项目里开一个新会话，把 prompt 作为第一条消息发过去。用于和当前任务无关、但值得单独做的事（顺手发现的问题、你建议的后续工作）。title：不超过 30 个字的任务名。prompt：完整的任务说明，新会话看不到这段对话，所以要写清楚背景、涉及的文件和怎样算完成。';
+const PROMPT='如果这一轮改了文件、运行了命令或完成了多步工作，在写最后的回复之前调用 wrap_up 工具填写收尾框；简单问答和闲聊不要调用。收尾框不代替回复：调用之后照常写出完整的最后回复，并且不要在回复里重复收尾框里的问题。发现和当前任务无关、但值得单独做的事时，用 propose_session 提议，不要自己顺手去做，也不要把当前任务本身拆成提议；每轮最多 3 个。';
 const text=(value,max)=>typeof value==='string'?value.replace(/\s+/g,' ').trim().slice(0,max):'';
 // The recorded box, or null when the call has no recap. Buttons need a question to answer.
 function wrapUpOf(input){
@@ -12,10 +15,16 @@ function wrapUpOf(input){
   const actions=ask&&Array.isArray(input?.actions)?input.actions.map(a=>text(typeof a==='string'?a:a?.label,24)).filter(Boolean).slice(0,2):[];
   return{recap,...(ask?{ask}:{}),...(actions.length?{actions}:{})};
 }
+// The recorded proposal, or null without a title and a brief. The brief keeps its line breaks.
+function proposalOf(input,id){
+  const title=text(input?.title,60),prompt=typeof input?.prompt==='string'?input.prompt.trim().slice(0,20000):'';
+  return title&&prompt?{id:String(id),title,prompt,status:'pending'}:null;
+}
 // One server per CLI process: an SDK MCP server instance serves a single connection.
 function deskServerFactory({createSdkMcpServer,tool,z}){
   return()=>createSdkMcpServer({name:'desk',version:'1.0.0',alwaysLoad:true,tools:[
-    tool('wrap_up',DESCRIPTION,{recap:z.string(),ask:z.string().optional(),actions:z.array(z.string()).max(2).optional()},async()=>({content:[{type:'text',text:'收尾框已显示。现在写最后的回复。'}]}))
+    tool('wrap_up',DESCRIPTION,{recap:z.string(),ask:z.string().optional(),actions:z.array(z.string()).max(2).optional()},async()=>({content:[{type:'text',text:'收尾框已显示。现在写最后的回复。'}]})),
+    tool('propose_session',PROPOSE_DESCRIPTION,{title:z.string(),prompt:z.string()},async()=>({content:[{type:'text',text:'提议卡片已显示给用户，用户点「开始」才会开新会话。不要自己去做这件事。'}]}))
   ]});
 }
-module.exports={WRAP_UP,PROMPT,wrapUpOf,deskServerFactory};
+module.exports={WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT,wrapUpOf,proposalOf,deskServerFactory};

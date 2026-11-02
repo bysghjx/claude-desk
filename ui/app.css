@@ -1271,3 +1271,14 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .storage-bar{height:4px;border-radius:2px;background:#333;margin:8px 0 6px;overflow:hidden}
 .storage-bar span{display:block;height:100%;background:#9a9a9a;border-radius:2px}
 :root[data-accent] .storage-bar span{background:var(--accent)}
+/* A conversation Claude proposed (propose_session): title, collapsible brief, start / dismiss. */
+.proposal-card{margin:16px 0 4px;border:1px solid #33332f;border-radius:12px;background:#1d1d1c;padding:12px 15px;font-size:13px}
+.proposal-head{display:flex;flex-direction:column;gap:3px}
+.proposal-kicker{font-size:11px;color:#9b9890}
+.proposal-head strong{color:#ececec;font-weight:500}
+.proposal-brief{margin-top:7px;color:#b5b2a9;font-size:12.5px}
+.proposal-brief summary{cursor:pointer;color:#9b9890;font-size:12px}
+.proposal-brief div{white-space:pre-wrap;margin-top:6px;max-height:220px;overflow:auto;line-height:1.6}
+.proposal-actions{display:flex;align-items:center;gap:8px;margin-top:10px}
+.proposal-state{font-size:12px;color:#9b9890}
+.turn.just-finished .proposal-card{animation:rise-in var(--motion-slow) var(--ease-out) both}

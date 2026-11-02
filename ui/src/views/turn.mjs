@@ -3,7 +3,7 @@
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
 import { elapsed } from '../core/format.mjs';
-import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml } from '../lib/worklog.mjs';
+import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
 function userHtml(turn) {
@@ -111,6 +111,6 @@ export function updateTurn(view, turn, { threadActive, latest = false, turns = n
   view.live = live;
   const changes = live ? [] : fileChanges(turn, view.cwd);
   const tasks = latest && turns ? taskListHtml(turns, escape) : '';
-  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape)}${wrapUpHtml(turn, { escape, latest, threadActive })}${footerHtml(turn, threadActive)}`);
+  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape)}${live ? '' : proposalsHtml(turn, { escape })}${wrapUpHtml(turn, { escape, latest, threadActive })}${footerHtml(turn, threadActive)}`);
   return true;
 }
