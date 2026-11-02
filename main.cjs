@@ -9,7 +9,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -237,6 +237,10 @@ if(primaryInstance)app.whenReady().then(async () => {
   const storageUsage=new StorageUsage({dataRoot,state:()=>engine.store.state,checkpointKey:cwd=>checkpoints.key(cwd),worktreeStatus:wt=>worktrees.status(wt),
     removeWorktree:async t=>{if(ACTIVE.has(t.status))throw Error('对话正在运行');await engine.closeRun(t.id);terminals.closeIn(t.worktree.path);await worktrees.remove(t.worktree);await engine.detachWorktree(t.id);}});
   handle('storage:usage',()=>storageUsage.scan());
+  const pullRequests=new PullRequests();
+  handle('pr:status',id=>{const t=engine.thread(id);return t.projectId?pullRequests.status(t.cwd):{available:false,reason:'不属于项目的对话没有拉取请求。'};});
+  // Only GitHub pages open from the PR card.
+  handle('pr:open',url=>{if(!/^https:\/\/github\.com\//.test(String(url)))throw Error('只能打开 GitHub 链接');return shell.openExternal(String(url));});
   handle('storage:clean',key=>storageUsage.clean(String(key)));
   handle('terminal:open',id=>terminals.open(folder(id)));
   handle('terminal:write',(id,data)=>terminals.write(id,data));

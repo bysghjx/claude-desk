@@ -620,6 +620,15 @@
   .proposal-brief{color:#504d45}
   .proposal-brief summary{color:#636059}
   .proposal-state{color:#636059}
+  .pr-card{color:#3f3f3f}
+  .pr-title{color:#1e1e1e}
+  .pr-meta{color:#606060}
+  .pr-checks{color:#3f3f3f}
+  .pr-failed{color:#c5372c}
+  .pr-state-pending .pr-checks::before{background:#96772f}
+  .pr-state-passed .pr-checks::before{background:#4c805f}
+  .pr-state-failed .pr-checks::before{background:#c5372c}
+  .pr-failing{color:#c5372c}
 }
 
 /* Hand-tuned light theme details */
