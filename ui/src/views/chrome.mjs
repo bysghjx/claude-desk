@@ -2,7 +2,9 @@
 import { $, $$, escape, setText } from '../core/dom.mjs';
 import { guarded } from '../core/ui.mjs';
 
-const RAIL_TABS = { mcp: 'manage-mcp', plugins: 'manage-plugins', skills: 'manage-skills', usage: 'manage-usage', import: 'rail-import' };
+const RAIL_TABS = { mcp: 'manage-mcp', plugins: 'manage-plugins', skills: 'manage-skills', usage: 'manage-usage', 'last-import': 'rail-import' };
+// Manager tabs that light up a rail button other than their own page name.
+const RAIL_OF_TAB = { import: 'rail-import', 'claude-import': 'rail-import' };
 
 export function createChrome({ store, actions, api, toast, manager, composer, sidebar }) {
   function header() {
@@ -74,7 +76,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#new-thread').addEventListener('click', actions.showHome);
   $('#rail-home').addEventListener('click', () => { actions.showHome(); rail('rail-home'); });
   for (const [page, id] of Object.entries(RAIL_TABS)) $('#' + id).addEventListener('click', () => { manager.open(page); rail(id); });
-  document.addEventListener('click', event => { const tab = event.target.closest?.('[data-manager-tab]'); if (tab) rail(RAIL_TABS[tab.dataset.managerTab] || ''); });
+  document.addEventListener('click', event => { const tab = event.target.closest?.('[data-manager-tab]'); if (tab) rail(RAIL_TABS[tab.dataset.managerTab] || RAIL_OF_TAB[tab.dataset.managerTab] || ''); });
   for (const id of ['#manager-dialog', '#settings-dialog']) $(id).addEventListener('close', () => rail(store.current() ? '' : 'rail-home'));
   $('#thread-title').addEventListener('dblclick', () => { if (store.current()) sidebar.startRename(store.current().id); });
   $('#export').addEventListener('click', guarded(toast, async () => { if (store.selected && await api('export', store.selected)) toast('对话已导出'); }));
@@ -88,6 +90,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#open-config').addEventListener('click', guarded(toast, () => api('config:open')));
   $('#open-data').addEventListener('click', guarded(toast, () => api('data:open')));
   $('#import-codex').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('import'); rail('rail-import'); });
+  $('#import-claude').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('claude-import'); rail('rail-import'); });
   $('#backup-data').addEventListener('click', guarded(toast, async () => { if (await api('storage:export')) $('#settings-result').textContent = '全部会话、草稿和用量已备份。'; }));
   $('#refresh-models').addEventListener('click', guarded(toast, async () => {
     const button = $('#refresh-models'); button.disabled = true; $('#settings-result').textContent = '正在读取模型列表…';

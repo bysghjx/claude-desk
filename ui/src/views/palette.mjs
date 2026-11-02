@@ -25,7 +25,8 @@ export function createPalette({ store, api, actions, composer, toast }) {
     { id: 'open-folder', label: '打开文件夹', shortcut: 'Ctrl+O', icon: 'folder', keywords: '添加项目 open folder project', run: () => actions.addProject() },
     { id: 'terminal', label: '打开或隐藏终端', shortcut: 'Ctrl+`', icon: 'terminal', keywords: 'terminal shell powershell', run: click('#toggle-terminal') },
     { id: 'settings', label: '设置', icon: 'settings', keywords: 'settings 主题 外观 通知 强调色', run: click('#settings') },
-    { id: 'import', label: '导入 Codex 对话', icon: 'action', keywords: 'codex import', run: click('#rail-import') },
+    { id: 'import', label: '导入 Codex 对话', icon: 'action', keywords: 'codex import', run: click('#import-codex') },
+    { id: 'import-claude', label: '导入 Claude Code 对话', icon: 'action', keywords: 'claude code import 导入', run: click('#import-claude') },
     { id: 'mcp', label: 'MCP 服务器', icon: 'action', keywords: 'mcp server', run: click('#manage-mcp') },
     { id: 'skills', label: '技能', icon: 'action', keywords: 'skills', run: click('#manage-skills') },
     { id: 'usage', label: '累计用量', icon: 'action', keywords: 'usage cost token', run: click('#manage-usage') }

@@ -1,8 +1,15 @@
-// Workspace manager window: MCP servers, plugins, skills, usage and Codex import.
+// Workspace manager window: MCP servers, plugins, skills, usage, and Codex / Claude Code imports.
 import { $, escape } from '../core/dom.mjs';
 
 export function createManager({ store, api, toast, confirm }) {
-  let page='plugins',catalog=null,importList=null,importPreview=null,importSelected=new Set(),mcpRows=null,summary=null,query='',pluginFilter='installed',limit=50,scope='user',period='30d',busy=false,generation=0,editor=null;
+  let page='plugins',lastImport='import',catalog=null,mcpRows=null,summary=null,query='',pluginFilter='installed',limit=50,scope='user',period='30d',busy=false,generation=0,editor=null;
+  // Each import source is its own tab with its own list, selection and preview.
+  const IMPORTS={
+    import:{source:'codex',name:'Codex',note:'从本机 Codex 的 sessions / archived_sessions 读取历史。每次最多选择 20 条，先预览再导入；原文件保持不变。重复会话会跳过，导入的旧用量不计入 Claude 累计统计。',after:'导入后继续聊天使用当前 Claude 模型；Codex 原始模型、后台进程、加密思考和图片附件不会迁移。分支或回退版本使用最新日志，预览可核对轮次。'},
+    'claude-import':{source:'claude',name:'Claude Code',note:'从本机 Claude Code 的 projects 目录读取历史，包括终端里的 claude 和 Claude 桌面版 Code 标签的会话。每次最多选择 20 条，先预览再导入；原文件保持不变。重复会话会跳过，导入的旧用量不计入累计统计。',after:'导入后继续聊天使用当前选择的模型，原来的问答作为上下文带上。子代理记录、图片附件和后台任务不会迁移；回退过的会话只导入最新的分支。'}
+  };
+  const imports=Object.fromEntries(Object.keys(IMPORTS).map(key=>[key,{list:null,preview:null,selected:new Set()}]));
+  const isImport=name=>name in IMPORTS,current=()=>imports[page];
   const dialog=$('#manager-dialog'),content=$('#manager-content'),controls=$('#manager-controls');
   const project=()=>$('#manager-project').value||'';
   const format=value=>Number(value||0).toLocaleString();
@@ -14,13 +21,13 @@ export function createManager({ store, api, toast, confirm }) {
     content.innerHTML='<p class="manager-note">沿用 Claude CLI 的用户、项目和本地 MCP 配置。列表不会连接服务器；点击“检查连接”才进行健康检查。新增或移除从下次发送生效。</p>'+(mcpRows.length?mcpRows.map(row=>`<article class="manager-card"><div class="manager-card-copy"><h3>${escape(row.name)}<span class="manager-tag">${escape(row.type)}</span></h3><p>${escape(row.shadowed?'被更高优先级配置覆盖':row.status)}</p><small>${scopeLabel(row.scope)}</small></div><div class="manager-actions"><button class="destructive" data-mcp-remove="${escape(row.name)}" data-mcp-scope="${escape(row.scope)}">移除</button></div></article>`).join(''):'<div class="manager-empty">尚未发现 MCP 配置，点击“添加服务器”开始配置。</div>')+'<p class="manager-note">此列表显示原生 MCP 配置；插件携带的 MCP 由对应插件管理。项目服务器的批准和 OAuth 登录仍需在官方 Claude CLI 中完成。连接检查反映本次 CLI 检测结果。</p>';
   }
   function renderImport(){
-    const search=query.trim().toLowerCase(),items=(importList?.items||[]).filter(item=>`${item.title} ${item.cwd}`.toLowerCase().includes(search));
-    content.innerHTML='<p class="manager-note">从本机 Codex 的 sessions / archived_sessions 读取历史。每次最多选择 20 条，先预览再导入；原文件保持不变。重复会话会跳过，导入的旧用量不计入 Claude 累计统计。</p>'+(importPreview?`<div class="import-preview"><h3>导入预览</h3>${importPreview.items.map(item=>`<article><strong>${item.turns} 轮问答 · ${item.tools} 条工具记录</strong><small>${escape(item.cwd)} · ${escape(item.model||'未记录模型')}</small><p>${escape(item.first)}</p><p class="muted">最后回复：${escape(item.last||'无文本回复')}</p>${item.warnings?'<p class="error">存在 '+item.warnings+' 条无法解析的日志行，未导入这些行。</p>':''}</article>`).join('')}<button id="codex-commit" class="manager-primary">确认导入 ${importPreview.items.length} 条会话</button></div>`:'')+(items.length?items.map(item=>`<article class="manager-card"><label class="skill-selection"><input type="checkbox" data-codex-id="${escape(item.id)}" aria-label="选择 ${escape(item.title)}" ${importSelected.has(item.id)?'checked':''} ${item.imported?'disabled':''}></label><div class="manager-card-copy"><h3>${escape(item.title)}${item.imported?'<span class="manager-tag">已导入</span>':''}${item.archived?'<span class="manager-tag">已归档</span>':''}</h3><p>${escape(item.cwd)}</p><small>${new Date(item.updatedAt).toLocaleString()}</small></div></article>`).join(''):'<div class="manager-empty">没有找到匹配的 Codex 对话。</div>')+'<p class="manager-note">导入后继续聊天使用当前 Claude 模型；Codex 原始模型、后台进程、加密思考和图片附件不会迁移。分支或回退版本使用最新日志，预览可核对轮次。</p>';
-    $('#codex-commit')?.addEventListener('click',async()=>{const token=importPreview.token;if(busy)return;busy=true;disabled();try{const result=await api('codex:import',token);const fresh=await api('state');store.load(fresh);importSelected.clear();importPreview=null;await load();status(`已导入 ${result.imported} 条，跳过 ${result.skipped} 条重复会话`);}catch(e){status(e.message,true);}finally{busy=false;disabled();}});
+    const info=IMPORTS[page],{list:importList,preview:importPreview,selected:importSelected}=current(),search=query.trim().toLowerCase(),items=(importList?.items||[]).filter(item=>`${item.title} ${item.cwd}`.toLowerCase().includes(search));
+    content.innerHTML=`<p class="manager-note">${info.note}</p>`+(importPreview?`<div class="import-preview"><h3>导入预览</h3>${importPreview.items.map(item=>`<article><strong>${item.turns} 轮问答 · ${item.tools} 条工具记录</strong><small>${escape(item.cwd)} · ${escape(item.model||'未记录模型')}</small><p>${escape(item.first)}</p><p class="muted">最后回复：${escape(item.last||'无文本回复')}</p>${item.warnings?'<p class="error">存在 '+item.warnings+' 条无法解析的日志行，未导入这些行。</p>':''}</article>`).join('')}<button id="import-commit" class="manager-primary">确认导入 ${importPreview.items.length} 条会话</button></div>`:'')+(items.length?items.map(item=>`<article class="manager-card"><label class="skill-selection"><input type="checkbox" data-import-id="${escape(item.id)}" aria-label="选择 ${escape(item.title)}" ${importSelected.has(item.id)?'checked':''} ${item.imported?'disabled':''}></label><div class="manager-card-copy"><h3>${escape(item.title)}${item.imported?'<span class="manager-tag">已导入</span>':''}${item.archived?'<span class="manager-tag">已归档</span>':''}</h3><p>${escape(item.cwd)}</p><small>${new Date(item.updatedAt).toLocaleString()}</small></div></article>`).join(''):`<div class="manager-empty">没有找到匹配的 ${info.name} 对话。</div>`)+`<p class="manager-note">${info.after}</p>`;
+    $('#import-commit')?.addEventListener('click',async()=>{const state=current(),token=state.preview.token;if(busy)return;busy=true;disabled();try{const result=await api(info.source+':import',token);const fresh=await api('state');store.load(fresh);state.selected.clear();state.preview=null;await load();status(`已导入 ${result.imported} 条，跳过 ${result.skipped} 条重复会话`);}catch(e){status(e.message,true);}finally{busy=false;disabled();}});
   }
   function tools(){
-    $('#manager-project').closest('.manager-scope').hidden=page==='import';
-    if(page==='import')controls.innerHTML=`<input id="extension-search" aria-label="搜索 Codex 对话" placeholder="搜索标题或项目路径" value="${escape(query)}"><button id="codex-scan">重新扫描</button><button id="codex-preview">预览所选（${importSelected.size}）</button>`;
+    $('#manager-project').closest('.manager-scope').hidden=isImport(page);
+    if(isImport(page))controls.innerHTML=`<input id="extension-search" aria-label="搜索 ${IMPORTS[page].name} 对话" placeholder="搜索标题或项目路径" value="${escape(query)}"><button id="import-scan">重新扫描</button><button id="import-preview">预览所选（${current().selected.size}）</button>`;
 
     if(page==='mcp')controls.innerHTML='<button id="mcp-check">检查连接</button><button id="mcp-create" class="manager-primary">添加服务器</button>';
 
@@ -28,7 +35,7 @@ export function createManager({ store, api, toast, confirm }) {
     if(page==='skills')controls.innerHTML=`<input id="extension-search" aria-label="搜索技能" placeholder="搜索技能名称、说明或来源" value="${escape(query)}"><select id="skill-mode" aria-label="技能加载方式"><option value="all">默认全部技能</option><option value="selected">只加载所选技能</option></select><button id="skill-import">导入文件夹</button><button id="skill-create" class="manager-primary">新建技能</button>`;
     if(page==='usage')controls.innerHTML=`<select id="usage-period" aria-label="统计时间范围"><option value="today">今天</option><option value="7d">近 7 天</option><option value="30d">近 30 天</option><option value="all">全部时间</option></select><button id="usage-export">导出 CSV</button>`;
     if($('#extension-search'))$('#extension-search').oninput=()=>{query=$('#extension-search').value;limit=50;render();};
-    if(page==='import'){$('#codex-scan').onclick=()=>{importPreview=null;load(true);};$('#codex-preview').onclick=async()=>{if(busy)return;busy=true;disabled();status('正在读取所选会话…');try{importPreview=await api('codex:preview',[...importSelected]);render();content.scrollTop=0;status('请核对预览，确认后导入');}catch(e){status(e.message,true);}finally{busy=false;disabled();}};}
+    if(isImport(page)){const state=current();$('#import-scan').onclick=()=>{state.preview=null;load(true);};$('#import-preview').onclick=async()=>{if(busy)return;busy=true;disabled();status('正在读取所选会话…');try{state.preview=await api(IMPORTS[page].source+':preview',[...state.selected]);render();content.scrollTop=0;status('请核对预览，确认后导入');}catch(e){status(e.message,true);}finally{busy=false;disabled();}};}
     if(page==='plugins'){
       $('#plugin-filter').onchange=()=>{pluginFilter=$('#plugin-filter').value;limit=50;render();};
       $('#plugin-scope').value=project()?scope:'user';$('#plugin-scope').onchange=()=>{scope=$('#plugin-scope').value;render();};
@@ -52,7 +59,7 @@ export function createManager({ store, api, toast, confirm }) {
     }
     disabled();
   }
-  function disabled(){document.querySelectorAll('#manager-content button,#manager-controls button,#manager-controls select,#manager-content input,#manager-project,#manager-refresh,[data-manager-tab],#manager-close').forEach(el=>el.disabled=busy||(el.matches?.('[data-codex-id]')&&Boolean(importList?.items.find(item=>item.id===el.dataset.codexId)?.imported)));}
+  function disabled(){document.querySelectorAll('#manager-content button,#manager-controls button,#manager-controls select,#manager-content input,#manager-project,#manager-refresh,[data-manager-tab],#manager-close').forEach(el=>el.disabled=busy||(el.matches?.('[data-import-id]')&&Boolean(current()?.list?.items.find(item=>item.id===el.dataset.importId)?.imported)));}
   function renderPlugins(){
     const list=pluginFilter==='installed'?catalog.installed:catalog.available.map(item=>catalog.installed.find(p=>p.id===item.id)||item);
     const search=query.trim().toLowerCase(),filtered=list.filter(item=>`${item.name} ${item.id} ${item.description} ${item.marketplace}`.toLowerCase().includes(search));
@@ -70,13 +77,13 @@ export function createManager({ store, api, toast, confirm }) {
     const daily=s.daily||[],tokens=row=>row.input+row.output+row.cacheRead+row.cacheWrite,max=Math.max(1,...daily.map(tokens));
     content.innerHTML=`<div class="usage-kpis">${values.map(([label,value,note])=>`<div class="usage-kpi"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`).join('')}</div><h3 class="usage-section-title">最近日期趋势 · tokens</h3><div class="usage-chart">${daily.length?`<svg viewBox="0 0 720 110" role="img" aria-label="每日 token 用量">${daily.map((day,i)=>{const width=720/daily.length,height=tokens(day)/max*100,bar=Math.min(36,Math.max(2,width-5));return`<rect x="${i*width+(width-bar)/2}" y="${105-height}" width="${bar}" height="${height}" rx="2"><title>${escape(day.date)} · ${format(tokens(day))} tokens</title></rect>`;}).join('')}</svg><div class="usage-chart-labels"><span>${daily[0].date}</span><span>${daily.at(-1).date}</span></div>`:'<p class="context-empty">此时间范围暂无用量记录</p>'}</div><h3 class="usage-section-title">按模型汇总</h3><div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>模型</th><th>输入</th><th>输出</th><th>缓存读取</th><th>缓存写入</th><th>估算费用</th></tr></thead><tbody>${s.models.length?s.models.map(m=>`<tr><td title="${escape(m.model)}">${escape(m.model)}</td><td>${format(m.input)}</td><td>${format(m.output)}</td><td>${format(m.cacheRead)}</td><td>${format(m.cacheWrite)}</td><td>${currency(m.cost)}</td></tr>`).join(''):'<tr><td colspan="6">暂无记录</td></tr>'}</tbody></table></div><p class="manager-note">统计来自本应用保存的 CLI 用量。模型累计返回值按增量计算，避免多轮重复累加；包含 CLI 报告的主任务与子任务调用。删除会话后，用量计数仍保留，不保留聊天正文。${s.partial?`其中 ${s.partial} 轮来自旧版或仅主任务统计，明细可能不完整。`:''}服务商账户额度未在此推算。</p>`;
   }
-  function render(){if(page==='import'){if(importList)renderImport();}else if(page==='mcp'){if(mcpRows)renderMcp();}else if(page==='usage'){if(summary)renderUsage();}else if(catalog){page==='plugins'?renderPlugins():renderSkills();}disabled();}
+  function render(){if(isImport(page)){if(current().list)renderImport();}else if(page==='mcp'){if(mcpRows)renderMcp();}else if(page==='usage'){if(summary)renderUsage();}else if(catalog){page==='plugins'?renderPlugins():renderSkills();}disabled();}
   async function load(refresh=false){
     const token=++generation;status('正在读取…');$('#manager-refresh').disabled=true;
     try{
-      const requestedPage=page;const data=requestedPage==='import'?await api('codex:list'):requestedPage==='mcp'?await api('mcp:list',project()):requestedPage==='usage'?await api('usage:summary',{period,projectId:project()}):await api('extensions:list',project(),refresh);
-      if(token!==generation)return;if(requestedPage==='import')importList=data;else if(requestedPage==='mcp')mcpRows=data;else if(requestedPage==='usage')summary=data;else catalog=data;tools();render();
-      status(page==='import'?`${importList.items.length} 条可见历史 · ${importList.home}`:page==='mcp'?`${mcpRows.length} 个 MCP 配置 · 列表不展示凭据`:page==='usage'?'本地累计统计 · 按所选项目及时间筛选':catalog.warning||`${catalog.installed.length} 个已安装插件 · ${catalog.skills.length} 个技能 · ${catalog.available.length} 个市场条目`,Boolean(catalog?.warning&&!['usage','mcp','import'].includes(page)));
+      const requestedPage=page;const data=isImport(requestedPage)?await api(IMPORTS[requestedPage].source+':list'):requestedPage==='mcp'?await api('mcp:list',project()):requestedPage==='usage'?await api('usage:summary',{period,projectId:project()}):await api('extensions:list',project(),refresh);
+      if(token!==generation)return;if(isImport(requestedPage))imports[requestedPage].list=data;else if(requestedPage==='mcp')mcpRows=data;else if(requestedPage==='usage')summary=data;else catalog=data;tools();render();
+      status(isImport(page)?`${current().list.items.length} 条可见历史 · ${current().list.home}`:page==='mcp'?`${mcpRows.length} 个 MCP 配置 · 列表不展示凭据`:page==='usage'?'本地累计统计 · 按所选项目及时间筛选':catalog.warning||`${catalog.installed.length} 个已安装插件 · ${catalog.skills.length} 个技能 · ${catalog.available.length} 个市场条目`,Boolean(catalog?.warning&&!['usage','mcp'].includes(page)&&!isImport(page)));
     }catch(e){if(token===generation){content.innerHTML='<div class="manager-empty">读取失败，请刷新重试。</div>';status(e.message,true);}}
     finally{if(token===generation)disabled();}
   }
@@ -108,7 +115,7 @@ export function createManager({ store, api, toast, confirm }) {
     const remove=event.target.closest('[data-skill-remove]');if(remove)(async()=>{if(await confirm({title:'移除技能？',description:'移除本应用技能库中的副本，不影响导入来源目录。',preview:remove.dataset.skillRemove.slice(6),label:'移除技能'}))await perform(()=>api('skills:remove',remove.dataset.skillRemove),'正在移除技能…','技能已移除');})();
   };
   content.onchange=event=>{
-    const codex=event.target.closest('[data-codex-id]');if(codex){codex.checked?importSelected.add(codex.dataset.codexId):importSelected.delete(codex.dataset.codexId);importPreview=null;tools();render();return;}
+    const pick=event.target.closest('[data-import-id]');if(pick){const state=current();pick.checked?state.selected.add(pick.dataset.importId):state.selected.delete(pick.dataset.importId);state.preview=null;tools();render();return;}
 
     const checkbox=event.target.closest('[data-skill-name]');if(!checkbox)return;
     const names=new Set(catalog.selection.skillMode==='selected'?catalog.selection.selectedSkills:catalog.skills.map(skill=>skill.name));checkbox.checked?names.add(checkbox.dataset.skillName):names.delete(checkbox.dataset.skillName);
@@ -126,11 +133,12 @@ export function createManager({ store, api, toast, confirm }) {
     catch(e){$('#skill-editor-error').textContent=e.message;}finally{$('#skill-save').disabled=false;}
   };
   $('#skill-close').onclick=$('#skill-editor-cancel').onclick=()=>$('#skill-dialog').close();
+  // 'last-import' (the rail button) reopens whichever import tab was used last.
   async function open(pageName){
-    page=pageName;$('#manager-title').textContent='工作空间';query='';limit=50;tabs();$('#manager-project').innerHTML='<option value="">全部项目 / 用户范围</option>'+store.state.projects.map(p=>`<option value="${escape(p.id)}">${escape(p.name)}</option>`).join('');$('#manager-project').value=store.currentProject()?.id||'';scope=project()?'project':'user';
+    page=pageName==='last-import'?lastImport:pageName;if(isImport(page))lastImport=page;$('#manager-title').textContent='工作空间';query='';limit=50;tabs();$('#manager-project').innerHTML='<option value="">全部项目 / 用户范围</option>'+store.state.projects.map(p=>`<option value="${escape(p.id)}">${escape(p.name)}</option>`).join('');$('#manager-project').value=store.currentProject()?.id||'';scope=project()?'project':'user';
     if(!dialog.open)dialog.showModal();content.innerHTML='<div class="manager-empty">正在读取…</div>';tools();await load();
   }
-  document.querySelectorAll('[data-manager-tab]').forEach(button=>button.onclick=()=>{if(busy)return;page=button.dataset.managerTab;query='';limit=50;tabs();tools();content.innerHTML='<div class="manager-empty">正在读取…</div>';load();});
+  document.querySelectorAll('[data-manager-tab]').forEach(button=>button.onclick=()=>{if(busy)return;page=button.dataset.managerTab;if(isImport(page))lastImport=page;query='';limit=50;tabs();tools();content.innerHTML='<div class="manager-empty">正在读取…</div>';load();});
   $('#manager-close').onclick=()=>dialog.close();$('#manager-project').onchange=()=>{query='';limit=50;scope=project()?'project':'user';load();};$('#manager-refresh').onclick=()=>load(true);
   return { open };
 }
