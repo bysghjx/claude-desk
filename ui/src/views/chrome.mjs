@@ -1,12 +1,13 @@
 // Window chrome: header, left rail, window buttons, settings dialog and shortcuts.
 import { $, $$, escape, setText } from '../core/dom.mjs';
 import { guarded } from '../core/ui.mjs';
+import { isActive } from '../core/format.mjs';
 
 const RAIL_TABS = { mcp: 'manage-mcp', plugins: 'manage-plugins', skills: 'manage-skills', usage: 'manage-usage', 'last-import': 'rail-import' };
 // Manager tabs that light up a rail button other than their own page name.
 const RAIL_OF_TAB = { import: 'rail-import', 'claude-import': 'rail-import' };
 
-export function createChrome({ store, actions, api, toast, manager, composer, sidebar }) {
+export function createChrome({ store, actions, api, toast, confirm, manager, composer, sidebar }) {
   function header() {
     setText($('#project-label'), store.current() && !store.current().projectId ? '对话' : store.currentProject()?.name || '工作空间');
     setText($('#thread-title'), store.current()?.title || '主页');
@@ -98,6 +99,17 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#open-cli').addEventListener('click', guarded(toast, () => api('cli:open')));
   $('#open-data').addEventListener('click', guarded(toast, () => api('data:open')));
   $('#import-codex').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('import'); rail('rail-import'); });
+  // An update package is checked first; installing closes Claude Desk, replaces the files and starts it again.
+  $('#install-update').addEventListener('click', guarded(toast, async () => {
+    const button = $('#install-update'); button.disabled = true; $('#settings-result').textContent = '正在检查更新包…';
+    try {
+      const update = await api('update:pick'); $('#settings-result').textContent = '';
+      if (!update) return;
+      const running = store.state.threads.filter(t => isActive(t)).length;
+      const ok = await confirm({ title: `升级到 ${update.to}？`, description: `更新包检查通过：替换 ${update.files} 个文件${update.removed ? `，删除 ${update.removed} 个` : ''}。Claude Desk 会关闭，更新后自动重新打开${running ? `；正在运行的 ${running} 个会话会停止` : ''}。会话记录不受影响。`, preview: `${update.from} → ${update.to}`, label: '安装并重启', kind: 'neutral' });
+      if (ok) { $('#settings-result').textContent = '正在关闭并安装…'; await api('update:apply'); }
+    } finally { button.disabled = false; }
+  }));
   $('#open-storage').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('storage'); rail(''); });
   $('#import-claude').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('claude-import'); rail('rail-import'); });
   $('#backup-data').addEventListener('click', guarded(toast, async () => { if (await api('storage:export')) $('#settings-result').textContent = '全部会话、草稿和用量已备份。'; }));

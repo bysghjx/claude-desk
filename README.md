@@ -187,3 +187,9 @@ v0.11.1：最左侧新增图标栏：主页、MCP、插件、技能、累计用�
 ### v0.24.1：内置 Claude Code
 - 打包时把 Agent SDK 自带的 Claude Code（`claude.exe`）放到 `resources/app.asar.unpacked` 里，可以直接运行。找 Claude 的顺序：先用电脑上自己装的 Claude Code（`~/.local/bin`、`~/.claude/bin`、PATH），都没有才用内置的。设置里会标出用的是内置版本。
 - 设置新增「打开 Claude 命令行」：在命令行窗口里运行当前用的 Claude Code，没登录过的电脑可以在里面输入 `/login` 登录。
+
+### v0.25.0：更新包
+- **发布**：`npm run package` 之后运行 `npm run release`，在 `outputs/releases` 里生成完整包 `ClaudeDesk-<版本>-win-x64.zip`（带使用说明），并和上一个版本比较，生成只含变化文件的更新包 `ClaudeDesk-<旧版本>-to-<新版本>-update.zip`。每个版本的文件清单（SHA-256）保存在 `outputs/releases/manifests`，作为下一次的对比基准；`--from <版本>` 可以指定基准。平时只有 `resources/app.asar`（约 19 MB）会变，更新包只有几 MB；内置的 Claude Code 和 Electron 运行时只有升级时才进更新包。
+- **安装**：设置 → 安装更新包，选择 zip。Claude Desk 先解压到 `data/updates` 并检查：是不是 Claude Desk 的更新包、是不是给当前版本用的、每个文件的 SHA-256、路径不能出程序文件夹。确认后 Claude Desk 关闭，安装脚本等它退出后替换文件、删除不再需要的文件，再把它打开；结果写在 `install.log`，下次启动时如果上次失败会提示，并清理临时文件（`updates.cjs`）。开发版不能安装更新包。
+- 更新包也可以手动用：关闭 Claude Desk，把压缩包里的文件解压到程序文件夹覆盖（包里的「怎么安装.txt」有说明）。0.24.1 还没有「安装更新包」按钮，从 0.24.1 升级要用手动的办法。
+- **exe 不进更新包**：打包工具会把 app.asar 的哈希写进 ClaudeDesk.exe，导致每次改代码 exe（约 250 MB）都跟着变。Electron 只在 EnableEmbeddedAsarIntegrityValidation 开关打开时才检查这个哈希（现在是关的），所以 `npm run package` 会沿用同一个 Electron 版本和图标第一次打出的 exe（`outputs/releases/exe-cache`）；开关被打开时自动停止沿用。exe 文件属性里的版本号因此停在 0.24.1，Claude Desk 自己显示和更新包检查的版本来自 app.asar 里的 package.json。

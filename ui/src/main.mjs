@@ -42,7 +42,7 @@ createPrPanel({ store, api, actions, toast });
 const instructions = createInstructions({ store, api, toast });
 const sidebar = createSidebar({ api, store, actions, toast, editInstructions: id => instructions.open('project', id) });
 const manager = createManager({ store, api, toast, confirm });
-createChrome({ store, actions, api, toast, manager, composer, sidebar });
+createChrome({ store, actions, api, toast, confirm, manager, composer, sidebar });
 
 store.on('composer', () => inspector.renderPanel());
 store.on('removed', id => dock.refresh(id));
@@ -68,5 +68,6 @@ setInterval(() => { conversation.tick(); status.tick(); inspector.tick(); }, 100
   actions.selectThread(null);
   composer.initialize();
   inspector.selectTab(store.panelTab);
+  if (state.updateFailure) toast('上次安装更新包没有成功，仍是原来的版本：' + state.updateFailure);
   if (state.recovery?.fromBackup || state.recovery?.merged) toast('已恢复并合并本地会话记录。项目和对话现在统一保存在固定目录。');
 })().catch(e => { toast('启动失败：' + e.message); $('#connection-label').textContent = '连接失败'; });
