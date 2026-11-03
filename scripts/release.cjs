@@ -42,7 +42,7 @@ const mb = n => (n / 2 ** 20).toFixed(1) + ' MB';
   fs.rmSync(update, { recursive: true, force: true });
   for (const rel of changed) { fs.mkdirSync(path.dirname(path.join(update, rel)), { recursive: true }); fs.copyFileSync(path.join(full, rel), path.join(update, rel)); }
   fs.writeFileSync(path.join(update, UPDATE_FILE), JSON.stringify({ app: 'ClaudeDesk', from, to: version, files: Object.fromEntries(changed.map(rel => [rel, manifest.files[rel]])), removed }, null, 1));
-  fs.writeFileSync(path.join(update, '怎么安装.txt'), [`Claude Desk ${from} → ${version} 更新包`, '', '方法一（0.25.0 及以后的版本）：打开 Claude Desk，点左下角齿轮进入设置，点“安装更新包”，选择这个压缩包。', 'Claude Desk 会检查更新包，然后自动关闭、更新并重新打开。', '', '方法二（手动）：先关闭 Claude Desk，把这个压缩包里的所有文件解压到 Claude Desk 所在的文件夹（有 ClaudeDesk.exe 的那个），遇到同名文件选择替换。', ...(removed.length ? ['然后删除这些不再需要的文件：', ...removed] : [])].join('\r\n'));
+  fs.writeFileSync(path.join(update, '怎么安装.txt'), [`Claude Desk ${from} → ${version} 更新包`, '', '方法一（0.25.2 及以后的版本）：不用解压，把这个压缩包放进「下载」文件夹、桌面，或者 Claude Desk 所在的文件夹。打开或切回 Claude Desk 时会自动发现它，倒数 10 秒后关闭、更新并重新打开。', '在 0.25.0 和 0.25.1 上：点左下角齿轮进入设置，点“安装更新包”，选择这个压缩包。', '', '方法二（手动）：先关闭 Claude Desk，把这个压缩包里的所有文件解压到 Claude Desk 所在的文件夹（有 ClaudeDesk.exe 的那个），遇到同名文件选择替换。', ...(removed.length ? ['然后删除这些不再需要的文件：', ...removed] : [])].join('\r\n'));
   const updateZip = path.join(releases, `ClaudeDesk-${from}-to-${version}-update.zip`);
   console.log('更新包', path.basename(updateZip), mb(zip(update, fs.readdirSync(update), updateZip)), `· ${changed.length} 个文件替换，${removed.length} 个删除`);
   for (const rel of changed.slice(0, 20)) console.log('  ' + rel);

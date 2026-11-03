@@ -9,7 +9,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');const {Updater}=require('./updates.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');const {Updater,findUpdates}=require('./updates.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -195,7 +195,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   engine.on('thread', t => { if(!win?.isDestroyed()) win?.webContents.send('thread:update', forRenderer(t)); agentWindows.refresh(t.id); for(const notice of notifications.update(t))showNotice(notice); });
   handle('thread:get', id => { sentRevs.delete(id); return threadOut(id); });
   handle('agent:open',(threadId,agentId)=>agentWindows.open(threadId,agentId));
-  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;return({ ...snapshot, material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), updateFailure, recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
+  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;return({ ...snapshot, material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), updateFailure, updateInstalled: updater.installed, recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
   const extensionCwd=id=>id?project(id).path:undefined;
   async function extensionList(id,refresh=false){
     const cwd=extensionCwd(id);let catalog={installed:[],available:[]},warning='';
@@ -315,6 +315,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(MATERIALS.has(value.material)){ settings.material = value.material; applyMaterial(win); }
     if(typeof value.notifications === 'boolean') settings.notifications = value.notifications;
     if(typeof value.keepAwake === 'boolean'){ settings.keepAwake = value.keepAwake; updateAwake(); }
+    if(typeof value.autoUpdate === 'boolean') settings.autoUpdate = value.autoUpdate;
     if(['local','worktree'].includes(value.location)) settings.location = value.location;
     if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;
     engine.store.save(); return settings;
@@ -353,6 +354,13 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('config:open', () => shell.openPath(providerInfo().configPath));
   // Update packages replace files next to ClaudeDesk.exe, so only the packaged app installs them.
   handle('update:pick', async () => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); const r = await dialog.showOpenDialog(win, { title: '选择 Claude Desk 更新包', filters: [{ name: '更新包', extensions: ['zip'] }], properties: ['openFile'] }); return r.canceled ? null : updater.stage(r.filePaths[0]); });
+  // Update packages are looked for where people usually leave a download: Downloads, the desktop,
+  // and the folder Claude Desk runs from or the one holding it. Only packages found there can be installed by path.
+  const updateDirs=()=>{const install=path.dirname(process.execPath);return [{label:'下载',path:app.getPath('downloads')},{label:'桌面',path:app.getPath('desktop')},{label:'Claude Desk 所在文件夹',path:install},{label:'它的上一级文件夹',path:path.dirname(install)}];};
+  let foundUpdates=new Set();
+  handle('update:scan', () => { const dirs=updateDirs(),result=findUpdates(dirs.map(d=>d.path),app.getVersion()); foundUpdates=new Set(result.ready.map(u=>u.file)); return { ...result, dirs, version: app.getVersion(), installable: app.isPackaged }; });
+  handle('update:stage', file => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); if (!foundUpdates.has(file)) throw Error('找不到这个更新包，请重新检查'); return updater.stage(file); });
+  handle('update:reveal', file => { if (foundUpdates.has(file)) shell.showItemInFolder(file); });
   handle('update:apply', () => { updater.apply(); setTimeout(() => app.quit(), 200); return true; });
   // A console window running Claude Code, for logging in (/login) when it was never set up on this computer.
   handle('cli:open', () => { const cli = findCli(); if (!cli) throw Error('没有找到 Claude Code'); spawn('cmd.exe', ['/d', '/s', '/c', `start "Claude Code" "${cli}"`], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsVerbatimArguments: true }).unref(); return true; });

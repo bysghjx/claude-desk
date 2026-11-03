@@ -1335,3 +1335,17 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .settings-foot{margin:14px 0 0;font-size:12px;line-height:1.6;color:#7d7d7d}
 .settings-status{margin-top:auto;padding-top:12px;min-height:18px;font-size:12px;color:var(--accent)}
 @media(max-width:760px){.settings-dialog .manager-tabs{width:118px}.setting-row{flex-wrap:wrap;gap:10px}}
+.update-card{align-items:center;margin:4px 0 10px}
+.connection-dot.idle{background:#7a7a7a;box-shadow:0 0 0 3px #7a7a7a22}
+.update-card-text{flex:1;min-width:0}
+.update-card-text span{display:block;overflow-wrap:anywhere}
+.update-card-text span:empty{display:none}
+.update-card-actions{flex:none;display:flex;gap:8px}
+.update-notice{position:fixed;right:20px;bottom:20px;z-index:19;display:flex;gap:12px;width:340px;padding:15px 16px 14px;border:1px solid #444;border-radius:14px;background:#262626;box-shadow:0 14px 50px #0008;color:#ddd}
+.update-notice>svg{flex:none;width:20px;height:20px;margin-top:1px;fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.update-notice-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.update-notice-body strong{font-size:13.5px;font-weight:500;color:#eee}
+.update-notice-body>span{font-size:12px;line-height:1.6;color:#a8a8a8}
+.update-notice-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.update-notice-actions button[hidden]{display:none}
+.update-notice:not([hidden]){animation:rise-in var(--motion) var(--ease-out)}

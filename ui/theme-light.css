@@ -647,6 +647,12 @@
   .settings-lead{color:#505050}
   .settings-foot{color:#6d6d6d}
 }
+@media (prefers-color-scheme:light){
+  .connection-dot.idle{background:#6e6e6e;box-shadow:0 0 0 3px #7a7a7a0e}
+  .update-notice{border:1px solid #b8b8b8;background:#f2f2f2;box-shadow:0 14px 50px #00000039;color:#292929}
+  .update-notice-body strong{color:#1d1d1d}
+  .update-notice-body>span{color:#505050}
+}
 
 /* Hand-tuned light theme details */
 @media (prefers-color-scheme:light){

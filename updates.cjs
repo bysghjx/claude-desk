@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createHash, randomBytes } = require('node:crypto');
+const zlib = require('node:zlib');
 const { execFile, spawn } = require('node:child_process');
 
 const UPDATE_FILE = 'claude-desk-update.json';
@@ -78,6 +79,56 @@ const powershell = (args, options = {}) => new Promise((resolve, reject) => exec
 // -Command joins its arguments into one string, which would split paths at spaces.
 const extract = (zip, dir) => powershell(['-Command', 'Expand-Archive -LiteralPath $env:CLAUDE_DESK_ZIP -DestinationPath $env:CLAUDE_DESK_DIR -Force'], { env: { ...process.env, CLAUDE_DESK_ZIP: zip, CLAUDE_DESK_DIR: dir } });
 
+// Reads one small file out of a zip without extracting it: the central directory at the end
+// lists every entry with its size and where its data starts. Stored and deflated entries only.
+function readZipEntry(zip, name, limit = 4 << 20) {
+  const fd = fs.openSync(zip, 'r');
+  try {
+    const size = fs.fstatSync(fd).size, tail = Math.min(size, 65557), end = Buffer.alloc(tail);
+    fs.readSync(fd, end, 0, tail, size - tail);
+    const eocd = end.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (eocd < 0) return null;
+    const count = end.readUInt16LE(eocd + 10), dirSize = end.readUInt32LE(eocd + 12), dirStart = end.readUInt32LE(eocd + 16);
+    if (dirStart + dirSize > size) return null;
+    const dir = Buffer.alloc(dirSize); fs.readSync(fd, dir, 0, dirSize, dirStart);
+    for (let at = 0, i = 0; i < count && dir.readUInt32LE(at) === 0x02014b50; i++) {
+      const method = dir.readUInt16LE(at + 10), packed = dir.readUInt32LE(at + 20), plain = dir.readUInt32LE(at + 24);
+      const nameLength = dir.readUInt16LE(at + 28), skip = nameLength + dir.readUInt16LE(at + 30) + dir.readUInt16LE(at + 32), local = dir.readUInt32LE(at + 42);
+      if (dir.toString('utf8', at + 46, at + 46 + nameLength) === name) {
+        if (plain > limit || ![0, 8].includes(method)) return null;
+        const head = Buffer.alloc(30); fs.readSync(fd, head, 0, 30, local);
+        const data = Buffer.alloc(packed); fs.readSync(fd, data, 0, packed, local + 30 + head.readUInt16LE(26) + head.readUInt16LE(28));
+        return method ? zlib.inflateRawSync(data) : data;
+      }
+      at += 46 + skip;
+    }
+    return null;
+  } finally { fs.closeSync(fd); }
+}
+const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+// Looks through a few folders (not their subfolders) for update packages newer than the running
+// version. Only zips named like Claude Desk's are opened, and only their description is read.
+function findUpdates(dirs, version) {
+  const ready = [], other = [], seen = new Set();
+  for (const dir of dirs) {
+    let names = []; try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      if (!/^claude.?desk.*\.zip$/i.test(name)) continue;
+      const file = path.join(dir, name);
+      try {
+        const stat = fs.statSync(file); if (!stat.isFile()) continue;
+        const raw = readZipEntry(file, UPDATE_FILE); if (!raw) continue;
+        const info = JSON.parse(raw.toString('utf8'));
+        if (info.app !== 'ClaudeDesk' || !info.to || !newer(info.to, version) || seen.has(info.from + '>' + info.to + '>' + stat.size)) continue;
+        seen.add(info.from + '>' + info.to + '>' + stat.size);
+        (info.from === version ? ready : other).push({ file, name, dir, from: String(info.from), to: String(info.to), size: stat.size, modified: stat.mtimeMs, files: Object.keys(info.files || {}).length });
+      } catch {}
+    }
+  }
+  const order = (a, b) => (newer(b.to, a.to) ? 1 : newer(a.to, b.to) ? -1 : b.modified - a.modified);
+  return { ready: ready.sort(order), other: other.sort(order) };
+}
+
 class Updater {
   constructor({ installDir, version, tempRoot = os.tmpdir() }) { Object.assign(this, { installDir, version, tempRoot }); this.staged = null; }
   async stage(zip) {
@@ -97,16 +148,17 @@ class Updater {
     const child = spawn('cmd.exe', ['/d', '/c', command], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true });
     child.unref(); return child;
   }
-  // On the next start: remove staged packages and report an install that failed.
+  // On the next start: remove staged packages and report an install that failed;
+  // a successful one is left in this.installed ("0.25.0 -> 0.25.1").
   cleanup() {
-    let failed = '';
+    let failed = ''; this.installed = '';
     let names = []; try { names = fs.readdirSync(this.tempRoot).filter(name => name.startsWith('claude-desk-update-')); } catch {}
     for (const name of names) {
       const dir = path.join(this.tempRoot, name);
-      try { const log = fs.readFileSync(path.join(dir, 'install.log'), 'utf8').replace(/^﻿/, '').trim(); if (log.startsWith('failed')) failed = log.replace(/^failed:\s*/, ''); } catch {}
+      try { const log = fs.readFileSync(path.join(dir, 'install.log'), 'utf8').replace(/^﻿/, '').trim(); if (log.startsWith('failed')) failed = log.replace(/^failed:\s*/, ''); else if (log.startsWith('ok ')) this.installed = log.slice(3); } catch {}
       fs.rmSync(dir, { recursive: true, force: true });
     }
     return failed;
   }
 }
-module.exports = { Updater, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, APPLY_SCRIPT };
+module.exports = { Updater, findUpdates, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, APPLY_SCRIPT };
