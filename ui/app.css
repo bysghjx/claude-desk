@@ -219,16 +219,6 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .plan-feedback{width:100%;resize:vertical;min-height:44px;background:#181914;border:1px solid #514735;border-radius:7px;padding:8px 10px;color:inherit;font:inherit;font-size:12.5px}
 dialog{width:660px;max-width:90vw;color:var(--text);border:1px solid #48443c;border-radius:17px;padding:30px;box-shadow:0 20px 120px #0009}
 dialog::backdrop{background:#0009;backdrop-filter:blur(5px)}
-.dialog-head{display:flex;align-items:flex-start;justify-content:space-between}
-.dialog-head h2{font-size:22px;font-weight:500;letter-spacing:-.5px;margin:11px 0}
-.dialog-head button{font-size:25px;color:#9f9d92}
-.dialog-intro{color:#97988b;font-size:13px;line-height:1.9;margin-bottom:22px}
-.config-row{border-top:1px solid #33352c;padding:13px 0;display:flex;gap:20px;font-size:12px}
-.config-row>span:first-child{width:70px;flex-shrink:0}
-.config-row>span:last-child{overflow-wrap:anywhere;line-height:1.6;font-family:Consolas,"Microsoft YaHei UI",sans-serif}
-.dialog-actions{display:flex;gap:10px;margin:20px 0}
-.settings-note{font-size:12px;color:#7e8373;line-height:1.9;padding-top:17px;border-top:1px solid #34362b}
-#settings-result{font-size:12px;color:var(--accent);margin-top:13px}
 .toast{position:fixed;bottom:27px;left:50%;transform:translateX(-50%);padding:12px 20px;border:1px solid #655a4a;border-radius:9px;box-shadow:0 10px 40px #0006;z-index:20;font-size:13px;max-width:650px;line-height:1.6}
 .empty-list{padding:13px 12px;color:#64675d;font-size:12px;line-height:1.8}
 .draft-notice{font-size:11px;color:#777d6b}
@@ -538,10 +528,6 @@ a{color:#b5c9ee}
 .prompt-option code{color:#ccc}
 .home-view .model-picker,.home-view .mode-picker,.home-view .prompt-menu{position:fixed;top:50%;bottom:auto;left:calc(50% + 124px);right:auto;transform:translate(-50%,-50%);width:min(390px,calc(100vw - 300px));max-height:calc(100vh - 100px);z-index:12}
 dialog{background:#252525;border-color:#484848}
-.dialog-intro,.settings-note{color:#999}
-.config-row,.settings-note{border-color:#414141}
-.config-row>span:first-child{color:#999}
-.config-row>span:last-child{color:#ccc}
 .eyebrow{color:#999}
 .toast{background:#363636;border-color:#555;color:#ddd}
 .secondary{border-color:#555;color:#ccc}
@@ -561,9 +547,6 @@ dialog{background:#252525;border-color:#484848}
   .home-view .welcome h1{font-size:27px}
   .home-view .composer textarea{min-height:58px}
 }
-#settings-result{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
-#settings-dialog .dialog-actions{flex-wrap:wrap;justify-content:flex-start}
-#settings-dialog .dialog-actions button{flex:none;white-space:nowrap}
 
 /* ── from controls.css ── */
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
@@ -1043,8 +1026,6 @@ dialog{background:#252525;border-color:#484848}
 .sidebar-bottom .connection{padding-bottom:12px}
 
 /* ── Appearance setting ── */
-.theme-setting{display:flex;align-items:center;gap:14px;margin:4px 0 16px}
-.theme-setting-label{flex:none;width:72px;font-size:13px;color:#a8a8a3}
 .theme-options{display:flex;gap:2px;padding:3px;border:1px solid #33332f;border-radius:12px;background:#232321}
 .theme-options button{display:flex;align-items:center;gap:7px;padding:6px 13px;border-radius:9px;font-size:13px;color:#a9a7a0;transition:background-color var(--motion-fast) var(--ease-out),color var(--motion-fast) var(--ease-out)}
 .theme-options button:hover{background:#ffffff0c;color:#ecebe5}
@@ -1057,7 +1038,6 @@ dialog{background:#252525;border-color:#484848}
 .switch-row input:checked+.switch{background:#d97757}
 .switch-row input:checked+.switch::after{translate:14px 0}
 .switch-row input:focus-visible+.switch{outline:2px solid #d97757;outline-offset:2px}
-.switch-text small{display:block;margin-top:2px;font-size:11.5px;color:#8f8d86}
 button.small{flex:none;padding:5px 10px;font-size:12px}
 
 /* ── Motion ──
@@ -1326,3 +1306,32 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .instructions-meta .error{color:#e59b95}
 #instructions-global,#instructions-project{min-height:130px;line-height:1.6}
 .instructions-scope{margin-left:8px;font-size:11px;color:#929292;font-weight:400}
+/* Settings: same frame as the workspace window; pages on the left, one row per setting on the right
+   (what it is on the left, its control on the right). */
+.settings-dialog{width:820px;max-width:calc(100vw - 56px);height:min(600px,calc(100vh - 64px));max-height:calc(100vh - 64px);padding:0;border:1px solid #444;border-radius:18px;background:#232323;overflow:hidden;color:#ddd}
+.settings-dialog[open]{display:flex;flex-direction:column}
+.settings-dialog::backdrop{background:#0007;backdrop-filter:blur(2px)}
+.settings-layout{display:flex;flex:1;min-height:0;border-top:1px solid #383838}
+.settings-body{display:flex;flex-direction:column;flex:1;min-width:0;overflow:auto;padding:22px 28px 16px}
+.settings-page[hidden]{display:none}
+.settings-page h3{margin:0 0 4px;font-size:15px;font-weight:500;color:#eee}
+.setting-row{display:flex;align-items:center;justify-content:space-between;gap:28px;padding:15px 0;border-top:1px solid #333}
+.settings-page h3+.setting-row{border-top:0}
+.setting-text{display:flex;flex-direction:column;gap:4px;min-width:0}
+.setting-title{font-size:13px;color:#e6e6e6}
+.setting-desc{font-size:12px;color:#929292;line-height:1.6;overflow-wrap:anywhere}
+.setting-desc:empty{display:none}
+.setting-control{flex:none;display:flex;align-items:center;gap:8px}
+.setting-control:empty{display:none}
+.setting-control .switch-row{flex:none}
+#cli-path,#config-path,#data-path{font-family:Consolas,"Microsoft YaHei UI",sans-serif;font-size:11.5px}
+.connection-status{display:flex;align-items:flex-start;gap:12px;margin:10px 0 6px;padding:14px 16px;border:1px solid #383838;border-radius:12px;background:#1d1d1d}
+.connection-status strong{display:block;margin-bottom:3px;font-size:13.5px;font-weight:500;color:#eee}
+.connection-status div>span{font-size:12px;line-height:1.6;color:#a0a0a0}
+.connection-dot{flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:#96bfa5;box-shadow:0 0 0 3px #96bfa522}
+.connection-dot.error{background:#e59b95;box-shadow:0 0 0 3px #e59b9522}
+.settings-lead{margin:2px 0 6px;font-size:12.5px;line-height:1.6;color:#a8a8a8}
+.settings-lead:empty{display:none}
+.settings-foot{margin:14px 0 0;font-size:12px;line-height:1.6;color:#7d7d7d}
+.settings-status{margin-top:auto;padding-top:12px;min-height:18px;font-size:12px;color:var(--accent)}
+@media(max-width:760px){.settings-dialog .manager-tabs{width:118px}.setting-row{flex-wrap:wrap;gap:10px}}

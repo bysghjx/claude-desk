@@ -42,7 +42,7 @@ createPrPanel({ store, api, actions, toast });
 const instructions = createInstructions({ store, api, toast });
 const sidebar = createSidebar({ api, store, actions, toast, editInstructions: id => instructions.open('project', id) });
 const manager = createManager({ store, api, toast, confirm });
-createChrome({ store, actions, api, toast, confirm, manager, composer, sidebar });
+createChrome({ store, actions, api, toast, confirm, manager, composer, sidebar, instructions });
 
 store.on('composer', () => inspector.renderPanel());
 store.on('removed', id => dock.refresh(id));

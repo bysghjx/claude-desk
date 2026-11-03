@@ -91,10 +91,6 @@
   .plan-feedback{background:#fafaf9;border:1px solid #c9bfac}
   dialog{border:1px solid #c4c0b8;box-shadow:0 20px 120px #00000040}
   dialog::backdrop{background:#ffffff99}
-  .dialog-head button{color:#626056}
-  .dialog-intro{color:#65665b}
-  .config-row{border-top:1px solid #edeeea}
-  .settings-note{color:#707567;border-top:1px solid #edeeea}
   .toast{border:1px solid #a39581;box-shadow:0 10px 40px #0000002b}
   .empty-list{color:#888c80}
   .draft-notice{color:#757b69}
@@ -266,10 +262,6 @@
   .prompt-option strong{color:#292929}
   .prompt-option code{color:#353535}
   dialog{background:#f2f2f2;border-color:#acacac}
-  .dialog-intro,.settings-note{color:#5c5c5c}
-  .config-row,.settings-note{border-color:#c1c1c1}
-  .config-row>span:first-child{color:#5c5c5c}
-  .config-row>span:last-child{color:#353535}
   .eyebrow{color:#5c5c5c}
   .toast{background:#e2e2e2;border-color:#949494;color:#292929}
   .secondary{border-color:#949494;color:#353535}
@@ -531,7 +523,6 @@
   .rail-button.active{background:#0f0f0f16;color:#231f14}
   .rail-button[data-tip]:hover::after,.rail-button[data-tip]:focus-visible::after{background:#f0f0f0;border:1px solid #c5c5c2;color:#26251c;box-shadow:0 8px 24px #00000039}
   .rail-line{background:#f0f0f0}
-  .theme-setting-label{color:#545450}
   .theme-options{border:1px solid #ececeb;background:#f4f4f4}
   .theme-options button{color:#57554e}
   .theme-options button:hover{background:#0f0f0f0c;color:#26251c}
@@ -541,7 +532,6 @@
   .switch::after{background:#2b281e}
   .switch-row input:checked+.switch{background:#8a371c}
   .switch-row input:focus-visible+.switch{outline:2px solid #8a371c}
-  .switch-text small{color:#686761}
   .worktree-chip{background:#eef1ec;color:#618c4b}
   .thread-worktree{color:#4f6f41}
   .worktree-bar{border:1px solid #c8d0c3;background:#f4f6f3}
@@ -642,6 +632,20 @@
   .instructions-meta{color:#606060}
   .instructions-meta .error{color:#c5372c}
   .instructions-scope{color:#606060}
+  .settings-dialog{border:1px solid #b8b8b8;background:#f3f3f3;color:#292929}
+  .settings-dialog::backdrop{background:#ffffff77}
+  .settings-layout{border-top:1px solid #dcdcdc}
+  .settings-page h3{color:#1d1d1d}
+  .setting-row{border-top:1px solid #ebebeb}
+  .setting-title{color:#232323}
+  .setting-desc{color:#606060}
+  .connection-status{border:1px solid #dcdcdc;background:#f7f7f7}
+  .connection-status strong{color:#1d1d1d}
+  .connection-status div>span{color:#565656}
+  .connection-dot{background:#4c805f;box-shadow:0 0 0 3px #96bfa50e}
+  .connection-dot.error{background:#c5372c;box-shadow:0 0 0 3px #e59b950e}
+  .settings-lead{color:#505050}
+  .settings-foot{color:#6d6d6d}
 }
 
 /* Hand-tuned light theme details */

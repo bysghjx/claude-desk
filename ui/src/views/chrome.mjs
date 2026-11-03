@@ -1,5 +1,5 @@
 // Window chrome: header, left rail, window buttons, settings dialog and shortcuts.
-import { $, $$, escape, setText } from '../core/dom.mjs';
+import { $, $$, escape, setText, setHtml } from '../core/dom.mjs';
 import { guarded } from '../core/ui.mjs';
 import { isActive } from '../core/format.mjs';
 
@@ -7,7 +7,7 @@ const RAIL_TABS = { mcp: 'manage-mcp', plugins: 'manage-plugins', skills: 'manag
 // Manager tabs that light up a rail button other than their own page name.
 const RAIL_OF_TAB = { import: 'rail-import', 'claude-import': 'rail-import' };
 
-export function createChrome({ store, actions, api, toast, confirm, manager, composer, sidebar }) {
+export function createChrome({ store, actions, api, toast, confirm, manager, composer, sidebar, instructions }) {
   function header() {
     setText($('#project-label'), store.current() && !store.current().projectId ? '对话' : store.currentProject()?.name || '工作空间');
     setText($('#thread-title'), store.current()?.title || '主页');
@@ -51,7 +51,7 @@ export function createChrome({ store, actions, api, toast, confirm, manager, com
     const accent = ACCENTS[store.state.settings?.accent] && store.state.settings.accent || '';
     if (accent) document.documentElement.dataset.accent = accent; else delete document.documentElement.dataset.accent;
     for (const button of $$('[data-accent-choice]')) { const on = button.dataset.accentChoice === accent; button.classList.toggle('selected', on); button.setAttribute('aria-checked', String(on)); }
-    setText($('#accent-name'), ACCENTS[accent]);
+    setText($('#accent-name'), `按钮、开关和选中项的颜色，现在是「${ACCENTS[accent]}」`);
   }
   async function setAccent(accent) {
     store.state.settings = { ...store.state.settings, accent }; applyAccent();
@@ -69,15 +69,37 @@ export function createChrome({ store, actions, api, toast, confirm, manager, com
     await api('settings', { keepAwake: on });
   }
 
-  async function openSettings() {
+  // Settings are split into pages; the last one viewed opens next time.
+  let settingsPage = 'appearance';
+  function showSettingsPage(page) {
+    settingsPage = page;
+    for (const tab of $$('[data-settings-tab]')) tab.setAttribute('aria-selected', String(tab.dataset.settingsTab === page));
+    for (const section of $$('[data-settings-page]')) section.hidden = section.dataset.settingsPage !== page;
+    $('#settings-result').textContent = '';
+  }
+  // The Claude page leads with whether Claude can be reached at all, then the details.
+  function connectionHtml(p) {
+    const ready = Boolean(p.cliPath);
+    const title = !ready ? '没有找到 Claude Code' : `通过 ${escape(p.host)} 连接`;
+    const detail = !ready ? '安装 Claude Code 后重新打开 Claude Desk。' : p.configured ? '服务商和密钥来自你的 Claude 配置，这里不显示密钥。' : p.cliBundled ? '还没有找到登录信息。点「打开命令行」，在里面输入 /login 登录。' : '使用 Claude Code 自己的登录。';
+    return `<span class="connection-dot${ready ? '' : ' error'}" aria-hidden="true"></span><div><strong>${title}</strong><span>${detail}</span></div>`;
+  }
+
+  async function openSettings(page = settingsPage) {
     themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false;
     const p = store.state.provider;
-    $('#config-details').innerHTML = [['服务商', p.host], ['Claude CLI', p.cliPath ? p.cliPath + (p.cliBundled ? '（Claude Desk 内置；没登录过的话点「打开 Claude 命令行」输入 /login）' : '') : '未找到官方原生 Claude'], ['凭据', p.configured ? '已从现有配置读取（界面不显示密钥）' : '未发现 API 配置；CLI 将使用其现有登录'], ['配置文件', p.configPath], ['会话目录', p.dataRoot]].map(([key, value]) => `<div class="config-row"><span>${key}</span><span>${escape(value)}</span></div>`).join('');
-    $('#settings-result').textContent = ''; $('#settings-dialog').showModal(); rail('settings');
+    setHtml($('#connection-status'), connectionHtml(p));
+    setText($('#cli-path'), p.cliPath ? (p.cliBundled ? 'Claude Desk 内置版本：' : '你安装的版本：') + p.cliPath : '没有找到');
+    setText($('#config-path'), p.configPath);
+    setText($('#data-path'), p.dataRoot);
+    setText($('#global-instructions-state'), store.state.settings?.instructions ? '已设置，对所有会话生效。项目提示词在项目的右键菜单里设置' : '对所有会话生效。项目提示词在项目的右键菜单里设置');
+    setText($('#app-version'), 'Claude Desk ' + (store.state.version || ''));
+    setText($('#data-summary'), '');
+    showSettingsPage(page); $('#settings-dialog').showModal(); rail('settings');
     try {
       const info = await api('storage:info');
-      $('#settings-result').textContent = `SQLite · ${info.threads} 个会话 / ${info.turns} 轮问答\n数据集：${info.datasetId}\n保存版本：${info.revision}\n数据库：${info.database}${info.warning ? '\n' + info.warning : ''}`;
-    } catch (e) { $('#settings-result').textContent = e.message; }
+      setText($('#data-summary'), `共 ${info.threads.toLocaleString()} 个会话、${info.turns.toLocaleString()} 轮问答，保存在本机的 SQLite 数据库里。${info.warning ? info.warning : ''}`);
+    } catch (e) { setText($('#data-summary'), '读取会话统计失败：' + e.message); }
   }
 
   $('#new-thread').addEventListener('click', actions.showHome);
@@ -87,7 +109,9 @@ export function createChrome({ store, actions, api, toast, confirm, manager, com
   for (const id of ['#manager-dialog', '#settings-dialog']) $(id).addEventListener('close', () => rail(store.current() ? '' : 'rail-home'));
   $('#thread-title').addEventListener('dblclick', () => { if (store.current()) sidebar.startRename(store.current().id); });
   $('#export').addEventListener('click', guarded(toast, async () => { if (store.selected && await api('export', store.selected)) toast('对话已导出'); }));
-  $('#settings').addEventListener('click', guarded(toast, openSettings));
+  $('#settings').addEventListener('click', guarded(toast, () => openSettings()));
+  for (const tab of $$('[data-settings-tab]')) tab.addEventListener('click', () => showSettingsPage(tab.dataset.settingsTab));
+  $('#edit-global-instructions').addEventListener('click', () => { $('#settings-dialog').close(); instructions.open('global'); });
   for (const button of $$('[data-material-choice]')) button.addEventListener('click', guarded(toast, () => setMaterial(button.dataset.materialChoice)));
   for (const button of $$('[data-accent-choice]')) button.addEventListener('click', guarded(toast, () => setAccent(button.dataset.accentChoice)));
   for (const button of $$('[data-theme-choice]')) button.addEventListener('click', guarded(toast, () => setTheme(button.dataset.themeChoice)));
