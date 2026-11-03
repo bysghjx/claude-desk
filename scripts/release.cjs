@@ -25,6 +25,11 @@ const mb = n => (n / 2 ** 20).toFixed(1) + ' MB';
   const full = path.join(work, 'full', 'ClaudeDesk');
   fs.rmSync(path.join(work, 'full'), { recursive: true, force: true });
   fs.cpSync(appDir, full, { recursive: true, filter: file => path.basename(file) !== 'debug.log' });
+  // Unpacking the built-in Claude Code deletes its compressed file, so take it from the build cache rather than the app folder.
+  const packedCli = path.resolve(source, '../../work/claude-code');
+  if (!fs.existsSync(path.join(packedCli, 'claude.exe.zst'))) throw Error('缺少内置 Claude Code 的压缩文件，先运行 npm run package');
+  fs.rmSync(path.join(full, 'resources/claude-code'), { recursive: true, force: true });
+  fs.cpSync(packedCli, path.join(full, 'resources/claude-code'), { recursive: true });
   fs.writeFileSync(path.join(full, '使用说明.txt'), fs.readFileSync(path.join(__dirname, 'release-readme.txt'), 'utf8').replaceAll('{version}', version));
   const manifest = await manifestOf(full, version);
   fs.writeFileSync(path.join(manifests, version + '.json'), JSON.stringify(manifest, null, 1));

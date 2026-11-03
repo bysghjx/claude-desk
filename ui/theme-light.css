@@ -652,6 +652,21 @@
   .update-notice{border:1px solid #b8b8b8;background:#f2f2f2;box-shadow:0 14px 50px #00000039;color:#292929}
   .update-notice-body strong{color:#1d1d1d}
   .update-notice-body>span{color:#505050}
+  button.connection:hover{color:#414141}
+  .env-dialog{border:1px solid #b8b8b8;background:#f3f3f3;color:#292929}
+  .env-dialog .manager-header p{color:#5b5b5b}
+  .env-lead{color:#414141}
+  .env-option{border:1px solid #dcdcdc;background:#f7f7f7}
+  .env-option-head strong{color:#1d1d1d}
+  .env-option p{color:#565656}
+  .env-command{background:#f2f2f2}
+  .env-command-label{color:#4e4e4e}
+  .env-command code{color:#232323}
+  .env-checks h3{color:#353535}
+  .env-check{border-top:1px solid #ebebeb}
+  .env-check strong{color:#232323}
+  .env-check span{color:#565656}
+  .env-foot{border-top:1px solid #ebebeb}
 }
 
 /* Hand-tuned light theme details */

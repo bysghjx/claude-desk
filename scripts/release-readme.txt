@@ -9,11 +9,15 @@ Claude Desk {version}（Windows 64 位）
 二、第一次使用：登录 Claude
 Claude Desk 通过 Claude Code 和 Claude 对话。
 - 如果你的电脑已经装好并登录了 Claude Code，直接就能用。
-- 如果没有装：Claude Desk 自带一份 Claude Code。点左下角齿轮打开设置，
-  点“打开 Claude 命令行”，在弹出的窗口里输入 /login，按提示用 Claude 账号登录，
-  或者填 Anthropic Console 的 API Key。登录完关掉那个窗口即可。
-- 用第三方服务商或 API Key 的话，也可以在设置里点“打开 Claude 配置”，
+- 如果没有装：第一次打开时会弹出「Claude Code 环境」窗口，二选一：
+  · 安装官方版（推荐，会自动更新）：点 PowerShell 那一行的「运行」，会打开一个窗口执行官方安装命令；
+    也可以复制命令到自己的终端里运行。装好后回到 Claude Desk，会自动检测到。
+  · 使用内置版（不用联网下载，但不会自动更新）：点「解压并使用内置版」。
+- 登录：在同一个窗口里点「登录」，在弹出的窗口里输入 /login，按提示用 Claude 账号登录，
+  或者填 Anthropic Console 的 API Key。登录完关掉那个窗口，回来点「重新检测」。
+- 用第三方服务商的话，在设置 → Claude → 配置文件点「打开」，
   在 settings.json 的 env 里填 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。
+- 以后想再看这个窗口：点左下角的连接状态，或者设置 → Claude →「检测环境」。
 
 三、建议另外安装
 - Git（https://git-scm.com）：“回退到这里”、独立工作树、右侧改动面板需要它。

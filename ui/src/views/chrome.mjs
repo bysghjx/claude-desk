@@ -6,7 +6,7 @@ const RAIL_TABS = { mcp: 'manage-mcp', plugins: 'manage-plugins', skills: 'manag
 // Manager tabs that light up a rail button other than their own page name.
 const RAIL_OF_TAB = { import: 'rail-import', 'claude-import': 'rail-import' };
 
-export function createChrome({ store, actions, api, toast, manager, composer, sidebar, instructions, updates }) {
+export function createChrome({ store, actions, api, toast, manager, composer, sidebar, instructions, updates, env }) {
   function header() {
     setText($('#project-label'), store.current() && !store.current().projectId ? '对话' : store.currentProject()?.name || '工作空间');
     setText($('#thread-title'), store.current()?.title || '主页');
@@ -81,7 +81,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   function connectionHtml(p) {
     const ready = Boolean(p.cliPath);
     const title = !ready ? '没有找到 Claude Code' : `通过 ${escape(p.host)} 连接`;
-    const detail = !ready ? '安装 Claude Code 后重新打开 Claude Desk。' : p.configured ? '服务商和密钥来自你的 Claude 配置，这里不显示密钥。' : p.cliBundled ? '还没有找到登录信息。点「打开命令行」，在里面输入 /login 登录。' : '使用 Claude Code 自己的登录。';
+    const detail = !ready ? '点下面的「检测环境」，安装官方版或使用内置版。' : p.configured ? '服务商和密钥来自你的 Claude 配置，这里不显示密钥。' : '使用 Claude Code 自己的登录。点「检测环境」可以查看是否已登录。';
     return `<span class="connection-dot${ready ? '' : ' error'}" aria-hidden="true"></span><div><strong>${title}</strong><span>${detail}</span></div>`;
   }
 
@@ -121,6 +121,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close());
   $('#open-config').addEventListener('click', guarded(toast, () => api('config:open')));
   $('#open-cli').addEventListener('click', guarded(toast, () => api('cli:open')));
+  $('#open-env').addEventListener('click', guarded(toast, () => { $('#settings-dialog').close(); return env.open(); }));
   $('#open-data').addEventListener('click', guarded(toast, () => api('data:open')));
   $('#import-codex').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('import'); rail('rail-import'); });
   $('#open-storage').addEventListener('click', () => { $('#settings-dialog').close(); manager.open('storage'); rail(''); });

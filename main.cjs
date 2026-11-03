@@ -9,7 +9,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');const {Updater,findUpdates}=require('./updates.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');const {Updater,findUpdates}=require('./updates.cjs');const {ClaudeCli,INSTALL_COMMANDS}=require('./cli-setup.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -70,22 +70,17 @@ function showNotice(notice,{force=false}={}){
   if(!force&&win&&!win.isDestroyed()&&!win.isFocused())win.flashFrame(true);
   return true;
 }
-// The Claude Code CLI that ships with the Agent SDK, unpacked next to app.asar in the packaged app.
-function bundledCli() {
-  try { const file = path.join(path.dirname(require.resolve('@anthropic-ai/claude-agent-sdk-win32-x64/package.json')), 'claude.exe').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1'); return fs.existsSync(file) ? file : ''; } catch { return ''; }
-}
-// The user's own Claude Code comes first (it keeps itself updated); the bundled one is the fallback.
-function findCli() {
-  const candidates = [path.join(os.homedir(), '.local/bin/claude.exe'), path.join(os.homedir(), '.claude/bin/claude.exe')];
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) if(dir) candidates.push(path.join(dir, 'claude.exe'));
-  return candidates.find(p => fs.existsSync(p)) || bundledCli();
-}
+// Claude Code: the user's own install first; the copy inside Claude Desk only once it was unpacked.
+// While developing, the uncompressed copy from the Agent SDK stands in for the packed one.
+const devCli=()=>{try{return path.join(path.dirname(require.resolve('@anthropic-ai/claude-agent-sdk-win32-x64/package.json')),'claude.exe');}catch{return'';}};
+const cli=new ClaudeCli({home:os.homedir(),root:stableRoot,bundleDir:app.isPackaged?path.join(process.resourcesPath,'claude-code'):'',devExe:app.isPackaged?'':devCli()});
+function findCli() { return cli.find()?.file || ''; }
 function providerInfo() {
   let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/settings.json'), 'utf8')); } catch {}
   const env = cfg.env || {};
   const base = process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
   let host; try { host = new URL(base).host; } catch { host = '地址格式错误'; }
-  return { host, configured: Boolean(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY), cliPath: findCli(), cliBundled: Boolean(findCli()) && findCli() === bundledCli(), configPath: path.join(os.homedir(), '.claude/settings.json'), dataRoot };
+  return { host, configured: Boolean(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY), cliPath: findCli(), cliBundled: cli.find()?.source === 'bundled', configPath: path.join(os.homedir(), '.claude/settings.json'), dataRoot };
 }
 async function git(cwd, args) { return (await exec('git', ['--no-optional-locks', '-C', cwd, ...args], { windowsHide: true, timeout: 10000, maxBuffer: 3 * 1024 * 1024 })).stdout; }
 // Pasted or dropped images are written once to the data folder; the engine reads them when sending.
@@ -177,6 +172,9 @@ if(primaryInstance)app.whenReady().then(async () => {
   const checkpoints=new Checkpoints(path.join(dataRoot,'checkpoints'));
   engine.checkpoint=t=>checkpoints.snapshot(t.cwd);
   extensions=new ExtensionsManager({cliPath:engine.cliPath,dataRoot,store:engine.store});
+  // Picks up Claude Code installed or unpacked while Claude Desk is open; new runs use it.
+  const useCli=()=>{const file=findCli();if(file!==engine.cliPath){engine.cliPath=file;extensions.cliPath=file;extensions.cache.clear();}return file;};
+  cli.refreshBundled().then(r=>{if(r)useCli();}).catch(()=>{});
   engine.sessionOptions=()=>extensions.sessionOptions();
   const legacyLibrary=legacy.map(file=>path.join(path.dirname(file),'extensions')).find(folder=>fs.existsSync(folder));
   if(legacyLibrary&&!fs.existsSync(path.join(dataRoot,'extensions')))fs.cpSync(legacyLibrary,path.join(dataRoot,'extensions'),{recursive:true,force:false});
@@ -266,7 +264,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('proposal:start', async (id, proposalId) => { const child = await engine.startProposal(id, String(proposalId)); return { thread: threadOut(id), child: threadOut(child) }; });
   handle('proposal:dismiss', (id, proposalId) => threadOut(engine.dismissProposal(id, String(proposalId))));
   handle('thread:send', async (id, text, opts={}) => {
-    if(!engine.cliPath) throw Error('找不到 Claude CLI，请先安装官方原生版');
+    if(!engine.cliPath){ await cli.refreshPath(); if(!useCli()) throw Error('没有找到 Claude Code。在「Claude Code 环境」里安装官方版或使用内置版'); }
     const images=saveImages(opts.images);
     try{return threadOut(await engine.send(id, text, {...opts,...selectedContext(id,opts.references||[]),images}));}catch(e){dropSaved(images,opts.images);throw e;}
   });
@@ -365,6 +363,14 @@ if(primaryInstance)app.whenReady().then(async () => {
   // A console window running Claude Code, for logging in (/login) when it was never set up on this computer.
   handle('cli:open', () => { const cli = findCli(); if (!cli) throw Error('没有找到 Claude Code'); spawn('cmd.exe', ['/d', '/s', '/c', `start "Claude Code" "${cli}"`], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsVerbatimArguments: true }).unref(); return true; });
   handle('data:open',()=>shell.openPath(dataRoot));
+  handle('env:check', async options => { const result = await cli.check({ quick: Boolean(options?.quick) }); useCli(); return { ...result, provider: providerInfo() }; });
+  handle('cli:extract', async () => { const result = await cli.extract(); useCli(); return result; });
+  // Opens a console window running an official install command, so its progress and questions stay visible.
+  handle('cli:install', id => {
+    const entry = INSTALL_COMMANDS.find(c => c.id === id); if (!entry) throw Error('未知的安装方式');
+    const shellLine = id === 'powershell' ? `powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -Command "${entry.command}"` : `cmd.exe /k "${entry.command}"`;
+    spawn('cmd.exe', ['/d', '/s', '/c', `start "安装 Claude Code" ${shellLine}`], { cwd: os.tmpdir(), detached: true, stdio: 'ignore', windowsVerbatimArguments: true }).unref(); return true;
+  });
   handle('copy', text => clipboard.writeText(String(text).slice(0,1000000)));
   handle('export', async id => {
     const t = engine.thread(id); const r = await dialog.showSaveDialog(win,{defaultPath:t.title.replace(/[<>:"/\\|?*]/g,'_')+'.md',filters:[{name:'Markdown',extensions:['md']}]});
