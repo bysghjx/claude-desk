@@ -195,8 +195,14 @@
   .home-view .breadcrumb strong{color:#686868}
   .home-view .welcome h1{color:#1d1d1d}
   .home-project-selection>span{color:#5b5b5b}
-  .home-project-selection select{color:#4e4e4e}
-  .home-project-selection button{color:#5c5c5c;border-left:1px solid #b8b8b8}
+  #home-project{color:#4e4e4e}
+  #home-project[aria-expanded=true]{background:#0f0f0f0c;color:#292929}
+  .home-project-selection .home-project-divider{background:#b8b8b8}
+  .home-project-selection .home-add-project{color:#5c5c5c}
+  .home-project-menu{border:1px solid #c1c1c1;background:#f0f0f0;box-shadow:0 12px 36px #0000002b}
+  .home-project-menu [role=option]{color:#414141}
+  .home-project-menu [aria-selected=true]{color:#1d1d1d;background:#0f0f0f09}
+  .home-project-menu [role=option]:hover,.home-project-menu [role=option]:focus-visible{background:#d3d3d3;color:#1d1d1d}
   .home-view .suggestion{border:1px solid #d9d9d9}
   .home-view .suggestion:hover{background:#efefef;border-color:#949494}
   .home-view .suggestion .suggest-icon{color:#5c5c5c}
@@ -421,17 +427,14 @@
   .work-group>summary:hover{color:#3e3c35}
   .work-group.live .work-label{background:linear-gradient(90deg,#666661 0%,#30271a 45%,#666661 90%)}
   .work-count{color:#8c8c85}
-  .work-items{border-left:1px solid #eeeeed}
-  .work-note{color:#57554e}
+  .work-note{color:#292929}
   .work-thinking>summary{color:#77766f}
   .work-thinking>summary::before{color:#84847c}
   .work-thinking-text{color:#6a6862}
   .step>summary:hover{background:#0f0f0f08}
-  .step-dot{background:#83927b}
-  .step.running .step-dot{box-shadow:0 0 0 3px #dba1850e}
-  .step.interrupted .step-dot{background:#7f7f79}
-  .step-verb{color:#4a4842}
-  .step-target{color:#36322a;background:#0f0f0f0a}
+  .step-icon{color:#63625d}
+  .step-label{color:#62615b}
+  .step-detail-head{color:#4a4842}
   .step-delta .plus{color:#408951}
   .step-delta .minus{color:#b4362b}
   .step-delta .muted{color:#77776f}
@@ -688,7 +691,6 @@ body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
 .thread-tree .thread-row.selected{background:#0000000c}
 .thread-tree .thread-row:hover{background:#00000007}
 .step-body pre,.turn-changes,.review-commit{background:#f7f7f5;border-color:#e6e6e3}
-.step-target{background:#0000000a;color:#2b2b28}
 .diff-add{background:#e3f3e6;color:#1f6b33}
 .diff-remove{background:#fbe5e3;color:#9c2b22}
 .markdown pre{background:#f5f5f3}

@@ -15,7 +15,6 @@ body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
 .thread-tree .thread-row.selected{background:#0000000c}
 .thread-tree .thread-row:hover{background:#00000007}
 .step-body pre,.turn-changes,.review-commit{background:#f7f7f5;border-color:#e6e6e3}
-.step-target{background:#0000000a;color:#2b2b28}
 .diff-add{background:#e3f3e6;color:#1f6b33}
 .diff-remove{background:#fbe5e3;color:#9c2b22}
 .markdown pre{background:#f5f5f3}

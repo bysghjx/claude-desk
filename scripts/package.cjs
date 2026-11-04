@@ -31,8 +31,10 @@ function packCli(source){
 (async()=>{
   const {packager}=await import('@electron/packager');
   const source=path.resolve(__dirname,'..');
-  const staging=path.resolve(source,'../../work/desktop-package');
-  const target=path.resolve(source,'../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
+  // DESK_BUILD_DIR builds somewhere else, e.g. while the usual folders are open in a running Claude Desk.
+  const build=process.env.DESK_BUILD_DIR&&path.resolve(process.env.DESK_BUILD_DIR);
+  const staging=build?path.join(build,'stage'):path.resolve(source,'../../work/desktop-package');
+  const target=build?path.join(build,'ClaudeDesk-win32-x64'):path.resolve(source,'../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
   const cli=packCli(source);console.log(cli.note);
   // node-pty's native files have to sit outside app.asar to load; the CLI goes in resources/claude-code instead of the asar.
   const results=await packager({dir:source,name:'ClaudeDesk',platform:'win32',arch:'x64',out:staging,overwrite:true,icon:path.join(source,'ui/icon.ico'),asar:{unpack:'**/node_modules/node-pty/**'},extraResource:[cli.dir],ignore:/^\/(?:test|scripts|node_modules\/@anthropic-ai\/claude-agent-sdk-win32-x64)(?:\/|$)/});

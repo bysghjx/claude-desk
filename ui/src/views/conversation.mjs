@@ -13,7 +13,8 @@ const SUGGESTIONS = [
 
 function welcomeHtml(store) {
   const p = store.currentProject(), { projects, threads } = store.state;
-  const selection = `<div class="home-project-selection"><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><select id="home-project" aria-label="选择工作项目"><option value="">不选项目 · 直接对话</option>${projects.map(x => `<option value="${escape(x.id)}" ${p?.id === x.id ? 'selected' : ''}>${escape(x.name)}</option>`).join('')}</select><button data-action="add-project" title="添加项目文件夹">＋ 添加文件夹</button></div>`;
+  const options = [{ id: '', name: '不选项目 · 直接对话' }, ...projects];
+  const selection = `<div class="home-project-selection"><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><div class="home-project-picker"><button id="home-project" type="button" aria-label="选择工作项目" aria-haspopup="listbox" aria-expanded="false" aria-controls="home-project-menu"><span>${escape(p?.name || options[0].name)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="home-project-menu" class="home-project-menu" role="listbox" aria-label="工作项目" hidden>${options.map(x => `<button type="button" role="option" tabindex="-1" data-home-project="${escape(x.id)}" aria-selected="${x.id === (p?.id || '')}"${x.path ? ` title="${escape(x.path)}"` : ''}><span>${escape(x.name)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-6"/></svg></button>`).join('')}</div></div><span class="home-project-divider" aria-hidden="true"></span><button class="home-add-project" type="button" data-action="add-project" title="添加项目文件夹">＋ 添加文件夹</button></div>`;
   const location = store.state.settings?.location === 'worktree' ? 'worktree' : 'local', wt = store.current()?.worktree;
   const where = !store.current() && p ? `<div class="home-location" role="radiogroup" aria-label="新对话在哪里运行"><button type="button" role="radio" data-location="local" aria-checked="${location === 'local'}">本地项目目录</button><button type="button" role="radio" data-location="worktree" aria-checked="${location === 'worktree'}"><svg class="branch-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-2 3-5.5 4"/></svg>独立工作树</button></div><div class="home-location-note">${location === 'worktree' ? '从当前提交新建分支和文件夹，Claude 的改动不影响主目录；完成后在右侧「改动」里合并。需要 Git 仓库。' : '直接在项目目录里修改文件。'}</div>` : '';
   const suggestions = SUGGESTIONS.map(([icon, title, sub, prompt]) => `<button class="suggestion" data-suggestion="${escape(prompt)}"><span class="suggest-icon">${icon}</span><strong>${title}</strong><small>${sub}</small></button>`).join('');
@@ -23,6 +24,33 @@ function welcomeHtml(store) {
 export function createConversation({ store, actions, api, composer, toast, reviewPanel }) {
   const box = $('#messages'), views = new Map();
   let shownThread = undefined;
+
+  function closeProjects(restoreFocus = false) {
+    const trigger = $('#home-project'), menu = $('#home-project-menu');
+    if (!menu || menu.hidden) return;
+    menu.hidden = true; trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) trigger.focus();
+  }
+  function openProjects() {
+    const menu = $('#home-project-menu');
+    menu.hidden = false; $('#home-project').setAttribute('aria-expanded', 'true');
+    menu.querySelector('[aria-selected="true"]').focus();
+  }
+  document.addEventListener('pointerdown', event => { if (!event.target.closest('.home-project-picker')) closeProjects(); });
+  window.addEventListener('blur', () => closeProjects());
+  box.addEventListener('focusout', event => { if (event.target.closest('.home-project-picker') && !event.relatedTarget?.closest('.home-project-picker')) closeProjects(); });
+  box.addEventListener('keydown', event => {
+    if (!event.target.closest('.home-project-picker')) return;
+    const menu = $('#home-project-menu');
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeProjects(true); return; }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.target.closest('button').click(); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    if (menu.hidden) { openProjects(); return; }
+    const choices = [...menu.querySelectorAll('[role="option"]')], at = choices.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (at + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+    choices[next].focus();
+  });
 
   function render() {
     const thread = store.current(), home = !thread?.turns.length;
@@ -50,6 +78,8 @@ export function createConversation({ store, actions, api, composer, toast, revie
 
   box.addEventListener('click', guarded(toast, async event => {
     const target = event.target;
+    if (target.closest('#home-project')) { if ($('#home-project-menu').hidden) openProjects(); else closeProjects(true); return; }
+    const project = target.closest('[data-home-project]'); if (project) { closeProjects(); actions.selectProject(project.dataset.homeProject); return; }
     const suggestion = target.closest('[data-suggestion]'); if (suggestion) { composer.setText(suggestion.dataset.suggestion); composer.focus(); composer.save(); return; }
     if (target.closest('[data-action="add-project"]')) return actions.addProject();
     const location = target.closest('[data-location]'); if (location) return actions.setLocation(location.dataset.location);
@@ -66,7 +96,6 @@ export function createConversation({ store, actions, api, composer, toast, revie
     // A wrap-up button sends its own text as the reply.
     const reply = target.closest('[data-wrap-reply]'); if (reply) { reply.disabled = true; try { await actions.sendMessage(reply.dataset.wrapReply); } finally { reply.disabled = false; } return; }
   }));
-  box.addEventListener('change', event => { if (event.target.id === 'home-project') actions.selectProject(event.target.value); });
 
   store.on('select', render);
   store.on('threads', () => { if (!store.current()?.turns.length) render(); });

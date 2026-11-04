@@ -11,9 +11,11 @@ const { manifestOf, diff, UPDATE_FILE } = require('../updates.cjs');
 
 const source = path.resolve(__dirname, '..');
 const version = require('../package.json').version;
-const appDir = path.resolve(source, '../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
+// DESK_BUILD_DIR: the same folder given to npm run package.
+const build = process.env.DESK_BUILD_DIR && path.resolve(process.env.DESK_BUILD_DIR);
+const appDir = build ? path.join(build, 'ClaudeDesk-win32-x64') : path.resolve(source, '../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
 const releases = path.resolve(source, '../releases'), manifests = path.join(releases, 'manifests');
-const work = path.resolve(source, '../../work/release');
+const work = build ? path.join(build, 'release') : path.resolve(source, '../../work/release');
 const compare = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
 const zip = (dir, entries, out) => { fs.rmSync(out, { force: true }); execFileSync('C:\\Windows\\System32\\tar.exe', ['-a', '-c', '-f', out, '-C', dir, ...entries]); return fs.statSync(out).size; };
 const mb = n => (n / 2 ** 20).toFixed(1) + ' MB';

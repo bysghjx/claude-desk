@@ -43,12 +43,18 @@ test('change summary aggregates edits per project-relative file and skips failed
   assert.match(html,/1 个文件已更改/);assert.match(html,/data-review-file="src\/a.js"/);
   assert.equal(worklog.changesHtml([],escape),'');
 });
-test('step parts escape untrusted tool input and output',async()=>{
+test('compact step summaries hide parameters while expanded details remain escaped',async()=>{
   const worklog=await load();
   const parts=worklog.stepParts({id:'x',name:'Bash',input:{command:'<img src=x onerror=alert(1)>'},output:'<script>bad()</script>',status:'running'},{escape,cwd:''});
   assert.equal(parts.className,'step step-command running');
   for(const html of [parts.summary,parts.body]){assert.doesNotMatch(html,/<img src=x|<script>/);}
-  assert.match(parts.summary,/&lt;img src=x/);assert.match(parts.summary,/运行中/);
+  assert.doesNotMatch(parts.summary,/img src|step-target/);assert.match(parts.summary,/正在运行命令/);assert.match(parts.summary,/运行中/);
+  assert.match(parts.body,/&lt;img src=x/);assert.match(parts.body,/&lt;script&gt;bad/);
   const edit=worklog.stepParts({id:'e',name:'Edit',input:{file_path:'C:\\repo\\a.js',old_string:'a',new_string:'b'},status:'done'},{escape,cwd:'C:\\repo'});
-  assert.match(edit.summary,/a\.js/);assert.match(edit.summary,/\+1/);assert.match(edit.body,/diff-add/);
+  assert.match(edit.summary,/编辑了文件/);assert.doesNotMatch(edit.summary,/a\.js|\+1/);
+  assert.match(edit.body,/a\.js/);assert.match(edit.body,/\+1/);assert.match(edit.body,/diff-add/);
+  const image=worklog.stepParts({name:'view_image',input:{path:'private-image.png'},status:'done'},{escape,cwd:''});
+  assert.match(image.summary,/已查看 1 张图像/);assert.doesNotMatch(image.summary,/private-image/);assert.match(image.body,/private-image/);
+  const failed=worklog.stepParts({name:'Bash',input:{command:'npm test'},status:'error',output:'failure details'},{escape,cwd:''});
+  assert.match(failed.summary,/失败/);assert.doesNotMatch(failed.summary,/运行了命令/);assert.match(failed.body,/npm test/);assert.match(failed.body,/failure details/);
 });

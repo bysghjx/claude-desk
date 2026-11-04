@@ -114,6 +114,25 @@ export function splitTurn(turn){
   return{work,final:rest.filter(i=>i.type==='text').map(i=>i.text).join('\n\n')};
 }
 const STATE_LABELS={running:'运行中',error:'失败',interrupted:'已中断',approval:'等待批准'};
+const STEP_ICONS={
+  command:'<rect x="2" y="2.5" width="14" height="13" rx="3"/><path d="m5 6 2.5 2.5L5 11m5 0h3"/>',
+  read:'<path d="M4 2.5h6l4 4v9H4Z"/><path d="M10 2.5v4h4M6.5 9h5M6.5 12h5"/>',
+  image:'<rect x="2" y="4" width="11" height="11" rx="2"/><path d="M6 4V2h10v10h-3M3 12l3-3 3 3 2-2 2 2"/><circle cx="6" cy="7" r=".8"/>',
+  edit:'<path d="m4 11 8-8 3 3-8 8-4 1ZM10 5l3 3M3 16h12"/>',
+  search:'<circle cx="7.5" cy="7.5" r="5"/><path d="m11.5 11.5 4 4"/>',
+  web:'<circle cx="9" cy="9" r="7"/><ellipse cx="9" cy="9" rx="3" ry="7"/><path d="M2 9h14"/>',
+  plan:'<path d="m2 5 1.5 1.5L6 4M8 5h8M2 10h3M8 10h8M2 15h3M8 15h8"/>',
+  agent:'<circle cx="6" cy="6" r="3"/><path d="M1.5 15v-1a4.5 4.5 0 0 1 9 0v1M12 3a3 3 0 0 1 0 6m1 2a4 4 0 0 1 3.5 4"/>',
+  question:'<path d="M3 3h12v9H8l-4 3v-3H3Z"/><path d="M7 6a2 2 0 1 1 3 1.7L9 8.5M9 10h.01"/>',
+  other:'<rect x="3" y="3" width="12" height="12" rx="3"/><path d="M6 9h.01M9 9h.01M12 9h.01"/>'
+};
+function stepLabel(tool,view){
+  const done=!['running','error','interrupted','approval'].includes(tool.status);
+  if(tool.name==='view_image')return done?'已查看 1 张图像':'查看图像';
+  const labels={command:['运行了命令','运行命令'],read:['读取了文件','读取文件'],edit:[view.files.length>1?`编辑了 ${view.files.length} 个文件`:'编辑了文件','编辑文件'],search:[view.verb==='查找文件'?'查找了文件':'搜索了内容','搜索内容'],web:[view.verb==='打开网页'?'打开了网页':'搜索了网页',view.verb],plan:[view.plan?'提交了计划':'更新了计划',view.verb],agent:['启动了子智能体','启动子智能体'],question:['提出了问题','提问'],other:[view.verb==='等待'?'已等待':view.verb==='使用技能'?'使用了技能':'调用了工具',view.verb]};
+  const label=(labels[view.kind]||labels.other)[done?0:1];
+  return tool.status==='running'?'正在'+label:label;
+}
 export const deltaHtml=(added,removed)=>added||removed?`<span class="step-delta"><span class="plus">+${added}</span><span class="minus">−${removed}</span></span>`:'';
 function diffHtml(diff,escape,limit=400){
   const shown=compact(diff.lines||[]),cut=shown.slice(0,limit);
@@ -131,10 +150,12 @@ export function stepParts(tool,{escape,cwd}){
   else if(view.todos)body=`<ul class="step-todos">${view.todos.map(t=>`<li class="${t.status}">${escape(t.text)}</li>`).join('')}</ul>`;
   else body=`${Object.keys(tool.input||{}).length?`<pre class="step-input">${escape(JSON.stringify(tool.input,null,2))}</pre>`:''}${view.plan?`<pre class="step-output">${escape(view.plan)}</pre>`:''}${output}`;
   const state=STATE_LABELS[tool.status]||'';
+  const icon=STEP_ICONS[tool.name==='view_image'?'image':view.kind]||STEP_ICONS.other;
+  const detailHead=`<div class="step-detail-head"><span>${escape(view.verb)}</span>${target&&view.kind!=='command'?`<code>${escape(target)}</code>`:''}${deltaHtml(added,removed)}</div>`;
   return{
     className:`step step-${view.kind} ${tool.status||''}`,
-    summary:`<span class="step-dot"></span><span class="step-verb">${escape(view.verb)}</span>${target?`<code class="step-target" title="${escape(target)}">${escape(firstLine(target).slice(0,240))}</code>`:''}${deltaHtml(added,removed)}${state?`<span class="step-state">${state}</span>`:''}`,
-    body:body||'<p class="step-empty">没有更多信息</p>'
+    summary:`<span class="step-icon" aria-hidden="true"><svg viewBox="0 0 18 18">${icon}</svg></span><span class="step-label">${escape(stepLabel(tool,view))}</span>${state?`<span class="step-state">${state}</span>`:''}`,
+    body:detailHead+(body||'<p class="step-empty">没有更多信息</p>')
   };
 }
 export function changesHtml(changes,escape){
