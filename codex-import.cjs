@@ -1,4 +1,4 @@
-const fs=require('node:fs');const path=require('node:path');const os=require('node:os');const zlib=require('node:zlib');const {createHash,randomUUID}=require('node:crypto');
+const fs=require('node:fs');const path=require('node:path');const readline=require('node:readline');const {Transform}=require('node:stream');const os=require('node:os');const zlib=require('node:zlib');const {createHash,randomUUID}=require('node:crypto');
 const hash=text=>createHash('sha256').update(text).digest('hex');
 const time=value=>typeof value==='number'?(value<1e12?value*1000:value):Date.parse(value)||0;
 function textContent(content){return(content||[]).filter(x=>['input_text','output_text','text','summary_text'].includes(x.type)).map(x=>x.text||'').join('\n');}
@@ -22,24 +22,34 @@ function toolOutput(output){
 }
 // Codex compresses older pages of paginated threads to rollout-*.jsonl.zst;
 // history_base byte offsets refer to the decompressed text.
-const LIMIT=512*1024*1024,ROLLOUT=/^rollout-.*\.jsonl(?:\.zst)?$/,packed=file=>file.endsWith('.zst');
-function unpack(file){try{return zlib.zstdDecompressSync(fs.readFileSync(file),{maxOutputLength:LIMIT});}catch(e){throw Error(e.code==='ERR_BUFFER_TOO_LARGE'||e instanceof RangeError?'完整历史超过 512 MB，请先从 Codex 导出较小记录':'无法解压 Codex 历史日志：'+path.basename(file));}}
+const ROLLOUT=/^rollout-.*\.jsonl(?:\.zst)?$/,packed=file=>file.endsWith('.zst');
+// The lines of one log, decompressed while reading so its size does not matter;
+// limit keeps only the first bytes, for a page that a later page builds on.
+function logLines(file,limit){
+  const input=fs.createReadStream(file,limit===undefined||packed(file)?{}:{end:limit-1});let stream=input;
+  if(packed(file)){
+    let seen=0;const unzip=zlib.createZstdDecompress();
+    const cut=new Transform({transform(chunk,_encoding,done){const keep=limit===undefined?chunk:chunk.subarray(0,Math.max(0,limit-seen));seen+=chunk.length;done(null,keep.length?keep:undefined);},flush(done){done(limit!==undefined&&seen<limit?Error('Codex 基础历史范围无效'):null);}});
+    input.on('error',e=>cut.destroy(e));unzip.on('error',()=>cut.destroy(Error('无法解压 Codex 历史日志：'+path.basename(file))));
+    stream=input.pipe(unzip).pipe(cut);
+  }
+  return readline.createInterface({input:stream,crlfDelay:Infinity});
+}
 async function readMeta(file){
   const input=fs.createReadStream(file),stream=packed(file)?input.pipe(zlib.createZstdDecompress()):input,chunks=[];let size=0;
   try{for await(const chunk of stream){const i=chunk.indexOf(10);chunks.push(i<0?chunk:chunk.subarray(0,i));size+=chunk.length;if(i>=0||size>8*1024*1024)break;}}catch{}finally{input.destroy();stream.destroy();}
   try{const row=JSON.parse(Buffer.concat(chunks).toString('utf8'));return row.type==='session_meta'?row.payload||{}:{};}catch{return{};}
 }
-async function* rolloutLines(file,resolveBase,limit,visited=new Set(),budget={bytes:0}){
+async function* rolloutLines(file,resolveBase,limit,visited=new Set()){
   const real=fs.realpathSync(file);if(visited.has(real)||visited.size>=40)throw Error('Codex 基础历史存在循环或层级过深');visited.add(real);
-  const data=packed(real)?unpack(real):null,size=data?data.length:fs.statSync(real).size,bytes=limit===undefined?size:limit;if(!Number.isSafeInteger(bytes)||bytes<0||bytes>size)throw Error('Codex 基础历史范围无效');budget.bytes+=bytes;if(budget.bytes>LIMIT)throw Error('完整历史超过 512 MB，请先从 Codex 导出较小记录');
+  // A compressed page's size is only known once read, so logLines checks its range.
+  if(limit!==undefined&&(!Number.isSafeInteger(limit)||limit<0||!packed(real)&&limit>fs.statSync(real).size))throw Error('Codex 基础历史范围无效');
   const meta=await readMeta(real);
-  if(meta.history_base){const base=meta.history_base,target=resolveBase?.(base.thread_id);if(!target)throw Error('找不到 Codex 引用的基础日志，无法完整导入：'+base.thread_id);if(!Number.isSafeInteger(base.end_byte_offset))throw Error('Codex 基础历史缺少字节范围，暂不支持此格式');yield* rolloutLines(target,resolveBase,base.end_byte_offset,visited,budget);}
-  if(bytes&&data){for(const line of data.subarray(0,bytes).toString('utf8').split('\n'))yield line.replace(/\r$/,'');}
-  else if(bytes){const lines=require('node:readline').createInterface({input:fs.createReadStream(real,{encoding:'utf8',end:bytes-1}),crlfDelay:Infinity});for await(const line of lines)yield line;}
+  if(meta.history_base){const base=meta.history_base,target=resolveBase?.(base.thread_id);if(!target)throw Error('找不到 Codex 引用的基础日志，无法完整导入：'+base.thread_id);if(!Number.isSafeInteger(base.end_byte_offset))throw Error('Codex 基础历史缺少字节范围，暂不支持此格式');yield* rolloutLines(target,resolveBase,base.end_byte_offset,visited);}
+  if(limit!==0)for await(const line of logLines(real,limit))yield line;
   visited.delete(real);
 }
 async function parseRollout(file,resolveBase){
-  if(fs.statSync(file).size>LIMIT)throw Error('单个会话超过 512 MB，请先导出较小的记录');
   const lines=rolloutLines(file,resolveBase);
   let meta={},model='',activeId='',current=null,warnings=0;const turns=[],byId=new Map(),known=new Set(),seen=new Set(),calls=new Map(),fallback=[];
   const ensure=(id,stamp)=>{if(id&&byId.has(id)){current=byId.get(id);return current;}current={id:id||'turn-'+turns.length,user:'',answer:'',thinking:'',items:[],tools:[],status:'interrupted',startedAt:time(stamp),finishedAt:time(stamp)};turns.push(current);if(id)byId.set(id,current);return current;};
@@ -102,9 +112,9 @@ class CodexImporter{
   }
   async preview(ids){
     if(!Array.isArray(ids)||!ids.length||ids.length>20)throw Error('每次请选择 1–20 条会话');
-    const parsed=[];let totalBytes=0;for(const id of [...new Set(ids)]){
+    const parsed=[];for(const id of [...new Set(ids)]){
       const file=this.files.get(id);if(!file)throw Error('会话列表已变化，请重新扫描');const real=fs.realpathSync(file),relative=path.relative(this.home,real);if(relative.startsWith('..')||path.isAbsolute(relative))throw Error('会话文件不在所选 Codex 目录内');
-      totalBytes+=fs.statSync(real).size;if(totalBytes>LIMIT)throw Error('所选日志合计超过 512 MB，请分批导入');const data=await parseRollout(real,id=>this.rollouts.get(id));if(!data.turns.length)throw Error('此会话没有可导入的用户问答，可能使用了不支持的存储格式');parsed.push({file:real,...data});
+      const data=await parseRollout(real,id=>this.rollouts.get(id));if(!data.turns.length)throw Error('此会话没有可导入的用户问答，可能使用了不支持的存储格式');parsed.push({file:real,...data});
     }
     const token=randomUUID();this.previews.clear();this.previews.set(token,parsed);return{token,items:parsed.map(p=>({id:p.meta.id||p.meta.session_id,cwd:p.meta.cwd||'',turns:p.turns.length,tools:p.turns.reduce((n,t)=>n+t.tools.length,0),model:p.model,warnings:p.warnings,first:p.turns[0].user.slice(0,250),last:p.turns.at(-1).answer.slice(0,250)}))};
   }
@@ -114,7 +124,7 @@ class CodexImporter{
     try{for(const p of parsed){const sourceId=p.meta.id||p.meta.session_id;if(this.store.state.threads.some(t=>t.importedFrom?.type==='codex'&&t.importedFrom.id===sourceId)){skipped++;continue;}
       const cwd=p.meta.cwd||this.home;let project=this.store.state.projects.find(item=>item.path.toLowerCase()===cwd.toLowerCase());if(!project){project={id:randomUUID(),path:cwd,name:path.basename(cwd)};this.store.state.projects.push(project);}
       const id='codex-'+sourceId,startedAt=time(p.meta.timestamp)||Date.now();this.store.state.threads.push({id,projectId:project.id,cwd,title:this.titles?.get(sourceId)||p.turns[0].user.replace(/\s+/g,' ').slice(0,50),createdAt:startedAt,updatedAt:p.turns.at(-1).finishedAt||startedAt,status:p.turns.at(-1).status,...this.store.state.settings,turns:p.turns.map(t=>({...t,id:'codex-'+sourceId+'-'+t.id,source:'codex',originalModel:p.model})),importedFrom:{type:'codex',id:sourceId,file:p.file,model:p.model,importedAt:Date.now()}});imported++;
-    }this.store.save();}catch(e){this.store.state=before;throw e;}
+    }this.store.save();}catch(e){this.store.state=before;if(e instanceof RangeError)e=Error('会话太大：导入后单条会话超过约 512 MB（JavaScript 单个字符串的上限），无法保存');throw e;}
     this.previews.delete(token);return{imported,skipped};
   }
 }

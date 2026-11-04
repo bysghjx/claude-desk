@@ -3,7 +3,7 @@
 const fs=require('node:fs');const path=require('node:path');const os=require('node:os');const readline=require('node:readline');const {createHash,randomUUID}=require('node:crypto');
 const hash=text=>createHash('sha256').update(text).digest('hex');
 const time=value=>Date.parse(value)||0;
-const LIMIT=512*1024*1024,SESSION=/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+const SESSION=/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const blocks=content=>typeof content==='string'?[{type:'text',text:content}]:Array.isArray(content)?content:[];
 // Harness reminders are injected into user text; they are not what the user typed.
 const clean=text=>String(text||'').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g,'').replace(/\r\n/g,'\n').trim();
@@ -22,13 +22,14 @@ function promptText(record){
   const images=items.filter(x=>x.type==='image').length;if(images)text+=(text?'\n\n':'')+(images>1?`[原对话包含 ${images} 张图片，图片文件未导入]`:'[原对话包含图片，图片文件未导入]');
   return text||null;
 }
+// Inline images are dropped on import anyway; dropping their data while reading keeps large transcripts in memory cheaply.
+const noImage=x=>x?.type==='image'?{type:'image'}:x?.type==='tool_result'&&Array.isArray(x.content)?{...x,content:x.content.map(noImage)}:x;
 const toolOutput=content=>typeof content==='string'?content:blocks(content).map(x=>x.type==='image'?'[图片输出未导入]':x.text??JSON.stringify(x)).join('\n');
 async function* records(file){
   const lines=readline.createInterface({input:fs.createReadStream(file,{encoding:'utf8'}),crlfDelay:Infinity});
   for await(const line of lines){if(!line.trim())continue;try{yield JSON.parse(line);}catch{yield null;}}
 }
 async function parseTranscript(file){
-  if(fs.statSync(file).size>LIMIT)throw Error('单个会话超过 512 MB，请先导出较小的记录');
   // Records form a tree through parentUuid: rewinds and edits leave abandoned
   // branches behind, and compaction links back through logicalParentUuid.
   const nodes=new Map(),kept=[],results=[];let leaf='',warnings=0,cwd='',title={},sessionId='';
@@ -41,11 +42,11 @@ async function parseTranscript(file){
     // Resumed sessions can write earlier records again with the same uuid; keep the first copy.
     if(nodes.has(r.uuid))continue;
     cwd||=r.cwd||'';sessionId||=r.sessionId||'';
-    const keep=r.type==='user'||r.type==='assistant',record=keep?{type:r.type,uuid:r.uuid,timestamp:r.timestamp,isMeta:r.isMeta,isCompactSummary:r.isCompactSummary,origin:r.origin,message:r.message}:null;
+    const keep=r.type==='user'||r.type==='assistant',record=keep?{type:r.type,uuid:r.uuid,timestamp:r.timestamp,isMeta:r.isMeta,isCompactSummary:r.isCompactSummary,origin:r.origin,message:Array.isArray(r.message?.content)?{...r.message,content:r.message.content.map(noImage)}:r.message}:null;
     nodes.set(r.uuid,{parent:r.parentUuid||r.logicalParentUuid||'',record});
     if(keep){leaf=r.uuid;kept.push(record);}
     // Parallel tool calls branch off the tool_use they answer, so results are matched by id, not by path.
-    if(r.type==='user')for(const x of blocks(r.message?.content))if(x.type==='tool_result')results.push(x);
+    if(r.type==='user')for(const x of blocks(record.message?.content))if(x.type==='tool_result')results.push(x);
   }
   const active=new Set(),replies=new Set();for(let id=leaf;id&&!active.has(id);id=nodes.get(id)?.parent){const node=nodes.get(id);if(!node)break;active.add(id);if(node.record?.message?.id)replies.add(node.record.message.id);}
   // Each block of a reply is its own record, and blocks after a tool call hang
@@ -105,9 +106,9 @@ class ClaudeImporter{
   }
   async preview(ids){
     if(!Array.isArray(ids)||!ids.length||ids.length>20)throw Error('每次请选择 1–20 条会话');
-    const parsed=[];let totalBytes=0;for(const id of [...new Set(ids)]){
+    const parsed=[];for(const id of [...new Set(ids)]){
       const file=this.files.get(id);if(!file)throw Error('会话列表已变化，请重新扫描');const real=fs.realpathSync(file),relative=path.relative(this.home,real);if(relative.startsWith('..')||path.isAbsolute(relative))throw Error('会话文件不在所选 Claude 目录内');
-      totalBytes+=fs.statSync(real).size;if(totalBytes>LIMIT)throw Error('所选记录合计超过 512 MB，请分批导入');const data=await parseTranscript(real);if(!data.turns.length)throw Error('此会话没有可导入的问答，可能还没有收到过回复');parsed.push({file:real,...data});
+      const data=await parseTranscript(real);if(!data.turns.length)throw Error('此会话没有可导入的问答，可能还没有收到过回复');parsed.push({file:real,...data});
     }
     const token=randomUUID();this.previews.clear();this.previews.set(token,parsed);return{token,items:parsed.map(p=>({id:p.meta.id,cwd:p.meta.cwd,turns:p.turns.length,tools:p.turns.reduce((n,t)=>n+t.tools.length,0),model:p.model,warnings:p.warnings,first:p.turns[0].user.slice(0,250),last:p.turns.at(-1).answer.slice(0,250)}))};
   }
@@ -117,7 +118,7 @@ class ClaudeImporter{
     try{for(const p of parsed){const sourceId=p.meta.id;if(this.imported(sourceId)){skipped++;continue;}
       const cwd=p.meta.cwd||this.home;let project=this.store.state.projects.find(item=>item.path.toLowerCase()===cwd.toLowerCase());if(!project){project={id:randomUUID(),path:cwd,name:path.basename(cwd)};this.store.state.projects.push(project);}
       const id='claude-'+sourceId,startedAt=p.turns[0].startedAt||Date.now();this.store.state.threads.push({id,projectId:project.id,cwd,title:p.meta.title||p.turns[0].user.replace(/\s+/g,' ').slice(0,50),createdAt:startedAt,updatedAt:p.turns.at(-1).finishedAt||startedAt,status:p.turns.at(-1).status,...this.store.state.settings,turns:p.turns.map(t=>({...t,id:'claude-'+sourceId+'-'+t.id,source:'claude',originalModel:p.model})),importedFrom:{type:'claude',id:sourceId,file:p.file,model:p.model,importedAt:Date.now()}});imported++;
-    }this.store.save();}catch(e){this.store.state=before;throw e;}
+    }this.store.save();}catch(e){this.store.state=before;if(e instanceof RangeError)e=Error('会话太大：导入后单条会话超过约 512 MB（JavaScript 单个字符串的上限），无法保存');throw e;}
     this.previews.delete(token);return{imported,skipped};
   }
 }

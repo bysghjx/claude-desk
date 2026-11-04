@@ -63,3 +63,20 @@ test('Codex output tagged with per-request ids stays in its turn, and automatic 
   assert.equal(turn.user,'Run the batch\n\n> Which domain?\n\na.example');assert.equal(turn.status,'done');
   assert.equal(turn.tools[0].output,'Script completed\n[图片输出未导入]');assert.deepEqual(turn.items.map(i=>i.type==='tool'?'tool:'+i.id:'text:'+i.text.split('\n')[0]),['text:Starting','tool:c1','tool:q1','text:Which domain?','text:Batch finished','text:Goal continued on its own']);assert.doesNotMatch(JSON.stringify(turns),/base64|turn_aborted/);
 });
+test('Codex compressed pages are read as a stream: offsets inside later chunks, ranges past the end and damaged files',async()=>{
+  const {dir}=setup(),zlib=require('node:zlib'),base=path.join(dir,'base.jsonl.zst'),tail=path.join(dir,'tail.jsonl');
+  const message=(role,text,id)=>({type:'response_item',payload:{type:'message',role,content:[{type:'input_text',text}],internal_chat_message_metadata_passthrough:{turn_id:id,...(role==='user'?{content_item_kinds:['user.text']}:{})}}});
+  // Far more than one decompressed chunk, so the cut lands in a later one.
+  const rows=[{type:'session_meta',payload:{id:'big'}}];for(let i=0;i<400;i++)rows.push(message('user','Q'+i+' '+'x'.repeat(2000),'t'+i),message('assistant','A'+i,'t'+i));
+  const prefix=rows.map(x=>JSON.stringify(x)).join('\n')+'\n';fs.writeFileSync(base,zlib.zstdCompressSync(Buffer.from(prefix+JSON.stringify(message('user','Rolled back','gone'))+'\n')));
+  const writeTail=offset=>fs.writeFileSync(tail,[{type:'session_meta',payload:{id:'big',history_base:{thread_id:'base',end_byte_offset:offset}}},message('user','Live','live'),message('assistant','Live answer','live')].map(x=>JSON.stringify(x)).join('\n'));
+  writeTail(Buffer.byteLength(prefix));const data=await parseRollout(tail,()=>base);
+  assert.equal(data.turns.length,401);assert.equal(data.turns[399].answer,'A399');assert.equal(data.turns[400].answer,'Live answer');assert.doesNotMatch(JSON.stringify(data.turns),/Rolled back/);
+  writeTail(10*1024*1024);await assert.rejects(()=>parseRollout(tail,()=>base),/范围无效/);
+  fs.writeFileSync(base,Buffer.from('not zstd at all'));writeTail(5);await assert.rejects(()=>parseRollout(tail,()=>base),/无法解压 Codex 历史日志：base\.jsonl\.zst/);
+});
+test('an import too large to save is rolled back with a clear message',async()=>{
+  const {dir,home}=setup(),store=new DatabaseStore(path.join(dir,'data')),importer=new CodexImporter(store,home);
+  const list=await importer.list(),preview=await importer.preview([list.items[0].id]);store.save=()=>{throw new RangeError('Invalid string length');};
+  assert.throws(()=>importer.commit(preview.token),/会话太大：导入后单条会话超过约 512 MB/);assert.equal(store.state.threads.length,0);store.close();
+});
