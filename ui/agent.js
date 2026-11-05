@@ -30,7 +30,8 @@
     if(changed&&$('#follow').checked)main.scrollTop=main.scrollHeight;
   }
   document.querySelectorAll('[data-window]').forEach(button=>button.onclick=()=>api(button.dataset.window));
-  window.agentView.onMaximized?.(maximized=>{document.documentElement.classList.toggle('maximized',maximized);const button=document.querySelector('[data-window="max"]');if(button){const label=maximized?'向下还原':'最大化';button.title=label;button.setAttribute('aria-label',label);}});
+  // Inside the split view there is no preload, so no agentView and no window to maximize.
+  window.agentView?.onMaximized?.(maximized=>{document.documentElement.classList.toggle('maximized',maximized);const button=document.querySelector('[data-window="max"]');if(button){const label=maximized?'向下还原':'最大化';button.title=label;button.setAttribute('aria-label',label);}});
   $('#back-main').onclick=()=>api('main');$('#copy-output').onclick=async()=>{await api('copy');$('#copy-output').textContent='已复制';setTimeout(()=>$('#copy-output').textContent='复制输出',1300);};
   $('#follow').onchange=()=>{if($('#follow').checked)$('#agent-content').scrollTop=$('#agent-content').scrollHeight;};
   $('#agent-content').addEventListener('wheel',()=>{$('#follow').checked=false;},{passive:true});

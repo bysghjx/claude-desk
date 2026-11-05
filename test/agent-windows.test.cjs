@@ -13,3 +13,19 @@ test('agent windows follow live events and aliases, navigate to main, and clear 
   const {manager,handlers,engine,main,clipboard}=setup();manager.open('t','a');const window=[...manager.windows.values()][0].window,event={sender:window.webContents,senderFrame:window.webContents.mainFrame};const a=engine.store.state.threads[0].turns[0].subagents[0];Object.assign(a,{id:'canonical',aliases:['a'],answer:'Final worker output',status:'done'});manager.refresh('t');assert.equal(window.events.at(-1).data.agent.answer,'Final worker output');handlers['agent:view'](event,'copy');assert.equal(clipboard.text,'Final worker output');handlers['agent:view'](event,'main');assert.deepEqual(main.events.at(-1),{name:'thread:navigate',data:'t'});
   engine.store.state.threads=[];manager.refresh('t');assert.equal(window.events.at(-1).data.available,false);assert.throws(()=>manager.open('t','a'),/不存在/);manager.close();assert.equal(window.destroyed,true);
 });
+test('the split view page renders a sub-agent without the window preload',()=>{
+  const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+  const nodes=new Map();
+  const node=()=>{const n={hidden:false,disabled:false,textContent:'',innerHTML:'',checked:true,scrollTop:0,scrollHeight:0,dataset:{},classList:{toggle(){},add(){},remove(){}},addEventListener(){},setAttribute(){}};return n;};
+  const document={title:'',body:node(),documentElement:node(),querySelector:s=>{if(!nodes.has(s))nodes.set(s,node());return nodes.get(s);},querySelectorAll:()=>[]};
+  const listeners=[],posted=[],parent={postMessage:m=>posted.push(m)};
+  const window={parent,location:{search:'?embedded=1'},addEventListener:(type,fn)=>listeners.push(fn)};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../ui/agent.js'),'utf8'),{window,document,location:window.location,URLSearchParams,setInterval(){},setTimeout(){},DOMPurify:{sanitize:x=>x},marked:{parse:x=>x}});
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)),[{type:'agent:action',action:'state'}]);
+  const agent={name:'看看仓库',status:'done',description:'读 README',answer:'仓库很小',tools:[{id:'r',name:'Read',input:{file_path:'README.md'},status:'done',output:'# hi'}]};
+  for(const fn of listeners)fn({source:parent,data:{type:'agent:data',data:{available:true,threadTitle:'演示',agent}}});
+  return new Promise(resolve=>setImmediate(resolve)).then(()=>{
+    assert.equal(document.querySelector('#name').textContent,'看看仓库');assert.equal(document.querySelector('#description').textContent,'读 README');
+    assert.match(document.querySelector('#tools').innerHTML,/Read/);
+  });
+});
