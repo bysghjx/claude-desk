@@ -4,6 +4,7 @@ const fs=require('node:fs');const path=require('node:path');const {createHash}=r
 // EnableEmbeddedAsarIntegrityValidation fuse is on, so while it is off the first exe built for an
 // Electron version and icon is kept (outputs/releases/exe-cache) and reused.
 const FUSE_SENTINEL='dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX',INTEGRITY_FUSE=4;
+const {buildUpdater,UPDATER_EXE}=require('./build-updater.cjs');
 function integrityChecked(exe){const buf=fs.readFileSync(exe),i=buf.indexOf(FUSE_SENTINEL);return i<0||buf[i+FUSE_SENTINEL.length+2+INTEGRITY_FUSE]!==0x30;}
 function keepExe(source,target){
   const exe=path.join(target,'ClaudeDesk.exe');
@@ -36,13 +37,21 @@ function packCli(source){
   const staging=build?path.join(build,'stage'):path.resolve(source,'../../work/desktop-package');
   const target=build?path.join(build,'ClaudeDesk-win32-x64'):path.resolve(source,'../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
   const cli=packCli(source);console.log(cli.note);
+  const updater=buildUpdater();
   // node-pty's native files have to sit outside app.asar to load; the CLI goes in resources/claude-code instead of the asar.
   const results=await packager({dir:source,name:'ClaudeDesk',platform:'win32',arch:'x64',out:staging,overwrite:true,icon:path.join(source,'ui/icon.ico'),asar:{unpack:'**/node_modules/node-pty/**'},extraResource:[cli.dir],ignore:/^\/(?:test|scripts|node_modules\/@anthropic-ai\/claude-agent-sdk-win32-x64)(?:\/|$)/});
+  fs.copyFileSync(updater,path.join(results[0],UPDATER_EXE));
+  fs.writeFileSync(path.join(results[0],'claude-desk-version.json'),JSON.stringify({app:'ClaudeDesk',version:require('../package.json').version}));
   if(process.argv.includes('--stage-only')){console.log('Staged application:',results[0]);return;}
   fs.mkdirSync(target,{recursive:true});
-  // Folders whose contents can shrink are replaced, not merged, so nothing from an older build stays behind.
-  for(const dir of ['resources/app.asar.unpacked','resources/claude-code'])fs.rmSync(path.join(target,dir),{recursive:true,force:true});
+  // Don't delete the installed resources before copying: Windows may reject the
+  // running exe, and a failed build must not leave that installation incomplete.
   for(const entry of fs.readdirSync(results[0]))fs.cpSync(path.join(results[0],entry),path.join(target,entry),{recursive:true,force:true});
   console.log(keepExe(source,target));
+  const prune=(from,dir)=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
+    const file=path.resolve(dir,entry.name),rel=path.relative(target,file);if(rel.startsWith('..')||path.isAbsolute(rel))throw Error('构建清理路径不在程序目录内');
+    const original=path.join(from,entry.name);if(!fs.existsSync(original))fs.rmSync(file,{recursive:true,force:true});else if(entry.isDirectory())prune(original,file);
+  }};
+  for(const dir of ['resources/app.asar.unpacked','resources/claude-code'])if(fs.existsSync(path.join(target,dir)))prune(path.join(results[0],dir),path.join(target,dir));
   console.log('Updated fixed application entry:',path.join(target,'ClaudeDesk.exe'));
 })().catch(e=>{console.error(e.message);process.exitCode=1;});

@@ -38,8 +38,9 @@ export function createComposer({ store, api, toast, actions }) {
   function options(){return{model:$('#model').value,effort:$('#effort').value,mode:$('#mode').value};}
   function capture(){return{text:$('#prompt').value,references:structuredClone(references),images:images.slice(),options:options()};}
   function payload(){store.drafts.set(store.selected||'new',capture());return{selectedThread:store.selected,projectId:store.projectId,drafts:Object.fromEntries([...store.drafts].map(([id,draft])=>[id,draft&&typeof draft==='object'?{...draft,images:undefined}:draft])),panelTab:store.panelTab,panelHidden:$('#inspector').hidden,showAllThreads:true};}
-  async function persist(){if(!ready)return;$('#save-indicator').textContent='正在保存…';try{await api('ui:save',payload());$('#save-indicator').textContent='已自动保存';$('#save-indicator').classList.remove('error');}catch(e){$('#save-indicator').textContent='保存失败';$('#save-indicator').classList.add('error');toast('本地保存失败：'+e.message);}}
-  function save(){if(!ready)return;store.emit('composer');clearTimeout(saveTimer);$('#save-indicator').textContent='正在保存…';saveTimer=setTimeout(persist,220);}
+  // A draft save normally takes a few milliseconds; "正在保存" only shows when one is slow.
+  async function persist(){if(!ready)return;const slow=setTimeout(()=>{$('#save-indicator').textContent='正在保存…';},600);try{await api('ui:save',payload());$('#save-indicator').textContent='已自动保存';$('#save-indicator').classList.remove('error');}catch(e){$('#save-indicator').textContent='保存失败';$('#save-indicator').classList.add('error');toast('本地保存失败：'+e.message);}finally{clearTimeout(slow);}}
+  function save(){if(!ready)return;store.emit('composer');clearTimeout(saveTimer);saveTimer=setTimeout(persist,220);}
   function syncPickers(){
     $('#model-label').textContent=modelName($('#model').value);$('#picker-model-label').textContent=modelName($('#model').value);$('#model-toggle').title=$('#model').value;
     const index=Math.max(0,levels.indexOf($('#effort').value));

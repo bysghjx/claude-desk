@@ -1,13 +1,14 @@
 {
   "name": "claude-desk",
   "productName": "Claude Desk",
-  "version": "0.26.1",
+  "version": "0.28.1",
   "description": "Local Claude Code desktop workspace",
   "main": "main.cjs",
   "private": true,
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
+    "build:updater": "node scripts/build-updater.cjs",
     "package": "node scripts/package.cjs",
     "release": "node scripts/release.cjs"
   },

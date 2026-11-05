@@ -2,7 +2,7 @@
 // files are recorded in a private git object store under the app's data folder,
 // keyed by folder. The project's own .git, index and branches are never touched;
 // .gitignore rules still apply, and very large files and dependency folders are skipped.
-const fs = require('node:fs');
+const fs = require('./disk-fs.cjs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { execFile } = require('node:child_process');

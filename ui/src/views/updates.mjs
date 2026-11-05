@@ -89,7 +89,10 @@ export function createUpdates({ store, api, toast, confirm }) {
       if (!update) return;
       const n = running();
       const ok = await confirm({ title: `升级到 ${update.to}？`, description: `更新包检查通过：替换 ${update.files} 个文件${update.removed ? `，删除 ${update.removed} 个` : ''}。Claude Desk 会关闭，更新后自动重新打开${n ? `；正在运行的 ${n} 个会话会停止` : ''}。会话记录不受影响。`, preview: `${update.from} → ${update.to}`, label: '安装并重启', kind: 'neutral' });
-      if (ok) { installing = `正在关闭并安装 ${update.to}…`; renderCard(); await api('update:apply'); }
+      if (ok) {
+        installing = `正在关闭并安装 ${update.to}…`; renderCard();
+        try { await api('update:apply'); } catch (e) { installing = ''; renderCard(); throw Error('更新包没有安装：' + e.message); }
+      }
     } finally { button.disabled = false; }
   }));
 

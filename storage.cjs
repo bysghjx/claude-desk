@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const {writeJson}=require('./json-stream.cjs');
 
 function readState(file) {
   const value=JSON.parse(fs.readFileSync(file,'utf8'));
@@ -8,13 +9,10 @@ function readState(file) {
   return value;
 }
 function atomicWrite(file, value) {
-  fs.mkdirSync(path.dirname(file),{recursive:true});
-  const temp=file+'.tmp'; const fd=fs.openSync(temp,'w');
-  try { fs.writeFileSync(fd,JSON.stringify(value,null,2));fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   if(fs.existsSync(file)) {
     try { readState(file);fs.copyFileSync(file,file+'.bak'); } catch { /* Preserve the last valid backup. */ }
   }
-  fs.renameSync(temp,file);
+  writeJson(file,value);
 }
 function loadRecoverable(file, defaults) {
   const existing=[file,file+'.tmp',file+'.bak'].filter(p=>fs.existsSync(p));

@@ -1,4 +1,5 @@
-const fs=require('node:fs');const path=require('node:path');const {execFile}=require('node:child_process');
+const fs=require('./disk-fs.cjs');const path=require('node:path');const {execFile}=require('node:child_process');
+const {archivePath}=require('./project-files.cjs');
 // Git review actions for the changes panel. Paths are repository-relative (as git
 // status reports them) and are checked to stay inside the repository.
 function run(cwd,args,{allowFail=false}={}){
@@ -19,6 +20,7 @@ function inside(top,relative){
   return target;
 }
 function textLines(file){
+  if(archivePath(file))return null;
   try{const stat=fs.statSync(file);if(!stat.isFile()||stat.size>2*1024*1024)return null;const text=fs.readFileSync(file,'utf8');if(text.includes('\0'))return null;return text===''?0:text.replace(/\n$/,'').split('\n').length;}catch{return null;}
 }
 async function changes(projectPath){
@@ -44,6 +46,7 @@ async function changes(projectPath){
 }
 async function diff(projectPath,relative){
   const {top,hasHead}=await repo(projectPath),target=inside(top,relative);
+  if(archivePath(target))return'二进制归档，请在外部应用中查看。';
   const tracked=(await run(top,['ls-files','--error-unmatch','--',relative],{allowFail:true})).code===0;
   if(tracked){
     const text=hasHead?(await run(top,['diff','--no-ext-diff','--no-textconv','HEAD','--',relative],{allowFail:true})).stdout:(await run(top,['diff','--no-ext-diff','--cached','--',relative],{allowFail:true})).stdout+(await run(top,['diff','--no-ext-diff','--',relative],{allowFail:true})).stdout;

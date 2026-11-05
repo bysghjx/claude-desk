@@ -75,8 +75,8 @@ test('Codex compressed pages are read as a stream: offsets inside later chunks, 
   writeTail(10*1024*1024);await assert.rejects(()=>parseRollout(tail,()=>base),/范围无效/);
   fs.writeFileSync(base,Buffer.from('not zstd at all'));writeTail(5);await assert.rejects(()=>parseRollout(tail,()=>base),/无法解压 Codex 历史日志：base\.jsonl\.zst/);
 });
-test('an import too large to save is rolled back with a clear message',async()=>{
+test('a runtime size failure rolls back import without claiming a fixed session size limit',async()=>{
   const {dir,home}=setup(),store=new DatabaseStore(path.join(dir,'data')),importer=new CodexImporter(store,home);
   const list=await importer.list(),preview=await importer.preview([list.items[0].id]);store.save=()=>{throw new RangeError('Invalid string length');};
-  assert.throws(()=>importer.commit(preview.token),/会话太大：导入后单条会话超过约 512 MB/);assert.equal(store.state.threads.length,0);store.close();
+  assert.throws(()=>importer.commit(preview.token),/超出运行时处理能力，已撤销本次导入：Invalid string length/);assert.equal(store.state.threads.length,0);store.close();
 });

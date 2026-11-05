@@ -118,7 +118,7 @@ class ClaudeImporter{
     try{for(const p of parsed){const sourceId=p.meta.id;if(this.imported(sourceId)){skipped++;continue;}
       const cwd=p.meta.cwd||this.home;let project=this.store.state.projects.find(item=>item.path.toLowerCase()===cwd.toLowerCase());if(!project){project={id:randomUUID(),path:cwd,name:path.basename(cwd)};this.store.state.projects.push(project);}
       const id='claude-'+sourceId,startedAt=p.turns[0].startedAt||Date.now();this.store.state.threads.push({id,projectId:project.id,cwd,title:p.meta.title||p.turns[0].user.replace(/\s+/g,' ').slice(0,50),createdAt:startedAt,updatedAt:p.turns.at(-1).finishedAt||startedAt,status:p.turns.at(-1).status,...this.store.state.settings,turns:p.turns.map(t=>({...t,id:'claude-'+sourceId+'-'+t.id,source:'claude',originalModel:p.model})),importedFrom:{type:'claude',id:sourceId,file:p.file,model:p.model,importedAt:Date.now()}});imported++;
-    }this.store.save();}catch(e){this.store.state=before;if(e instanceof RangeError)e=Error('会话太大：导入后单条会话超过约 512 MB（JavaScript 单个字符串的上限），无法保存');throw e;}
+    }this.store.save();}catch(e){this.store.state=before;if(e instanceof RangeError)throw Error('导入会话超出运行时处理能力，已撤销本次导入：'+e.message,{cause:e});throw e;}
     this.previews.delete(token);return{imported,skipped};
   }
 }

@@ -2,7 +2,7 @@
 // what nothing uses any more. Only leftovers are removed: images no message
 // shows, file snapshots and chat folders of deleted conversations, and worktrees
 // of deleted or archived conversations that hold no uncommitted changes.
-const fs=require('node:fs');const path=require('node:path');
+const fs=require('./disk-fs.cjs');const path=require('node:path');
 
 async function sizeOf(target){
   let size=0,count=0;
@@ -55,7 +55,7 @@ class StorageUsage{
     await add('checkpoints','文件快照','「回退到这里」用的项目文件记录；可清理的是已删除对话的项目快照',[this.dir('checkpoints')],left.checkpoints);
     await add('worktrees','独立工作树','每个独立工作树是一份项目副本；可清理的是已归档或已删除对话的、没有未提交改动的工作树',[this.dir('worktrees')],left.worktrees);
     await add('chats','对话文件夹','不属于项目的对话各自的空文件夹',[this.dir('chats')],left.chats);
-    const backups=children(this.dataRoot).filter(x=>!x.dir&&/^(bootstrap|migration-backup).*\.json$/.test(x.name)).map(x=>x.full);
+    const backups=children(this.dataRoot).filter(x=>!x.dir&&(/^(bootstrap|migration-backup).*\.json$/.test(x.name)||/^migration-v1-backup-.*\.sqlite$/.test(x.name))).map(x=>x.full);
     await add('backups','迁移备份','旧版本数据迁移前的快照',backups);
     let disk=null;try{const s=fs.statfsSync(this.dataRoot);disk={free:s.bavail*s.bsize,total:s.blocks*s.bsize};}catch{}
     return{root:this.dataRoot,groups,disk,total:groups.reduce((n,g)=>n+g.size,0)};

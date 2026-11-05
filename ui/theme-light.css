@@ -670,6 +670,12 @@
   .env-check strong{color:#232323}
   .env-check span{color:#565656}
   .env-foot{border-top:1px solid #ebebeb}
+  select::picker-icon{color:#606060}
+  ::picker(select){border:1px solid #afafaf;background:#f0f0f0;color:#292929;box-shadow:0 12px 48px #00000032}
+  select option{color:#292929}
+  select option:hover,select option:focus-visible{background:#d3d3d3}
+  select option:checked{color:#0f0f0f}
+  select option::checkmark{color:#414141}
 }
 
 /* Hand-tuned light theme details */

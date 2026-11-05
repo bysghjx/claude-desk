@@ -1,5 +1,19 @@
 # Claude Desk 0.8.0 验证记录
 
+## 0.27.0：分块存储、ASAR 和更新暂存目录
+
+验证日期：2026-11-05（Asia/Shanghai）。`npm test`：165 项通过，0 项失败，0 项跳过。
+
+- SQLite v1 → v2：事务迁移前用 `VACUUM INTO` 备份已提交 WAL；验证成功迁移只执行一次，失败时旧 schema/记录仍可读；会话和轮次 ID、顺序、来源、草稿、项目与用量保留。
+- 对正式数据做只读快照，仅迁移工作目录里的副本：5 条会话、43 轮问答、15 条用量记录和 5 份草稿逐项比对一致，正式数据库未修改。
+- `node --max-old-space-size=3072 scripts/check-large-storage.cjs`：旧的整轮 `JSON.stringify` 抛出 `RangeError: Invalid string length`；新格式成功保存、镜像、导出并重新打开 513 个 1 MiB 文本块。镜像 537,932,964 字节，导出 537,933,164 字节；最大 SQLite 值 262,507 字节。完整记录在 `work/large-storage-result.json`。
+- 回归覆盖 Unicode/代理对、JSON 转义、空对象和数组、原型键、循环引用、分块缺失、未改轮次不重写、删除审计和镜像修复。恢复上下文保留原有末尾 120,000 字符的内容顺序和预算。
+- 在 Electron 45.1.0 主进程中，旧的 `fs.existsSync/statSync/lstatSync/realpathSync` 对真实 ASAR 均可复现句柄占用和 `EBUSY`。新实现的项目列表、文件预览、Git 改动、磁盘统计、更新校验后，归档在进程存活时可删除；应用自身 ASAR 支持仍然开启。
+- 启动独立隐藏测试配置的真实 Claude Desk，选择会话并打开文件面板，显示 README 文件后删除项目内 `work/desktop-package/.../resources/app.asar` 成功；没有打开或改动用户的真实会话。
+- 更新测试使用真实 ASAR 和 ZIP，覆盖解压、版本与哈希校验、安装脚本、暂存目录清理，以及清理失败不覆盖原校验错误。外层 Node 的模拟文件测试之外，新增了真实 Electron 回归，避免 ASAR 补丁行为漏测。
+- 控制台闪窗：用 WinEventHook 观察隐藏 CLI 启动、ConPTY PowerShell 和一次真实只读 Claude Bash 调用，未捕获到可见控制台；为外部 CLI/安装入口补齐中间进程的 `windowsHide`。尚未取得用户原始闪窗的进程证据，不能认定所有 pwsh 闪窗均由 Desk 导致或已彻底消除。
+- 本阶段仍保留原有 Claude 运行机制，未切换原生 resume，也未引入双引擎。界面和导入仍有全量内存数据，分块存储不等同于无限内存或无限模型上下文。
+
 验证日期：2026-10-29（Asia/Shanghai）。
 
 ## 自动测试

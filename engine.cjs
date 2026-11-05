@@ -1,7 +1,8 @@
 const {legacyUsage,recordUsage}=require('./usage.cjs');
 const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
-const fs = require('node:fs');
+const fs = require('./disk-fs.cjs');
+const {historyTail}=require('./json-stream.cjs');
 const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {ACTIVE_AGENT,activeAgents,findAgent,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
@@ -163,7 +164,7 @@ class Engine extends EventEmitter {
     let run = this.runs.get(id);
     // The system prompt is fixed when the CLI starts, so a changed global or project prompt restarts it.
     if (run && (run.model !== model || run.mode !== mode || run.effort !== effort || run.extensionKey!==extensionKey || run.instructions !== JSON.stringify(this.instructionsOf(t)))) { await this.closeRun(id); run = null; }
-    const history = t.turns.filter(x => x.answer || x.tools?.length).map(x => ({ user: x.user, ...(x.images?.length ? { images: `[附带 ${x.images.length} 张图片，图片本身未包含在历史中]` } : {}), context:x.context, answer: x.answer, tools: x.tools?.map(y => ({ name: y.name, input: y.input, output: y.output })) }));
+    const history = !run?historyTail(t.turns):'';
     Object.assign(t, { model, mode, effort, updatedAt: Date.now(), error: '', startedAt: Date.now(), finishedAt: null });
     if (!t.turns.length) t.title = (text || '图片').replace(/\s+/g, ' ').slice(0, 34);
     const turn = { id: randomUUID(), user: text, context:options.context||'', references:options.references||[], images, answer: '', thinking: '', items: [], tools: [], startedAt: Date.now(), status: 'running', usage: null };
@@ -173,8 +174,7 @@ class Engine extends EventEmitter {
     if (!run) {
       t.contextUsage=null;
       if (history.length) {
-        const full = JSON.stringify(history);
-        prompt = `<previous_conversation>\n以下为本地保存的历史对话，仅用于上下文。文件状态以当前磁盘为准。\n${full.slice(-120000)}\n</previous_conversation>\n\n${prompt}`;
+        prompt = `<previous_conversation>\n以下为本地保存的历史对话，仅用于上下文。文件状态以当前磁盘为准。\n${history}\n</previous_conversation>\n\n${prompt}`;
         turn.contextRestored = true;
       }
       run = this.startRun(t,extensionOptions,extensionKey);

@@ -7,6 +7,10 @@ async function versions(){
   const root=fs.mkdtempSync(path.join(scratch,'测试 目录-')),old=path.join(root,'old'),next=path.join(root,'next'),pkg=path.join(root,'pkg');
   write(old,{'ClaudeDesk.exe':'exe','resources/app.asar':'app 1','resources/old-only.txt':'gone','使用说明.txt':'说明 1','debug.log':'noise'});
   write(next,{'ClaudeDesk.exe':'exe','resources/app.asar':'app 2','resources/new/extra.dll':'new','使用说明.txt':'说明 2'});
+  for(const [dir,version]of [[old,'1.0.0'],[next,'1.1.0']]){
+    fs.writeFileSync(path.join(dir,'claude-desk-version.json'),JSON.stringify({app:'ClaudeDesk',version}));
+    if(process.platform==='win32')fs.copyFileSync(require('../scripts/build-updater.cjs').buildUpdater(),path.join(dir,'ClaudeDesk.Updater.exe'));
+  }
   const from=await manifestOf(old,'1.0.0'),to=await manifestOf(next,'1.1.0'),{changed,removed}=diff(from,to);
   for(const rel of changed){fs.mkdirSync(path.dirname(path.join(pkg,rel)),{recursive:true});fs.copyFileSync(path.join(next,rel),path.join(pkg,rel));}
   fs.writeFileSync(path.join(pkg,UPDATE_FILE),JSON.stringify({app:'ClaudeDesk',from:'1.0.0',to:'1.1.0',files:Object.fromEntries(changed.map(r=>[r,to.files[r]])),removed}));
@@ -15,23 +19,23 @@ async function versions(){
 test('manifests skip the crash log and the diff lists changed, added and removed files',async()=>{
   const {from,changed,removed}=await versions();
   assert.ok(!('debug.log' in from.files));assert.ok('使用说明.txt' in from.files);
-  assert.deepEqual(changed.sort(),['resources/app.asar','resources/new/extra.dll','使用说明.txt']);assert.deepEqual(removed,['resources/old-only.txt']);
+  assert.deepEqual(changed.sort(),['claude-desk-version.json','resources/app.asar','resources/new/extra.dll','使用说明.txt']);assert.deepEqual(removed,['resources/old-only.txt']);
 });
 test('an update package must be for the running version, complete and untampered, with safe paths',async()=>{
   const {pkg}=await versions();
-  assert.deepEqual(await verifyUpdate(pkg,'1.0.0'),{from:'1.0.0',to:'1.1.0',files:3,removed:1,size:fs.statSync(path.join(pkg,'resources/app.asar')).size+fs.statSync(path.join(pkg,'resources/new/extra.dll')).size+fs.statSync(path.join(pkg,'使用说明.txt')).size,notes:''});
+  assert.deepEqual(await verifyUpdate(pkg,'1.0.0'),{from:'1.0.0',to:'1.1.0',files:4,removed:1,size:['claude-desk-version.json','resources/app.asar','resources/new/extra.dll','使用说明.txt'].reduce((n,file)=>n+fs.statSync(path.join(pkg,file)).size,0),notes:''});
   await assert.rejects(()=>verifyUpdate(pkg,'0.9.0'),/从 1\.0\.0 升级到 1\.1\.0 用的，当前是 0\.9\.0/);
   fs.writeFileSync(path.join(pkg,'resources/app.asar'),'tampered');await assert.rejects(()=>verifyUpdate(pkg,'1.0.0'),/已损坏：resources\/app\.asar/);
   await assert.rejects(()=>verifyUpdate(path.join(pkg,'resources'),'1.0.0'),/不是 Claude Desk 的更新包/);
   for(const bad of ['../evil.exe','C:/Windows/x','a\\..\\b'])assert.throws(()=>safe(bad),/不安全/);assert.equal(safe('resources/app.asar'),'resources/app.asar');
 });
-test('a real update zip is extracted, checked and installed over the old folder by the PowerShell script',{skip:process.platform!=='win32'},async()=>{
+test('a real update zip is extracted, checked and installed by the independent executable',{skip:process.platform!=='win32'},async()=>{
   const {root,old,next,pkg}=await versions();
   const zip=path.join(root,'update.zip');execFileSync('C:\\Windows\\System32\\tar.exe',['-a','-c','-f',zip,'-C',pkg,...fs.readdirSync(pkg)]);
   const updater=new Updater({installDir:old,version:'1.0.0',tempRoot:path.join(root,'temp')});
   const staged=await updater.stage(zip);assert.equal(staged.to,'1.1.0');
-  updater.apply({pid:0,exe:'unused',restart:false});
-  const log=path.join(staged.dir,'install.log');for(let i=0;i<60&&!fs.existsSync(log);i++)await new Promise(r=>setTimeout(r,500));
+  const child=await updater.apply({pid:0,exe:path.join(old,'ClaudeDesk.exe'),restart:false});
+  const log=path.join(staged.dir,'install.log');for(let i=0;i<100&&child.exitCode===null;i++)await new Promise(r=>setTimeout(r,100));
   assert.match(fs.readFileSync(path.join(staged.dir,'install.log'),'utf8'),/ok 1\.0\.0 -> 1\.1\.0/);
   assert.deepEqual((await manifestOf(old,'x')).files,(await manifestOf(next,'x')).files);
   assert.equal(updater.cleanup(),'');assert.equal(fs.readdirSync(path.join(root,'temp')).length,0);
@@ -52,7 +56,7 @@ test('update packages are found in the watched folders by what they contain, not
   tar(path.join(downloads,'photos.zip'),pkg);tar(path.join(downloads,'ClaudeDesk-1.1.0-win-x64.zip'),path.join(pkg,'resources'));fs.writeFileSync(path.join(downloads,'ClaudeDesk-broken.zip'),'not a zip');
   assert.equal(JSON.parse(readZipEntry(path.join(downloads,'ClaudeDesk-1.0.0-to-1.1.0-update (1).zip'),UPDATE_FILE)).to,'1.1.0');
   const found=findUpdates([downloads,desktop,path.join(root,'missing')],'1.0.0');
-  assert.deepEqual(found.ready.map(u=>[u.name,u.dir,u.from,u.to,u.files]),[['ClaudeDesk-1.0.0-to-1.1.0-update (1).zip',downloads,'1.0.0','1.1.0',3]]);
+  assert.deepEqual(found.ready.map(u=>[u.name,u.dir,u.from,u.to,u.files]),[['ClaudeDesk-1.0.0-to-1.1.0-update (1).zip',downloads,'1.0.0','1.1.0',4]]);
   assert.deepEqual(found.other.map(u=>u.name),['claudedesk-1.1.0-to-1.2.0.zip']);
   assert.deepEqual(findUpdates([downloads,desktop],'1.1.0').ready.map(u=>u.to),['1.2.0']);
   assert.deepEqual(findUpdates([downloads,desktop],'1.2.0'),{ready:[],other:[]},'nothing older than the running version is offered');
@@ -60,6 +64,15 @@ test('update packages are found in the watched folders by what they contain, not
 test('a finished install is reported once on the next start',()=>{
   const temp=fs.mkdtempSync(path.join(scratch,'t-'));write(temp,{'claude-desk-update-ok/install.log':'﻿ok 1.0.0 -> 1.1.0'});
   const updater=new Updater({installDir:temp,version:'1.1.0',tempRoot:temp});assert.equal(updater.cleanup(),'');assert.equal(updater.installed,'1.0.0 -> 1.1.0');
+});
+test('failed staging preserves the validation error even when Windows denies temporary cleanup',{skip:process.platform!=='win32'},async()=>{
+  const {root,pkg}=await versions(),zip=path.join(root,'update.zip'),temp=path.join(root,'temp');
+  execFileSync('C:/Windows/System32/tar.exe',['-a','-c','-f',zip,'-C',pkg,...fs.readdirSync(pkg)],{windowsHide:true});
+  const remove=fs.rmSync;fs.rmSync=(file,options)=>{if(path.dirname(file)===temp){const error=Error('locked fixture');error.code='EPERM';throw error;}return remove(file,options);};
+  try{await assert.rejects(()=>new Updater({installDir:root,version:'0.9.0',tempRoot:temp}).stage(zip),e=>/当前是 0\.9\.0/.test(e.message)&&/暂存目录未能清理/.test(e.message)&&/locked fixture/.test(e.message));}
+  finally{fs.rmSync=remove;}
+  const updater=new Updater({installDir:root,version:'0.9.0',tempRoot:temp});fs.rmSync=(file,options)=>{if(path.dirname(file)===temp)throw Error('locked fixture');return remove(file,options);};
+  try{assert.match(updater.cleanup(),/暂存目录未能清理/);}finally{fs.rmSync=remove;}
 });
 test('the About card and the notice say what was found and what happens next',async()=>{
   const {updateCardHtml,noticeOf}=await import('../ui/src/lib/updates.mjs');

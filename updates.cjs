@@ -2,16 +2,17 @@
 // versions, plus claude-desk-update.json describing them. Installing one checks
 // the package against the running version and every file's hash, then copies the
 // files over the app folder after Claude Desk exits and starts it again.
-const fs = require('node:fs');
+const fs = require('./disk-fs.cjs');
 const path = require('node:path');
 const os = require('node:os');
-const { createHash, randomBytes } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const zlib = require('node:zlib');
 const { execFile, spawn } = require('node:child_process');
 
 const UPDATE_FILE = 'claude-desk-update.json';
+const UPDATER_EXE='ClaudeDesk.Updater.exe';
 // Files that are not part of a release: Electron's crash log, and an update package's own description and instructions.
-const SKIP = new Set(['debug.log', UPDATE_FILE, '怎么安装.txt']);
+const SKIP = new Set(['debug.log', UPDATE_FILE, '怎么安装.txt','.claude-desk-update.lock']);
 
 const hashFile = file => new Promise((resolve, reject) => { const hash = createHash('sha256'); fs.createReadStream(file).on('data', d => hash.update(d)).on('end', () => resolve(hash.digest('hex'))).on('error', reject); });
 function listFiles(dir, prefix = '') {
@@ -55,25 +56,6 @@ async function verifyUpdate(dir, currentVersion) {
   (info.removed || []).forEach(safe);
   return { from: info.from, to: info.to, files: Object.keys(info.files).length, removed: (info.removed || []).length, size, notes: String(info.notes || '') };
 }
-// Runs after Claude Desk exits: copy the files (retrying while Windows still holds
-// them), delete the removed ones, then start the app again. Paths come from the
-// package's JSON, so the script itself stays ASCII.
-const APPLY_SCRIPT = String.raw`param([string]$Stage, [string]$Target, [int]$WaitPid, [string]$Exe, [switch]$NoRestart)
-$ErrorActionPreference = 'Stop'
-$log = Join-Path $Stage 'install.log'
-try {
-  if ($WaitPid) { Wait-Process -Id $WaitPid -Timeout 120 -ErrorAction SilentlyContinue }
-  $info = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $Stage 'claude-desk-update.json') | ConvertFrom-Json
-  foreach ($rel in $info.files.PSObject.Properties.Name) {
-    $src = Join-Path $Stage $rel; $dst = Join-Path $Target $rel
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
-    for ($i = 0; ; $i++) { try { Copy-Item -LiteralPath $src -Destination $dst -Force; break } catch { if ($i -ge 20) { throw }; Start-Sleep -Milliseconds 500 } }
-  }
-  foreach ($rel in @($info.removed)) { if ($rel) { $dst = Join-Path $Target $rel; if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force } } }
-  "ok $($info.from) -> $($info.to)" | Out-File -Encoding UTF8 $log
-} catch { "failed: $_" | Out-File -Encoding UTF8 $log }
-if (-not $NoRestart) { Start-Process -FilePath $Exe }
-`;
 const powershell = (args, options = {}) => new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args], { windowsHide: true, timeout: 300000, ...options }, (error, stdout, stderr) => error ? reject(Error(String(stderr || error.message).trim().split('\n').slice(-3).join('\n'))) : resolve(stdout)));
 // Extracts a zip with the PowerShell that ships with Windows. Paths go in through the environment:
 // -Command joins its arguments into one string, which would split paths at spaces.
@@ -130,23 +112,38 @@ function findUpdates(dirs, version) {
 }
 
 class Updater {
-  constructor({ installDir, version, tempRoot = os.tmpdir() }) { Object.assign(this, { installDir, version, tempRoot }); this.staged = null; }
+  constructor({ installDir, version, tempRoot = os.tmpdir(),helperPath=path.join(installDir,UPDATER_EXE) }) { Object.assign(this, { installDir, version, tempRoot,helperPath }); this.staged = null; }
   async stage(zip) {
-    const dir = path.join(this.tempRoot, 'claude-desk-update-' + randomBytes(4).toString('hex'));
+    this.staged=null;
+    fs.mkdirSync(this.tempRoot,{recursive:true});
+    const dir = fs.mkdtempSync(path.join(this.tempRoot, 'claude-desk-update-'));
     try { await extract(zip, dir); this.staged = { dir, ...await verifyUpdate(dir, this.version) }; return this.staged; }
-    catch (e) { fs.rmSync(dir, { recursive: true, force: true }); throw e; }
+    catch (e) {
+      try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:4,retryDelay:250});}
+      catch(cleanup){throw Error(e.message+'；更新暂存目录未能清理：'+dir+'（'+cleanup.message+'）',{cause:e});}
+      throw e;
+    }
   }
-  // Starts the installer and leaves it waiting for this process; the caller quits the app.
-  // PowerShell started straight from a detached process exits at once, and one started
-  // as an ordinary child ends with the app, so `start /b` from cmd launches it on its own.
-  apply({ pid = process.pid, exe = process.execPath, restart = true } = {}) {
+  // Run a private copy, so even the installed updater can be replaced. Wait for
+  // its ready signal before quitting: a spawn/validation failure keeps Desk open.
+  async apply({ pid = process.pid, exe = process.execPath, restart = true,waitExe=exe,waitMs,retryMs } = {}) {
     if (!this.staged) throw Error('请先选择更新包');
-    const script = path.join(this.staged.dir, 'apply-update.ps1');
-    fs.writeFileSync(script, APPLY_SCRIPT);
-    const quote = value => `"${value}"`;
-    const command = ['start "" /b powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File', quote(script), '-Stage', quote(this.staged.dir), '-Target', quote(this.installDir), '-WaitPid', String(pid), '-Exe', quote(exe), ...(restart ? [] : ['-NoRestart'])].join(' ');
-    const child = spawn('cmd.exe', ['/d', '/c', command], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true });
-    child.unref(); return child;
+    if(this.applying)throw Error('独立更新器已经在运行');
+    if(!fs.existsSync(this.helperPath))throw Error('缺少 '+UPDATER_EXE+'，请解压完整包恢复更新器');
+    this.applying=true;
+    try{
+      const runnerDir=path.join(this.staged.dir,'.runner');fs.mkdirSync(runnerDir,{recursive:true});const runner=path.join(runnerDir,UPDATER_EXE),ready=path.join(this.staged.dir,'runner.ready');
+      fs.rmSync(ready,{force:true});fs.copyFileSync(this.helperPath,runner);
+      const args=['--stage',this.staged.dir,'--target',this.installDir,'--from',this.version,'--wait-pid',String(pid),'--wait-exe',waitExe,'--exe',exe,...(restart?[]:['--no-restart'])];
+      if(waitMs!==undefined)args.push('--wait-ms',String(waitMs));if(retryMs!==undefined)args.push('--retry-ms',String(retryMs));
+      const child=spawn(runner,args,{detached:true,stdio:'ignore',windowsHide:true});let failure;child.once('error',e=>{failure=e;});
+      for(let i=0;i<300;i++){
+        if(fs.existsSync(ready)){child.unref();return child;}
+        if(failure||child.exitCode!==null){let log='';try{log=fs.readFileSync(path.join(this.staged.dir,'install.log'),'utf8');}catch{}throw Error(log||'独立更新器启动失败：'+(failure?.message||child.exitCode));}
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      child.kill();throw Error('独立更新器未能就绪，Claude Desk 尚未退出');
+    }catch(e){this.applying=false;throw e;}
   }
   // On the next start: remove staged packages and report an install that failed;
   // a successful one is left in this.installed ("0.25.0 -> 0.25.1").
@@ -156,9 +153,13 @@ class Updater {
     for (const name of names) {
       const dir = path.join(this.tempRoot, name);
       try { const log = fs.readFileSync(path.join(dir, 'install.log'), 'utf8').replace(/^﻿/, '').trim(); if (log.startsWith('failed')) failed = log.replace(/^failed:\s*/, ''); else if (log.startsWith('ok ')) this.installed = log.slice(3); } catch {}
-      fs.rmSync(dir, { recursive: true, force: true });
+      const lock=path.join(dir,'install.lock');if(fs.existsSync(lock)){let fd;try{fd=fs.openSync(lock,'r+');}catch{continue;}finally{if(fd!==undefined)fs.closeSync(fd);}}
+      let result;try{result=JSON.parse(fs.readFileSync(path.join(dir,'install-result.json'),'utf8'));}catch{}
+      if(result?.rollbackComplete===false||(!result&&fs.existsSync(path.join(dir,'backup-index.json')))){failed=(failed?failed+'；':'上次更新未完成；')+'恢复备份已保留：'+dir;continue;}
+      try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:4,retryDelay:250});}
+      catch(e){failed||='更新暂存目录未能清理：'+dir+'（'+e.message+'）';}
     }
     return failed;
   }
 }
-module.exports = { Updater, findUpdates, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, APPLY_SCRIPT };
+module.exports = { Updater, findUpdates, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, UPDATER_EXE };
