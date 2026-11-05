@@ -40,7 +40,15 @@ test('change summary aggregates edits per project-relative file and skips failed
   const changes=worklog.fileChanges(turn,'C:\\repo');
   assert.deepEqual(changes,[{path:'src/a.js',added:3,removed:2}]);
   const html=worklog.changesHtml(changes,escape);
-  assert.match(html,/1 个文件已更改/);assert.match(html,/data-review-file="src\/a.js"/);
+  assert.match(html,/已编辑 1 个文件/);assert.match(html,/data-review-file="src\/a.js"/);
+  assert.doesNotMatch(html,/data-undo-turn|changes-more/,'no snapshot, no undo; three files or fewer, nothing folded');
+  const many=[1,2,3,4,5].map(i=>({path:`dir/f${i}.js`,added:i,removed:0}));
+  const card=worklog.changesHtml(many,escape,{turnId:'t1',undo:'ready'});
+  assert.match(card,/data-undo-turn="t1">撤销/);assert.match(card,/\+15/);
+  assert.match(card,/<span class="change-dir">dir\/<\/span><span class="change-name">f1.js<\/span>/);
+  assert.match(card,/<details class="changes-more"><summary><span class="more-closed">再显示 2 个文件/);
+  const undone=worklog.changesHtml(many,escape,{turnId:'t1',undo:'undone',disabled:true});
+  assert.match(undone,/已撤销 5 个文件的改动/);assert.match(undone,/data-redo="1" disabled/);
   assert.equal(worklog.changesHtml([],escape),'');
 });
 test('compact step summaries hide parameters while expanded details remain escaped',async()=>{
@@ -57,4 +65,10 @@ test('compact step summaries hide parameters while expanded details remain escap
   assert.match(image.summary,/已查看 1 张图像/);assert.doesNotMatch(image.summary,/private-image/);assert.match(image.body,/private-image/);
   const failed=worklog.stepParts({name:'Bash',input:{command:'npm test'},status:'error',output:'failure details'},{escape,cwd:''});
   assert.match(failed.summary,/失败/);assert.doesNotMatch(failed.summary,/运行了命令/);assert.match(failed.body,/npm test/);assert.match(failed.body,/failure details/);
+});
+test('插话 that Claude read stays in the work list, in the order it arrived',async()=>{
+  const worklog=await load();
+  const turn={steers:[{id:'s1',text:'use tabs',status:'delivered'}],tools:[{id:'x',name:'Read',input:{}}],items:[{type:'tool',id:'x'},{type:'steer',id:'s1'},{type:'text',text:'final'},{type:'steer',id:'gone'}]};
+  const {work,final}=worklog.splitTurn(turn);
+  assert.deepEqual(work.map(i=>i.type),['tool','steer']);assert.equal(work[1].steer.text,'use tabs');assert.equal(final,'final');
 });

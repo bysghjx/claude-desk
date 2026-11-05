@@ -14,6 +14,7 @@ async function setup({confirmAnswer=true}={}){
     calls.push({name,args});
     if(name==='thread:create'){if(hold)await hold;created++;return thread('t'+created);}
     if(name==='thread:send')return thread(args[0],{status:'starting',turns:[{id:'u1',rev:1,user:args[1],status:'running'}]});
+    if(name==='thread:steer')return{steered:args[1]!=='cannot',thread:thread(args[0],{status:'tool',turns:store.thread(args[0]).turns.map(t=>({id:t.id,rev:t.rev,same:true}))})};
     if(name==='thread:queue')return thread(args[0],{status:'tool',queue:[{id:'q1',text:args[1]}],turns:store.thread(args[0]).turns.map(t=>({id:t.id,rev:t.rev,same:true}))});
     if(name==='thread:get')return thread(args[0],{turns:[{id:'x',rev:9,user:'full',status:'done'}]});
     return true;
@@ -40,9 +41,11 @@ test('the first send creates one conversation and rapid repeated sends cannot cr
   assert.equal(sends.length,1);assert.equal(sends[0].args[1],'first message');
   assert.equal(r.store.state.threads.length,1);assert.equal(r.store.selected,'t1');assert.equal(r.composer.text,'');
 });
-test('a message sent while the conversation runs joins its queue',async()=>{
+test('a message sent while the conversation runs is 插话; Tab queues it instead',async()=>{
   const r=await setup();r.actions.selectProject('p1');r.composer.text='first';await r.actions.sendMessage();
-  r.composer.text='later';await r.actions.sendMessage();
+  r.composer.text='steer this';await r.actions.sendMessage();
+  assert.equal(r.calls.filter(c=>c.name==='thread:steer').length,1);assert.match(r.toasts.at(-1),/已插话/);
+  r.composer.text='later';await r.actions.sendMessage(undefined,{queue:true});
   assert.equal(r.calls.filter(c=>c.name==='thread:queue').length,1);assert.equal(r.calls.filter(c=>c.name==='thread:send').length,1);
   assert.deepEqual(r.store.current().queue.map(q=>q.text),['later']);assert.equal(r.store.current().turns[0].user,'first');
   assert.match(r.toasts.at(-1),/队列/);
@@ -73,6 +76,16 @@ test('home shows active sub-agents across conversations with visible progress ou
   const summary=html.slice(html.indexOf('<summary'),html.indexOf('</summary>'));
   assert.match(summary,/Inspecting the parser/);assert.match(summary,/Read · src\/parser.js/);
   assert.match(html,/data-agent-owner="owner"/);assert.doesNotMatch(html,/Completed worker/);
+});
+test('finished sub-agents fold into one 已结束 row with a compact list',async()=>{
+  const {agentCardsHtml}=await import('../ui/src/views/inspector.mjs');
+  const now=Date.now(),agent=(id,status)=>({id,name:'Worker '+id,status,ownerId:'t',startedAt:now-3000,finishedAt:status==='tool'?null:now,tools:[]});
+  const html=agentCardsHtml([agent('a','tool'),agent('b','done'),agent('c','error')],{home:false,now});
+  assert.equal((html.match(/<details class="agent-card/g)||[]).length,1);
+  assert.match(html,/<details class="agent-history" data-agent-detail="history"><summary><span>已结束 2 个<\/span>/);
+  assert.equal((html.match(/class="agent-row"/g)||[]).length,2);
+  assert.match(html,/data-agent-window="c" data-agent-thread="t"[^>]*><span class="dot error">/);
+  assert.doesNotMatch(agentCardsHtml([agent('a','tool')],{home:false,now}),/agent-history/);
 });
 test('all six permission modes share their menu icon with the toolbar',async()=>{
   const {modes,modeListHtml}=await import('../ui/src/views/composer.mjs');

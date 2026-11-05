@@ -44,9 +44,12 @@ export function createActions({ store, api, composer, toast, confirm }) {
   }
 
   // Sends the composer contents (or `text` for retries). While the conversation is
-  // running, the message joins its queue and goes out when the turn finishes.
-  async function sendMessage(text) {
+  // running the message is 插话: Claude reads it before its next step without the task
+  // stopping. With `queue` (Tab) it joins the queue and goes out when the turn finishes.
+  async function sendMessage(text, { queue = false } = {}) {
     if (sending) return;
+    // Pasted images may still be reading; nothing else can send meanwhile.
+    sending = true; try { await composer.imagesReady?.(); } finally { sending = false; }
     const draft = composer.capture(), images = draft.images || [];
     text = String(text ?? draft.text ?? '').trim();
     if (!text && !images.length) return;
@@ -58,7 +61,8 @@ export function createActions({ store, api, composer, toast, confirm }) {
       const options = { model: draft.options?.model || chosen.model, effort: draft.options?.effort || chosen.effort, mode: draft.options?.mode || chosen.mode, references: draft.references || [], images };
       if (fromHome) store.drafts.delete('new');
       store.drafts.delete(id); composer.clear();
-      if (queueing) { await apply(await api('thread:queue', id, text, options)); toast('已加入队列，本轮完成后自动发送'); }
+      if (queueing && queue) { await apply(await api('thread:queue', id, text, options)); toast('已加入队列，本轮完成后自动发送'); }
+      else if (queueing) { const result = await api('thread:steer', id, text, options); await apply(result.thread); toast(result.steered ? '已插话，Claude 会在下一步之前读到' : '现在不能插话，已加入队列，本轮完成后自动发送'); }
       else await apply(await api('thread:send', id, text, options));
       store.state.settings = { ...store.state.settings, model: options.model, effort: options.effort, mode: options.mode };
       await api('settings', store.state.settings);
@@ -117,6 +121,7 @@ export function createActions({ store, api, composer, toast, confirm }) {
     store.state.projects = await api('project:pin', id, pinned); store.emit('threads');
   }
   async function sendQueuedNow(queueId) { await api('queue:send', store.selected, queueId); }
+  async function steerQueued(queueId) { await apply(await api('queue:steer', store.selected, queueId)); toast('已插话，Claude 会在下一步之前读到'); }
   async function removeQueued(queueId) { await api('queue:remove', store.selected, queueId); }
   async function editQueued(queueId) {
     if (!composer.isEmpty()) { toast('输入框里还有内容，请先发送或清空后再编辑排队消息'); return; }
@@ -128,5 +133,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, steerQueued, removeQueued, editQueued, retry, copyAnswer };
 }

@@ -81,12 +81,12 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   function connectionHtml(p) {
     const ready = Boolean(p.cliPath);
     const title = !ready ? '没有找到 Claude Code' : `通过 ${escape(p.host)} 连接`;
-    const detail = !ready ? '点下面的「检测环境」，安装官方版或使用内置版。' : p.configured ? '服务商和密钥来自你的 Claude 配置，这里不显示密钥。' : '使用 Claude Code 自己的登录。点「检测环境」可以查看是否已登录。';
+    const detail = !ready ? '点下面的「检测环境」，安装官方版或使用内置版。' : p.custom ? `使用服务商「${escape(p.custom)}」，在「服务商」页可以切换。` : p.configured ? '服务商和密钥来自你的 Claude 配置，这里不显示密钥。' : '使用 Claude Code 自己的登录。点「检测环境」可以查看是否已登录。';
     return `<span class="connection-dot${ready ? '' : ' error'}" aria-hidden="true"></span><div><strong>${title}</strong><span>${detail}</span></div>`;
   }
 
   async function openSettings(page = settingsPage) {
-    themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false;
+    themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false; $('#tray-toggle').checked = store.state.settings?.closeToTray !== false;
     const p = store.state.provider;
     setHtml($('#connection-status'), connectionHtml(p));
     setText($('#cli-path'), p.cliPath ? (p.cliBundled ? 'Claude Desk 内置版本：' : '你安装的版本：') + p.cliPath : '没有找到');
@@ -117,6 +117,10 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   for (const button of $$('[data-theme-choice]')) button.addEventListener('click', guarded(toast, () => setTheme(button.dataset.themeChoice)));
   $('#notify-toggle').addEventListener('change', guarded(toast, () => setNotifications($('#notify-toggle').checked)));
   $('#awake-toggle').addEventListener('change', guarded(toast, () => setKeepAwake($('#awake-toggle').checked)));
+  $('#tray-toggle').addEventListener('change', guarded(toast, async () => {
+    const on = $('#tray-toggle').checked;
+    store.state.settings = { ...store.state.settings, closeToTray: on }; await api('settings', { closeToTray: on });
+  }));
   $('#notify-test').addEventListener('click', guarded(toast, async () => { toast(await api('notify:test') ? '已发送测试通知，请看屏幕右下角' : '系统不支持桌面通知，或通知已被 Windows 关闭'); }));
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close());
   $('#open-config').addEventListener('click', guarded(toast, () => api('config:open')));

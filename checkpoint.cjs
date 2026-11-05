@@ -78,10 +78,13 @@ class Checkpoints {
     });
   }
 
-  // Puts every recorded file back to its state in `tree`. Returns the files touched
-  // and the tree of the state just before, so the rewind itself could be undone.
-  async restore(cwd, tree) {
-    const { now, files } = await this.changes(cwd, tree);
+  // Puts every recorded file (or only those in `only`, project-relative) back to its
+  // state in `tree`. Returns the files touched and the tree of the state just before,
+  // so the restore itself can be undone.
+  async restore(cwd, tree, only = null) {
+    const key = file => String(file).replace(/\\/g, '/').toLowerCase();
+    const wanted = only && new Set(only.map(key)), { now, files: all } = await this.changes(cwd, tree);
+    const files = wanted ? all.filter(f => wanted.has(key(f.path))) : all;
     return this.serial(cwd, async () => {
       const root = path.resolve(cwd), inside = rel => { const file = path.resolve(root, rel); const r = path.relative(root, file); if (!r || r.startsWith('..') || path.isAbsolute(r)) throw Error('路径越界：' + rel); return file; };
       const back = files.filter(f => f.status !== 'A').map(f => f.path);

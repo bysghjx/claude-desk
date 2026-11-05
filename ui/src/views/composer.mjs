@@ -36,10 +36,10 @@ export function createComposer({ store, api, toast, actions }) {
     return `Claude ${m[1][0].toUpperCase()+m[1].slice(1)} ${m[2]}${m[3]?'.'+m[3]:''}${m[4]?' '+m[4].replace(/^-/, ''):''}`;
   }
   function options(){return{model:$('#model').value,effort:$('#effort').value,mode:$('#mode').value};}
-  function capture(){return{text:$('#prompt').value,references:structuredClone(references),images:images.slice(),options:options()};}
+  function capture(){return{text:$('#prompt').value,references:structuredClone(references),images:images.filter(i=>i.data||i.path).map(({preview,ready,...image})=>image),options:options()};}
   function payload(){store.drafts.set(store.selected||'new',capture());return{selectedThread:store.selected,projectId:store.projectId,drafts:Object.fromEntries([...store.drafts].map(([id,draft])=>[id,draft&&typeof draft==='object'?{...draft,images:undefined}:draft])),panelTab:store.panelTab,panelHidden:$('#inspector').hidden,showAllThreads:true};}
-  // A draft save normally takes a few milliseconds; "正在保存" only shows when one is slow.
-  async function persist(){if(!ready)return;const slow=setTimeout(()=>{$('#save-indicator').textContent='正在保存…';},600);try{await api('ui:save',payload());$('#save-indicator').textContent='已自动保存';$('#save-indicator').classList.remove('error');}catch(e){$('#save-indicator').textContent='保存失败';$('#save-indicator').classList.add('error');toast('本地保存失败：'+e.message);}finally{clearTimeout(slow);}}
+  // Drafts save silently; the hint only shows while a save is slow or after one failed.
+  async function persist(){if(!ready)return;const slow=setTimeout(()=>{$('#save-indicator').textContent='正在保存…';},600);try{await api('ui:save',payload());$('#save-indicator').textContent='';$('#save-indicator').classList.remove('error');}catch(e){$('#save-indicator').textContent='保存失败';$('#save-indicator').classList.add('error');toast('本地保存失败：'+e.message);}finally{clearTimeout(slow);}}
   function save(){if(!ready)return;store.emit('composer');clearTimeout(saveTimer);saveTimer=setTimeout(persist,220);}
   function syncPickers(){
     $('#model-label').textContent=modelName($('#model').value);$('#picker-model-label').textContent=modelName($('#model').value);$('#model-toggle').title=$('#model').value;
@@ -191,31 +191,42 @@ export function createComposer({ store, api, toast, actions }) {
   window.addEventListener('beforeunload',()=>{if(ready){clearTimeout(saveTimer);window.desk.persistUi(payload());}});
   window.addEventListener('blur',()=>{closeAll();if(ready){clearTimeout(saveTimer);persist();}});
   // Images are read in the renderer (paste, drop or file picker); the main process saves the original on send.
+  // The chip shows the file at once; its bytes and the small thumbnail kept with the
+  // message are read in the background (createImageBitmap decodes off the main thread).
   const IMAGE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
   function renderImages(){
     $('#image-chips').hidden=!images.length;
-    $('#image-chips').innerHTML=images.map((image,i)=>`<span class="image-chip" title="${escape(image.name)}"><img src="${escape(image.thumb)}" alt="${escape(image.name)}"><button type="button" data-remove-image="${i}" aria-label="移除图片 ${escape(image.name)}">×</button></span>`).join('');
+    $('#image-chips').innerHTML=images.map((image,i)=>`<span class="image-chip${image.ready&&!image.thumb?' loading':''}" title="${escape(image.name)}"><img src="${escape(image.thumb||image.preview||'')}" alt="${escape(image.name)}"><button type="button" data-remove-image="${i}" aria-label="移除图片 ${escape(image.name)}">×</button></span>`).join('');
   }
+  function dropImage(image){const at=images.indexOf(image);if(at>=0)images.splice(at,1);if(image.preview)URL.revokeObjectURL(image.preview);}
   function readAsDataUrl(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('无法读取图片'));reader.readAsDataURL(file);});}
-  function thumbnail(url){return new Promise(resolve=>{const img=new Image();img.onload=()=>{const scale=Math.min(1,240/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/jpeg',0.82));};img.onerror=()=>resolve('');img.src=url;});}
-  async function addImages(files){
+  async function thumbnail(file){
+    try{const bitmap=await createImageBitmap(file),scale=Math.min(1,240/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return canvas.toDataURL('image/jpeg',0.82);}
+    catch{return'';}
+  }
+  function addImages(files){
     for(const file of [...files]){
       if(!IMAGE_TYPES.includes(file.type)){toast('只支持 PNG、JPEG、GIF、WebP 图片');continue;}
       if(file.size>5*1024*1024){toast(`${file.name||'图片'} 超过 5 MB`);continue;}
       if(images.length>=6){toast('一条消息最多附带 6 张图片');break;}
-      const url=await readAsDataUrl(file),thumb=await thumbnail(url);
-      if(!thumb){toast('无法识别这张图片');continue;}
-      images.push({name:file.name||'粘贴的图片.'+file.type.split('/')[1],mediaType:file.type,data:String(url).split(',')[1],thumb});
+      const image={name:file.name||'粘贴的图片.'+file.type.split('/')[1],mediaType:file.type,preview:URL.createObjectURL(file)};
+      image.ready=Promise.all([readAsDataUrl(file),thumbnail(file)]).then(([url,thumb])=>{
+        if(!thumb)throw Error('无法识别这张图片');
+        image.data=String(url).split(',')[1];image.thumb=thumb;URL.revokeObjectURL(image.preview);delete image.preview;
+      }).catch(e=>{dropImage(image);toast(e.message);}).finally(()=>{renderImages();store.emit('composer');});
+      images.push(image);
     }
     renderImages();store.emit('composer');$('#prompt').focus();
   }
-  $('#image-chips').onclick=event=>{const b=event.target.closest('[data-remove-image]');if(b){images.splice(Number(b.dataset.removeImage),1);renderImages();store.emit('composer');}};
+  // Sending waits for images still being read.
+  const imagesReady=()=>Promise.all(images.map(image=>image.ready));
+  $('#image-chips').onclick=event=>{const b=event.target.closest('[data-remove-image]');if(b){dropImage(images[Number(b.dataset.removeImage)]);renderImages();store.emit('composer');}};
   $('#add-image').onclick=()=>$('#image-input').click();
-  $('#image-input').onchange=()=>{addImages($('#image-input').files).catch(e=>toast(e.message)).finally(()=>{$('#image-input').value='';});};
-  $('#prompt').addEventListener('paste',event=>{const files=[...(event.clipboardData?.items||[])].filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addImages(files).catch(e=>toast(e.message));}});
+  $('#image-input').onchange=()=>{addImages($('#image-input').files);$('#image-input').value='';};
+  $('#prompt').addEventListener('paste',event=>{const files=[...(event.clipboardData?.items||[])].filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addImages(files);}});
   $('#composer').addEventListener('dragover',event=>{if([...(event.dataTransfer?.items||[])].some(item=>item.kind==='file')){event.preventDefault();$('#composer').classList.add('dropping');}});
   $('#composer').addEventListener('dragleave',()=>$('#composer').classList.remove('dropping'));
-  $('#composer').addEventListener('drop',event=>{$('#composer').classList.remove('dropping');const files=[...(event.dataTransfer?.files||[])];if(files.length){event.preventDefault();addImages(files).catch(e=>toast(e.message));}});
+  $('#composer').addEventListener('drop',event=>{$('#composer').classList.remove('dropping');const files=[...(event.dataTransfer?.files||[])];if(files.length){event.preventDefault();addImages(files);}});
   function ensureModel(model){if(!model)return;if(![...$('#model').options].some(x=>x.value===model))$('#model').add(new Option(model,model));$('#model').value=model;syncPickers();}
   // Grows with the text; an empty box keeps its default height (placeholder text does not count).
   function autosize(){const prompt=$('#prompt');prompt.style.height='auto';prompt.style.height=prompt.value?Math.min(200,Math.max(52,prompt.scrollHeight))+'px':'';}
@@ -224,10 +235,12 @@ export function createComposer({ store, api, toast, actions }) {
   // Enter sends (or queues while running); with an empty box the send button stops the run.
   $('#composer').addEventListener('submit',event=>event.preventDefault());
   $('#composer').addEventListener('submit',guarded(toast,async event=>{event.preventDefault();if(store.running()&&isEmpty())await actions().stop();else await actions().sendMessage();}));
-  $('#prompt').addEventListener('keydown',guarded(toast,async event=>{if(keydown(event))return;if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();await actions().sendMessage();}}));
+  $('#prompt').addEventListener('keydown',guarded(toast,async event=>{if(keydown(event))return;if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();await actions().sendMessage();}
+    // While a task runs, Tab queues the message instead of 插话.
+    else if(event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.altKey&&store.running()&&!isEmpty()){event.preventDefault();await actions().sendMessage(undefined,{queue:true});}}));
   $('#prompt').addEventListener('input',()=>{autosize();input();store.emit('composer');});
   function setMode(mode){if(modes.some(m=>m.id===mode)&&$('#mode').value!==mode){$('#mode').value=mode;optionChanged();}}
-  return{capture,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,addReference,
+  return{capture,imagesReady,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,addReference,
     focus:()=>$('#prompt').focus(),focusProject:()=>$('#home-project')?.focus(),
     initialize(){ready=true;syncPickers();renderModels();save();}};
 }

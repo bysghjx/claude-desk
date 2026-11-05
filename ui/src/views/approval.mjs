@@ -10,7 +10,7 @@ function questionHtml(q, i) {
   const options = Array.isArray(q.options) ? q.options : [];
   const choices = options.map((o, j) => `<button type="button" class="choice" data-choice="${j}" aria-pressed="false"><span class="choice-key">${j + 1}</span><span class="choice-copy"><strong>${escape(o.label)}</strong>${o.description ? `<small>${escape(o.description)}</small>` : ''}</span></button>`).join('');
   const other = `<button type="button" class="choice choice-other" data-choice="other" aria-pressed="${options.length ? 'false' : 'true'}"><span class="choice-key">…</span><span class="choice-copy"><strong>其他</strong><small>自己输入回答</small></span></button>`;
-  return `<fieldset class="question" data-question="${i}" data-multi="${q.multiSelect ? 'true' : 'false'}"><legend>${q.header ? `<span class="question-header">${escape(q.header)}</span>` : ''}${escape(q.question)}${q.multiSelect ? '<small>可多选</small>' : ''}</legend><div class="choices">${choices}${other}</div><input class="choice-input" data-other="${i}" placeholder="输入你的回答" aria-label="${escape(q.question)}"${options.length ? ' hidden' : ''}></fieldset>`;
+  return `<fieldset class="question" data-question="${i}"${i ? ' hidden' : ''} data-multi="${q.multiSelect ? 'true' : 'false'}"><legend>${q.header ? `<span class="question-header">${escape(q.header)}</span>` : ''}${escape(q.question)}${q.multiSelect ? '<small>可多选</small>' : ''}</legend><div class="choices">${choices}${other}</div><input class="choice-input" data-other="${i}" placeholder="输入你的回答" aria-label="${escape(q.question)}"${options.length ? ' hidden' : ''}></fieldset>`;
 }
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -25,8 +25,12 @@ export function approvalHtml(request, source = '', markdown = text => `<p>${esca
   const who = source ? `<span class="approval-source">${escape(source)}</span>` : '';
   const questions = questionsOf(request);
   if (questions) {
-    const quick = questions.length === 1 && !questions[0].multiSelect && questions[0].options?.length;
-    return `<div class="approval-title">${who}Claude 有问题想问你</div>${questions.map(questionHtml).join('')}<div class="approval-actions"><span class="approval-hint">${quick ? '点选项直接回答' : '每个问题选好后提交'}</span><button class="secondary" data-approve="no">跳过</button><button class="primary" data-approve="yes"${quick ? ' hidden' : ''}>提交回答</button></div>`;
+    const quick = questions.length === 1 && !questions[0].multiSelect && questions[0].options?.length, many = questions.length > 1;
+    // Several questions show one at a time; the tabs jump between them and mark the answered ones.
+    const tabs = many ? `<nav class="question-tabs" aria-label="问题">${questions.map((q, i) => `<button type="button" class="question-tab" data-question-tab="${i}" aria-current="${i === 0}"><span class="question-tab-mark" aria-hidden="true"></span>${escape(q.header || `问题 ${i + 1}`)}</button>`).join('')}</nav>` : '';
+    const hint = many ? `第 1 / ${questions.length} 个问题` : quick ? '点选项直接回答' : '选好后提交';
+    const steps = many ? '<button class="secondary" data-question-step="-1" hidden>上一个</button><button class="primary" data-question-step="1">下一个</button>' : '';
+    return `<div class="approval-title">${who}Claude 有问题想问你</div>${tabs}${questions.map(questionHtml).join('')}<div class="approval-actions"><span class="approval-hint" data-question-progress>${hint}</span><button class="secondary" data-approve="no">跳过</button>${steps}<button class="primary" data-approve="yes"${quick || many ? ' hidden' : ''}>提交回答</button></div>`;
   }
   if (isPlan(request)) {
     return `<div class="approval-title">${who}计划等待你确认</div><div class="plan-body markdown">${markdown(request.input?.plan || '')}</div><textarea class="plan-feedback" rows="2" placeholder="想调整的话，写下修改意见再点「继续修改」"></textarea><div class="approval-actions"><button class="secondary" data-approve="no">继续修改</button><button class="secondary" data-approve="yes" data-plan-mode="default">执行，改文件前问我</button><button class="primary" data-approve="yes" data-plan-mode="acceptEdits">执行并自动接受编辑</button></div>`;
@@ -46,6 +50,26 @@ export function pickChoice(card, button) {
   return card.querySelectorAll('.question').length === 1 && !multi && pressed && button.dataset.choice !== 'other';
 }
 
+const answered = field => [...field.querySelectorAll('.choice[aria-pressed="true"]')].some(b => b.dataset.choice !== 'other' || field.querySelector('.choice-input').value.trim());
+export const questionPage = card => Number(card.querySelector('.question:not([hidden])')?.dataset.question || 0);
+
+// Shows question `index` of a multi-question card and updates the tabs and buttons:
+// 提交回答 appears on the last page or once every question has an answer.
+export function showQuestion(card, index) {
+  const fields = [...card.querySelectorAll('.question')]; if (fields.length < 2) return;
+  index = Math.max(0, Math.min(fields.length - 1, index));
+  fields.forEach((field, i) => { field.hidden = i !== index; });
+  for (const tab of card.querySelectorAll('[data-question-tab]')) {
+    const i = Number(tab.dataset.questionTab);
+    tab.setAttribute('aria-current', String(i === index)); tab.classList.toggle('answered', answered(fields[i]));
+  }
+  const last = index === fields.length - 1, done = fields.every(answered);
+  card.querySelector('[data-question-step="-1"]').hidden = index === 0;
+  card.querySelector('[data-question-step="1"]').hidden = last;
+  card.querySelector('[data-approve="yes"]').hidden = !last && !done;
+  card.querySelector('[data-question-progress]').textContent = `第 ${index + 1} / ${fields.length} 个问题${done ? ' · 都已回答' : ''}`;
+}
+
 // Reads every question's answer: chosen labels plus any typed text, joined with ", ".
 export function collectAnswers(card, questions) {
   const answers = {};
@@ -55,7 +79,7 @@ export function collectAnswers(card, questions) {
       if (button.dataset.choice === 'other') { const text = field.querySelector('.choice-input').value.trim(); if (text) parts.push(text); }
       else parts.push(q.options[Number(button.dataset.choice)].label);
     }
-    if (!parts.length) return { missing: q.question };
+    if (!parts.length) return { missing: q.question, index: Number(field.dataset.question) };
     answers[q.question] = parts.join(', ');
   }
   return { answers };

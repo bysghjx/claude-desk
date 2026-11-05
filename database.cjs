@@ -75,9 +75,15 @@ class DatabaseStore{
   normalize(){const normal=Object.create(JsonStore.prototype);normal.state=this.state;JsonStore.normalize(normal);this.state=normal.state;}
   describe(thread,position){const {turns,...meta}=thread;return{hash:fingerprint(meta),position,turns:new Map(turns.map((turn,index)=>[turn.id,{hash:fingerprint(turn),position:index}]))};}
   remember(){this.prior=new Map(this.state.threads.map((t,i)=>[t.id,this.describe(t,i)]));this.usagePrior=new Map((this.state.usageLog||[]).map((row,i)=>[row.id,{hash:fingerprint(row),position:i}]));}
-  save(migration=false){
+  // A light save (`durable:false`, while Claude streams) only looks at the threads in
+  // `touched`, commits without waiting for the disk (WAL with synchronous=NORMAL: an
+  // app crash loses nothing, a power cut at most the last moments) and leaves the JSON
+  // copies to the next full save. Every other save checks every thread and turn.
+  save(migration=false,{durable=true,touched=null}={}){
     const metadata={...this.state,savedAt:Date.now()};delete metadata.threads;delete metadata.usageLog;
-    const next=new Map(),usage=new Map(),dirty=new Set();this.db.exec('BEGIN IMMEDIATE');
+    const next=new Map(),usage=new Map(),dirty=new Set(),light=!durable&&touched instanceof Set;
+    if(light)this.db.exec('PRAGMA synchronous=NORMAL');
+    this.db.exec('BEGIN IMMEDIATE');
     try{
       const revision=Number(this.db.prepare("SELECT value FROM meta WHERE key='revision'").get()?.value||0);
       if(revision!==this.revision)throw Error('另一进程已更新会话数据；请重新打开软件，避免用旧记录覆盖新内容');
@@ -95,6 +101,10 @@ class DatabaseStore{
       for(let i=0;i<this.state.threads.length;i++){
         const thread=this.state.threads[i],prior=this.prior.get(thread.id),{turns,...meta}=thread;
         if(next.has(thread.id))throw Error('会话 ID 重复');
+        if(light&&prior&&!touched.has(thread.id)&&prior.turns.size===turns.length){
+          if(prior.position!==i)move.run(i,'thread','',thread.id);
+          next.set(thread.id,{...prior,position:i});continue;
+        }
         const record=write('thread','',thread.id,i,meta,prior);record.turns=new Map();
         if(!prior||record.hash!==prior.hash){this.db.prepare('INSERT INTO threads(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(thread.id,'{}');dirty.add(thread.id);}
         for(let j=0;j<turns.length;j++){
@@ -114,7 +124,9 @@ class DatabaseStore{
       if(migration)this.db.exec("DELETE FROM usage; UPDATE threads SET body='{}'; PRAGMA user_version=2;");
       this.db.exec('COMMIT');this.revision=revision+1;this.state.savedAt=metadata.savedAt;
     }catch(e){this.db.exec('ROLLBACK');throw e;}
-    this.prior=next;this.usagePrior=usage;this.mirror(dirty);
+    finally{if(light)this.db.exec('PRAGMA synchronous=FULL');}
+    this.prior=next;this.usagePrior=usage;
+    if(light)for(const id of dirty)(this.mirrorDirty||=new Set()).add(id);else this.mirror(dirty);
   }
   // Settings, projects and drafts only, e.g. while typing. save() hashes every turn,
   // which grows with the history; changed threads are left to the next save().
@@ -146,6 +158,6 @@ class DatabaseStore{
   }
   export(file){writeJson(file,this.state);}
   info(){return{database:this.file,datasetId:this.datasetId,revision:this.revision,storageVersion:2,migrationBackup:this.migrationBackup,threads:this.state.threads.length,turns:this.state.threads.reduce((n,t)=>n+t.turns.length,0),warning:this.warning};}
-  close(){this.db.close();}
+  close(){if(this.mirrorDirty?.size)this.mirror();this.db.close();}
 }
 module.exports={DatabaseStore};

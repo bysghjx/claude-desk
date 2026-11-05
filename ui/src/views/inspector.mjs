@@ -11,8 +11,18 @@ export function collectAgents(store) {
     .sort((a, b) => Number(AGENT_ACTIVE.has(b.status)) - Number(AGENT_ACTIVE.has(a.status)) || b.startedAt - a.startedAt);
 }
 
+// Running sub-agents get a card each; finished ones fold into one 已结束 row that
+// opens to a compact list, so a long conversation does not fill the panel.
 export function agentCardsHtml(agents, { home, now = Date.now() }) {
   if (!agents.length) return `<p class="context-empty">${home ? '目前没有运行中的子智能体。进入会话后可查看该会话的子任务记录。' : '本会话尚未启动子智能体。可在消息中要求 Claude 使用子智能体分工处理任务。'}</p>`;
+  const live = agents.filter(a => AGENT_ACTIVE.has(a.status)), ended = agents.filter(a => !AGENT_ACTIVE.has(a.status));
+  // A row names the task; agents started without a description fall back to their summary.
+  const label = a => (a.name && a.name !== '子智能体' ? a.name : a.summary || a.type || a.name || '子智能体').slice(0, 160);
+  const rows = ended.map(a => `<button type="button" class="agent-row" data-agent-window="${escape(a.id)}" data-agent-thread="${escape(a.ownerId)}" title="在右侧分栏查看 · ${escape(a.name)}${a.summary ? ' — ' + escape(a.summary.slice(0, 300)) : ''}"><span class="dot ${a.status === 'error' ? 'error' : 'muted-dot'}"></span><span class="agent-row-name">${escape(label(a))}</span><span class="agent-row-state">${a.status === 'done' ? '' : AGENT_LABELS[a.status] || a.status}</span><span class="agent-row-time">${elapsed(a.startedAt, a.finishedAt || now)}</span></button>`).join('');
+  const history = ended.length ? `<details class="agent-history" data-agent-detail="history"><summary><span>已结束 ${ended.length} 个</span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m4 3 3 3-3 3"/></svg></summary><div class="agent-rows">${rows}</div></details>` : '';
+  return liveCards(live, { home, now }) + history;
+}
+function liveCards(agents, { home, now }) {
   return agents.map(a => {
     const key = a.ownerId + '-agent-' + a.id, live = AGENT_ACTIVE.has(a.status), tools = a.tools || [];
     const tool = tools.findLast(x => x.status === 'running') || tools.at(-1);

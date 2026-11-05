@@ -11,7 +11,8 @@ function userHtml(turn) {
   const references = turn.references?.length ? `<div class="turn-references">${turn.references.map(r => `<span>${r.kind === 'file' ? '@' : '@@'} ${escape(r.label || r.path)}</span>`).join('')}</div>` : '';
   const label = `<div class="assistant-label"><span class="spark">✳</span>${turn.source === 'codex' ? 'Codex · 历史导入' : turn.source === 'claude' ? 'Claude Code · 历史导入' : 'Claude'}${turn.contextRestored ? '<span class="restore" title="应用已从本地历史恢复上下文">从本地历史恢复上下文</span>' : ''}</div>`;
   const rewind = `<div class="user-actions"><button type="button" data-rewind="${escape(turn.id)}" title="删除这一轮及之后的问答，可同时把文件恢复到这一轮开始前；提问放回输入框"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 0 1 0 7H7M3.5 6.5 6 4M3.5 6.5 6 9"/></svg>回退到这里</button></div>`;
-  return `<div class="user-line">${images}${turn.user ? `<div class="user-message">${escape(turn.user)}</div>` : ''}${rewind}</div>${references}${label}`;
+  const steer = turn.fromSteer ? '<span class="steer-tag" title="运行中插入的消息，上一轮结束后接着处理">插话</span>' : '';
+  return `<div class="user-line">${images}${turn.user ? `<div class="user-message">${escape(turn.user)}${steer}</div>` : ''}${rewind}</div>${references}${label}`;
 }
 
 function footerHtml(turn, threadActive) {
@@ -37,7 +38,8 @@ export function animateIn(node, className = 'is-entering') {
   runs[className] = () => { node.removeEventListener('animationend', done); clearTimeout(timer); };
 }
 
-const itemKey = (item, index) => item.type === 'tool' ? 'tool:' + item.id : item.type + ':' + index;
+const itemKey = (item, index) => item.type === 'tool' || item.type === 'steer' ? item.type + ':' + item.id : item.type + ':' + index;
+const steerHtml = steer => `<span class="work-steer-label">你插话</span><span>${escape(steer.text || '（图片）')}${steer.images?.length ? ` · ${steer.images.length} 张图片` : ''}</span>`;
 
 function updateItem(node, item, cwd) {
   if (item.type === 'tool') {
@@ -45,12 +47,14 @@ function updateItem(node, item, cwd) {
     if (node.className !== parts.className) node.className = parts.className;
     setHtml(node.firstChild, parts.summary); setHtml(node.lastChild, parts.body);
   } else if (item.type === 'thinking') setHtml(node.lastChild, escape(item.text));
+  else if (item.type === 'steer') setHtml(node, steerHtml(item.steer));
   else setHtml(node, markdown(item.text));
 }
 function createItem(item, cwd) {
   let node;
   if (item.type === 'tool') { node = element('details'); node.append(element('summary'), element('div', 'step-body')); }
   else if (item.type === 'thinking') { node = element('details', 'work-thinking'); node.append(element('summary', '', '思考'), element('div', 'work-thinking-text')); }
+  else if (item.type === 'steer') node = element('div', 'work-steer');
   else node = element('div', 'work-note markdown');
   updateItem(node, item, cwd); return node;
 }
@@ -111,6 +115,6 @@ export function updateTurn(view, turn, { threadActive, latest = false, turns = n
   view.live = live;
   const changes = live ? [] : fileChanges(turn, view.cwd);
   const tasks = latest && turns ? taskListHtml(turns, escape) : '';
-  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape)}${live ? '' : proposalsHtml(turn, { escape })}${wrapUpHtml(turn, { escape, latest, threadActive })}${footerHtml(turn, threadActive)}`);
+  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape, { turnId: turn.id, undo: turn.undone ? 'undone' : turn.checkpoint ? 'ready' : '', disabled: threadActive })}${live ? '' : proposalsHtml(turn, { escape })}${wrapUpHtml(turn, { escape, latest, threadActive })}${footerHtml(turn, threadActive)}`);
   return true;
 }

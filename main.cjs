@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents, Tray, Menu, safeStorage } = require('electron');
 const fs = require('node:fs');
 const diskFs=require('./disk-fs.cjs');
 const {within,listProjectFiles,readProjectFile}=require('./project-files.cjs');
@@ -19,9 +19,11 @@ const {NotificationTracker}=require('./notify.cjs');
 const {Checkpoints}=require('./checkpoint.cjs');
 const {Worktrees}=require('./worktree.cjs');
 const {Terminals}=require('./terminal.cjs');
+const {DeskTray}=require('./tray.cjs');
+const {Providers}=require('./providers.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
-let win, engine, extensions, agentWindows, terminals, quitting = false;
+let win, engine, extensions, agentWindows, terminals, tray, providers, quitting = false;
 app.setName('Claude Desk');
 // Windows shows toasts only for an app id that a Start menu shortcut carries.
 const APP_ID='com.claudedesk.app';
@@ -79,6 +81,8 @@ const devCli=()=>{try{return path.join(path.dirname(require.resolve('@anthropic-
 const cli=new ClaudeCli({home:os.homedir(),root:stableRoot,bundleDir:app.isPackaged?path.join(process.resourcesPath,'claude-code'):'',devExe:app.isPackaged?'':devCli()});
 function findCli() { return cli.find()?.file || ''; }
 function providerInfo() {
+  const custom = providers?.list().providers.find(p => p.id === providers.activeId());
+  if (custom) { let host; try { host = new URL(custom.baseUrl).host; } catch { host = custom.baseUrl; } return { host, custom: custom.name, configured: true, cliPath: findCli(), cliBundled: cli.find()?.source === 'bundled', configPath: path.join(os.homedir(), '.claude/settings.json'), dataRoot }; }
   let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/settings.json'), 'utf8')); } catch {}
   const env = cfg.env || {};
   const base = process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
@@ -153,14 +157,16 @@ if(primaryInstance)app.whenReady().then(async () => {
   const materialOf=()=>{const m=engine?.store.state.settings.material;return materialSupported?(MATERIALS.has(m)?m:'mica'):'none';};
   const applyMaterial=w=>{if(!w||w.isDestroyed())return;const m=materialOf();if(materialSupported)w.setBackgroundMaterial(m);w.setBackgroundColor(m==='none'?windowBackground():'#00000000');};
   nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed()){if(w===win)applyMaterial(w);else w.setBackgroundColor(windowBackground());}});
-  const { query, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
+  const { query, startup, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   const updater=new Updater({installDir:path.dirname(process.execPath),version:app.getVersion(),tempRoot:path.join(dataRoot,'updates')});
   const updateFailure=updater.cleanup();
   const preview=new BrowserPreview({nativeImage,send:event=>{if(win&&!win.isDestroyed())win.webContents.send('preview:event',event);}});const { z } = require('zod');
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
   const legacy=[path.join(dataRoot,'bootstrap.json'),path.join(appData,'ClaudeDesk/data/workspace.json'),path.join(shadowRoot,'ClaudeDesk/data/workspace.json'),path.join(appData,'Claude Desk/data/workspace.json'),path.join(appData,'claude-desk/data/workspace.json'),path.join(projectRoot,'work/claude-desk-ui/workspace.json'),path.join(projectRoot,'work/claude-desk-v2-qa/workspace.json')];
-  engine = new Engine({ query, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z, preview }) });
+  engine = new Engine({ query, startup, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z, preview }) });
+  providers=new Providers({store:engine.store,safeStorage});
+  engine.providerOptions=()=>providers.options();
   const keepAwake=new KeepAwake(powerSaveBlocker);
   const updateAwake=()=>keepAwake.update(engine.store.state.settings.keepAwake!==false&&engine.store.state.threads.some(x=>ACTIVE.has(x.status)));
   applyTheme(engine.store.state.settings.theme);
@@ -186,10 +192,11 @@ if(primaryInstance)app.whenReady().then(async () => {
   };
   const threadOut=value=>value&&forRenderer(engine.threadSnapshot(engine.thread(value.id||value)));
   engine.on('thread', updateAwake);
+  engine.on('thread', () => tray?.update(engine.store.state.threads));
   engine.on('thread', t => { if(!win?.isDestroyed()) win?.webContents.send('thread:update', forRenderer(t)); agentWindows.refresh(t.id); for(const notice of notifications.update(t))showNotice(notice); });
   handle('thread:get', id => { sentRevs.delete(id); return threadOut(id); });
   handle('agent:open',(threadId,agentId)=>agentWindows.open(threadId,agentId));
-  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;return({ ...snapshot, material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), updateFailure, updateInstalled: updater.installed, recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
+  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;delete snapshot.settings.providers;return({ ...snapshot, providers: providers.list(), material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), updateFailure, updateInstalled: updater.installed, recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
   const extensionCwd=id=>id?project(id).path:undefined;
   async function extensionList(id,refresh=false){
     const cwd=extensionCwd(id);let catalog={installed:[],available:[]},warning='';
@@ -268,6 +275,19 @@ if(primaryInstance)app.whenReady().then(async () => {
     const images=saveImages(opts.images);
     try{return threadOut(engine.enqueue(id, text, {...opts,...selectedContext(id,opts.references||[]),images}));}catch(e){dropSaved(images,opts.images);throw e;}
   });
+  handle('thread:prewarm', (id, choice) => engine.prewarm(id, choice && typeof choice === 'object' ? choice : {}));
+  handle('thread:steer', (id, text, opts={}) => {
+    const images=saveImages(opts.images),options={...opts,...selectedContext(id,opts.references||[]),images};
+    try{
+      if(engine.canSteer(id))return{steered:true,thread:threadOut(engine.steer(id, text, options))};
+      return{steered:false,thread:threadOut(engine.enqueue(id, text, options))};
+    }catch(e){dropSaved(images,opts.images);throw e;}
+  });
+  handle('queue:steer',(id,queueId)=>{
+    if(!engine.canSteer(id))throw Error('当前没有可以插话的运行');
+    const item=engine.dequeue(id,queueId);if(!item)throw Error('排队消息已不存在');
+    try{return threadOut(engine.steer(id,item.text,item.options));}catch(e){engine.thread(id).queue.unshift(item);engine.publish(id);throw e;}
+  });
   handle('queue:send',(id,queueId)=>engine.sendQueued(id,queueId));
   handle('queue:take',(id,queueId)=>{const item=engine.dequeue(id,queueId);return item&&{text:item.text,options:{references:item.options.references||[],images:item.options.images||[]}};});
   handle('queue:remove',(id,queueId)=>{const item=engine.dequeue(id,queueId);if(item)engine.removeImages([item.options]);return Boolean(item);});
@@ -299,6 +319,22 @@ if(primaryInstance)app.whenReady().then(async () => {
     const result=await engine.rewind(id,turnId);
     return{thread:threadOut(result.thread),draft:result.draft,restored};
   });
+  // 撤销 on a turn's change card puts the files it edited back to the snapshot taken
+  // before it, keeping the state just before so 重做 can bring them back.
+  handle('turn:undo',async(id,turnId,paths,redo)=>{
+    const {t,turn}=rewindTurn(id,turnId);
+    if(ACTIVE.has(t.status))throw Error('请先停止当前运行');
+    if(redo){
+      if(!turn.undone)throw Error('这一轮的改动没有被撤销');
+      const result=await checkpoints.restore(t.cwd,turn.undone.tree,turn.undone.files);
+      engine.setUndone(id,turnId,null);return{thread:threadOut(id),files:result.files.length};
+    }
+    if(!turn.checkpoint)throw Error(turn.checkpointError||'这一轮开始前没有记录文件快照，无法撤销');
+    const list=Array.isArray(paths)?paths.filter(p=>typeof p==='string').slice(0,5000):[];
+    const result=await checkpoints.restore(t.cwd,turn.checkpoint,list);
+    if(result.files.length)engine.setUndone(id,turnId,{tree:result.before,files:result.files.map(f=>f.path),at:Date.now()});
+    return{thread:threadOut(id),files:result.files.length};
+  });
   handle('turn:delete',async(id,turnId)=>threadOut(await engine.deleteTurn(id,turnId)));
   handle('thread:rename', (id, name) => { const t = engine.thread(id); t.title = String(name).trim().slice(0,80) || t.title; engine.publish(id); engine.store.save(); return threadOut(t); });
   handle('approval', (id, request, allow, answers, extra) => engine.approve(id, request, Boolean(allow), answers, extra && typeof extra === 'object' ? extra : {}));
@@ -309,13 +345,25 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(MATERIALS.has(value.material)){ settings.material = value.material; applyMaterial(win); }
     if(typeof value.notifications === 'boolean') settings.notifications = value.notifications;
     if(typeof value.keepAwake === 'boolean'){ settings.keepAwake = value.keepAwake; updateAwake(); }
+    if(typeof value.closeToTray === 'boolean') settings.closeToTray = value.closeToTray;
     if(typeof value.autoUpdate === 'boolean') settings.autoUpdate = value.autoUpdate;
     if(['local','worktree'].includes(value.location)) settings.location = value.location;
     if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;
     engine.store.save(); return settings;
   });
   handle('notify:test',()=>showNotice({title:'Claude Desk 通知已开启',body:'任务完成、需要你批准或回答问题时，会在这里提醒你。'},{force:true}));
+  // 服务商: saved encrypted; the window only ever sees names, addresses and models.
+  const providerResult=()=>({...providers.list(),provider:providerInfo()});
+  handle('providers:save',input=>{const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
+  handle('providers:remove',id=>{providers.remove(String(id));return providerResult();});
+  handle('providers:activate',id=>{providers.setActive(id?String(id):'');return providerResult();});
+  handle('providers:test',input=>providers.models(input&&typeof input==='object'?input:{}));
   handle('models', async () => {
+    const custom = providers.activeId() && providers.all.find(p => p.id === providers.activeId());
+    if (custom) {
+      let fetched = []; try { fetched = await providers.models({ id: custom.id }); } catch (e) { if (!custom.models.length) throw e; }
+      const models = [...new Set([...custom.models, ...fetched])]; engine.store.state.availableModels = models; engine.store.save(); return models;
+    }
     const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/settings.json'), 'utf8')); const env = cfg.env || {};
     const base = process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
     const token = process.env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN;
@@ -373,6 +421,20 @@ if(primaryInstance)app.whenReady().then(async () => {
   win.webContents.on('did-attach-webview',(_event,contents)=>{contents.setWindowOpenHandler(({url})=>{if(PAGE_URL.test(url))contents.loadURL(url);return{action:'deny'};});contents.on('will-navigate',(e,url)=>{if(!PAGE_URL.test(url))e.preventDefault();});contents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));});
   win.on('closed',()=>{agentWindows.close();terminals?.closeAll();});
   win.on('focus',()=>win.flashFrame(false));
+  // Closing hides the window to the tray (unless turned off in 设置); quitting from the tray menu really closes.
+  tray=new DeskTray({Tray,Menu,icon:icon.resize({width:16,height:16}),onAction:({action,threadId})=>{
+    if(action==='quit')app.quit();
+    else if(action==='thread')focusThread(threadId);
+    else{focusThread(null);if(action==='new-task')win.webContents.send('app:command','new-task');}
+  }});
+  tray.create(engine.store.state.threads);
+  let trayHintShown=false;
+  win.on('session-end',()=>app.quit());
+  win.on('close',event=>{
+    if(quitting||engine.store.state.settings.closeToTray===false)return;
+    event.preventDefault();win.hide();
+    if(!trayHintShown){trayHintShown=true;showNotice({title:'Claude Desk 仍在后台运行',body:'任务会继续进行。点右下角托盘图标打开，或在托盘菜单里退出。'},{force:true});}
+  });
   // The title bar swaps its maximise / restore icon.
   const sendMaximized=()=>{if(!win.isDestroyed())win.webContents.send('window:maximized',win.isMaximized());};
   win.on('maximize',sendMaximized);win.on('unmaximize',sendMaximized);win.webContents.on('did-finish-load',sendMaximized);
@@ -386,5 +448,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { terminals?.closeAll(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());

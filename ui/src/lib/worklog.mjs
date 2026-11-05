@@ -105,12 +105,12 @@ export function fileChanges(turn,cwd){
 export const WRAP_UP='mcp__desk__wrap_up',PROPOSE='mcp__desk__propose_session';
 const CARD_TOOLS=new Set([WRAP_UP,PROPOSE]);
 export function splitTurn(turn){
-  const tools=new Map((turn?.tools||[]).filter(t=>!CARD_TOOLS.has(t.name)).map(t=>[t.id,t]));
+  const tools=new Map((turn?.tools||[]).filter(t=>!CARD_TOOLS.has(t.name)).map(t=>[t.id,t])),steers=new Map((turn?.steers||[]).map(s=>[s.id,s]));
   let items=Array.isArray(turn?.items)&&turn.items.length?turn.items:[...(turn?.thinking?[{type:'thinking',text:turn.thinking}]:[]),...(turn?.tools||[]).map(t=>({type:'tool',id:t.id})),...(turn?.answer?[{type:'text',text:turn.answer}]:[])];
-  items=items.filter(item=>item.type==='tool'?tools.has(item.id):String(item.text||'').trim());
-  let last=-1;items.forEach((item,i)=>{if(item.type==='tool')last=i;});
+  items=items.filter(item=>item.type==='tool'?tools.has(item.id):item.type==='steer'?steers.has(item.id):String(item.text||'').trim());
+  let last=-1;items.forEach((item,i)=>{if(item.type==='tool'||item.type==='steer')last=i;});
   const rest=items.slice(last+1);
-  const work=[...items.slice(0,last+1),...rest.filter(i=>i.type==='thinking')].map(item=>item.type==='tool'?{...item,tool:tools.get(item.id)}:item);
+  const work=[...items.slice(0,last+1),...rest.filter(i=>i.type==='thinking')].map(item=>item.type==='tool'?{...item,tool:tools.get(item.id)}:item.type==='steer'?{...item,steer:steers.get(item.id)}:item);
   return{work,final:rest.filter(i=>i.type==='text').map(i=>i.text).join('\n\n')};
 }
 const STATE_LABELS={running:'运行中',error:'失败',interrupted:'已中断',approval:'等待批准'};
@@ -158,10 +158,18 @@ export function stepParts(tool,{escape,cwd}){
     body:detailHead+(body||'<p class="step-empty">没有更多信息</p>')
   };
 }
-export function changesHtml(changes,escape){
+// The card under a finished turn: the files it edited, 撤销 / 重做 for them (`undo`
+// is 'ready' with a snapshot from before the turn, 'undone' after an undo) and
+// 查看变更. Three rows show; the rest fold under 再显示.
+const CHANGES_ICON='<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3.5"/><path d="M10 6v5M7.5 8.5h5M7.5 13.5h5"/></svg>';
+const UNDO_ICON='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 0 1 0 7H7M3.5 6.5 6 4M3.5 6.5 6 9"/></svg>';
+export function changesHtml(changes,escape,{turnId='',undo='',disabled=false}={}){
   if(!changes.length)return'';
-  const added=changes.reduce((n,f)=>n+f.added,0),removed=changes.reduce((n,f)=>n+f.removed,0);
-  return `<div class="turn-changes"><div class="turn-changes-head"><strong>${changes.length} 个文件已更改</strong>${deltaHtml(added,removed)}<button type="button" data-review-file="${escape(changes[0].path)}">审查改动</button></div>${changes.map(f=>`<button type="button" class="turn-change-row" data-review-file="${escape(f.path)}" title="${escape(f.path)}"><span class="change-name">${escape(baseName(f.path))}</span><span class="change-dir">${escape(f.path.includes('/')?f.path.slice(0,f.path.lastIndexOf('/')):'')}</span>${deltaHtml(f.added,f.removed)}</button>`).join('')}</div>`;
+  const added=changes.reduce((n,f)=>n+f.added,0),removed=changes.reduce((n,f)=>n+f.removed,0),undone=undo==='undone';
+  const row=f=>`<button type="button" class="turn-change-row" data-review-file="${escape(f.path)}" title="${escape(f.path)}"><span class="change-path"><span class="change-dir">${escape(f.path.includes('/')?f.path.slice(0,f.path.lastIndexOf('/')+1):'')}</span><span class="change-name">${escape(baseName(f.path))}</span></span>${deltaHtml(f.added,f.removed)}</button>`;
+  const action=undo&&turnId?`<button type="button" class="changes-undo" data-undo-turn="${escape(turnId)}"${undone?' data-redo="1"':''}${disabled?' disabled title="运行结束后可用"':''}>${undone?'重做':'撤销'}${UNDO_ICON}</button>`:'';
+  const more=changes.length>3?`<details class="changes-more"><summary><span class="more-closed">再显示 ${changes.length-3} 个文件</span><span class="more-open">收起</span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></summary>${changes.slice(3).map(row).join('')}</details>`:'';
+  return `<div class="turn-changes${undone?' undone':''}"><div class="turn-changes-head"><span class="changes-icon">${CHANGES_ICON}</span><div class="changes-title"><strong>${undone?`已撤销 ${changes.length} 个文件的改动`:`已编辑 ${changes.length} 个文件`}</strong>${deltaHtml(added,removed)}</div><div class="changes-actions">${action}<button type="button" class="changes-review" data-review-file="${escape(changes[0].path)}">查看变更</button></div></div>${changes.slice(0,3).map(row).join('')}${more}</div>`;
 }
 
 // The task list Claude keeps, as of the end of `turns`: TodoWrite replaces the

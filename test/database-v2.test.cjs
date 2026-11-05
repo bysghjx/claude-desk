@@ -49,3 +49,21 @@ test('saveState writes drafts without touching turns, and unsaved turn changes s
   store.save();again=new DatabaseStore(root);assert.equal(again.state.threads[0].turns[0].answer,'new');assert.equal(again.state.ui.drafts.a.text,'草稿');
   again.state.ui.drafts={};again.saveState();assert.throws(()=>store.saveState(),/另一进程已更新/);again.close();store.close();
 });
+test('light saves write only the touched threads and leave the JSON copies to the next full save',()=>{
+  const root=fixture(),store=new DatabaseStore(root);
+  store.state.threads.push({id:'a',turns:[{id:'a1',answer:'one',tools:[]}]},{id:'b',turns:[{id:'b1',answer:'two',tools:[]}]});store.save();
+  const copy=id=>{const folder=path.join(root,'sessions');return fs.readdirSync(folder).map(f=>fs.readFileSync(path.join(folder,f),'utf8')).find(text=>text.includes(`"id":"${id}"`));};
+  store.state.threads[0].turns[0].answer='streamed';store.state.threads[1].turns[0].answer='not touched';
+  store.state.threads.unshift({id:'c',turns:[{id:'c1',answer:'new',tools:[]}]});
+  store.save(false,{durable:false,touched:new Set(['a'])});
+  assert.match(copy('a'),/"one"/,'the JSON copy is not rewritten by a light save');
+  let again=new DatabaseStore(root);const read=s=>Object.fromEntries(s.state.threads.map(t=>[t.id,t.turns[0].answer]));
+  assert.deepEqual(read(again),{c:'new',a:'streamed',b:'two'},'a new thread is always written; an untouched one waits');
+  assert.deepEqual(again.state.threads.map(t=>t.id),['c','a','b'],'order follows the list');
+  again.close();
+  store.save();again=new DatabaseStore(root);
+  assert.deepEqual(read(again),{c:'new',a:'streamed',b:'not touched'});again.close();
+  assert.match(copy('a'),/"streamed"/);
+  store.state.threads[1].turns[0].answer='late';store.save(false,{durable:false,touched:new Set(['a'])});store.close();
+  assert.match(copy('a'),/"late"/,'closing writes the pending copies');
+});

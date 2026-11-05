@@ -1,7 +1,7 @@
 // Run status around the composer: activity bar, send/stop button, queued
 // messages and the approval card for the selected conversation.
 import { $, escape, markdown, setHtml, setText } from '../core/dom.mjs';
-import { approvalHtml, collectAnswers, isPlan, pickChoice, questionsOf } from './approval.mjs';
+import { approvalHtml, collectAnswers, isPlan, pickChoice, questionPage, questionsOf, showQuestion } from './approval.mjs';
 import { STATUS_LABELS, elapsed, isActive } from '../core/format.mjs';
 import { guarded } from '../core/ui.mjs';
 
@@ -15,14 +15,17 @@ export function createStatus({ store, actions, api, composer, toast }) {
   function sendButton() {
     const active = store.running(), stop = active && composer.isEmpty(), send = $('#send');
     send.classList.toggle('stop', stop);
-    send.setAttribute('aria-label', stop ? '停止当前运行' : active ? '加入队列' : '发送消息');
-    send.title = stop ? '停止当前运行' : active ? '加入队列 · Enter（本轮完成后发送）' : '发送 · Enter';
+    send.setAttribute('aria-label', stop ? '停止当前运行' : active ? '插话' : '发送消息');
+    send.title = stop ? '停止当前运行' : active ? '插话 · Enter（不停止任务，下一步之前交给 Claude）；Tab 加入队列' : '发送 · Enter';
   }
 
+  // 插话 not yet read by Claude, then queued messages.
   function queue() {
-    const items = store.current()?.queue || [];
-    $('#queue-list').hidden = !items.length;
-    setHtml($('#queue-list'), items.map((q, i) => `<div class="queue-item"><span class="queue-badge">${i ? '排队 ' + (i + 1) : '下一条'}</span><span class="queue-text" title="${escape(q.text)}">${escape(q.text || '（仅图片）')}</span>${q.options?.images?.length ? `<span class="queue-images">${q.options.images.length} 张图片</span>` : ''}<button type="button" data-queue-send="${escape(q.id)}" title="停止当前运行并立即发送这条">立即发送</button><button type="button" data-queue-edit="${escape(q.id)}" title="移回输入框修改">编辑</button><button type="button" class="queue-remove" data-queue-remove="${escape(q.id)}" title="从队列中删除" aria-label="删除排队消息">×</button></div>`).join(''));
+    const thread = store.current(), items = thread?.queue || [], active = isActive(thread);
+    const steers = active ? (thread.turns.at(-1)?.steers || []).filter(s => s.status === 'pending') : [];
+    $('#queue-list').hidden = !items.length && !steers.length;
+    const steerRows = steers.map(s => `<div class="queue-item steer-item"><span class="queue-badge">插话 · 等待当前步骤完成</span><span class="queue-text" title="${escape(s.text)}">${escape(s.text || '（仅图片）')}</span>${s.images?.length ? `<span class="queue-images">${s.images.length} 张图片</span>` : ''}</div>`).join('');
+    setHtml($('#queue-list'), steerRows + items.map((q, i) => `<div class="queue-item"><span class="queue-badge">${i ? '排队 ' + (i + 1) : '下一条'}</span><span class="queue-text" title="${escape(q.text)}">${escape(q.text || '（仅图片）')}</span>${q.options?.images?.length ? `<span class="queue-images">${q.options.images.length} 张图片</span>` : ''}${active ? `<button type="button" data-queue-steer="${escape(q.id)}" title="不停止任务，在 Claude 的下一步之前交给它">插话</button>` : ''}<button type="button" data-queue-send="${escape(q.id)}" title="停止当前运行并立即发送这条">立即发送</button><button type="button" data-queue-edit="${escape(q.id)}" title="移回输入框修改">编辑</button><button type="button" class="queue-remove" data-queue-remove="${escape(q.id)}" title="从队列中删除" aria-label="删除排队消息">×</button></div>`).join(''));
   }
 
   function approval() {
@@ -38,7 +41,7 @@ export function createStatus({ store, actions, api, composer, toast }) {
   function activity() {
     const thread = store.current(), active = isActive(thread);
     $('#activity').hidden = !active;
-    $('#prompt').placeholder = active ? '运行中也可以继续输入，Enter 加入队列，本轮完成后自动发送…' : '发送消息到 Claude Code… 输入 / 唤起命令，@ 引用文件，@@ 引用会话，可粘贴图片';
+    $('#prompt').placeholder = active ? '运行中可以插话：Enter 交给 Claude（不停止任务），Tab 加入队列…' : '发送消息到 Claude Code… 输入 / 唤起命令，@ 引用文件，@@ 引用会话，可粘贴图片';
     if (!active) { setText($('#context-hint'), thread?.status === 'error' ? '运行失败，可查看具体错误并重试' : '沿用本机 Claude CLI 配置 · 无需额外账号'); return; }
     $('#activity').classList.toggle('approval-state', thread.status === 'approval');
     setText($('#activity-label'), STATUS_LABELS[thread.status] || thread.status);
@@ -52,6 +55,7 @@ export function createStatus({ store, actions, api, composer, toast }) {
   function render() { activity(); sendButton(); queue(); approval(); composer.renderUsage(); }
 
   $('#queue-list').addEventListener('click', guarded(toast, async event => {
+    const steer = event.target.closest('[data-queue-steer]'); if (steer) { steer.disabled = true; return actions.steerQueued(steer.dataset.queueSteer); }
     const send = event.target.closest('[data-queue-send]'); if (send) { send.disabled = true; return actions.sendQueuedNow(send.dataset.queueSend); }
     const edit = event.target.closest('[data-queue-edit]'); if (edit) return actions.editQueued(edit.dataset.queueEdit);
     const remove = event.target.closest('[data-queue-remove]'); if (remove) return actions.removeQueued(remove.dataset.queueRemove);
@@ -61,7 +65,7 @@ export function createStatus({ store, actions, api, composer, toast }) {
     const card = $('#approval'), questions = questionsOf(request); let answers, extra;
     if (questions && allow) {
       const result = collectAnswers(card, questions);
-      if (result.missing) return toast('还没回答：' + result.missing);
+      if (result.missing) { showQuestion(card, result.index); return toast('还没回答：' + result.missing); }
       answers = result.answers;
     }
     if (isPlan(request)) extra = allow ? { mode: button?.dataset.planMode || 'default' } : { feedback: card.querySelector('.plan-feedback')?.value.trim() || '' };
@@ -70,12 +74,32 @@ export function createStatus({ store, actions, api, composer, toast }) {
     if (extra?.mode) composer.setMode(extra.mode);
   }
   $('#approval').addEventListener('click', guarded(toast, async event => {
-    const choice = event.target.closest('.choice');
-    if (choice) { if (pickChoice($('#approval'), choice)) await answer(true); return; }
+    const card = $('#approval'), choice = event.target.closest('.choice');
+    if (choice) {
+      if (pickChoice(card, choice)) return answer(true);
+      // A single-choice pick moves on to the next question.
+      const page = questionPage(card), single = choice.closest('.question').dataset.multi !== 'true';
+      showQuestion(card, page);
+      if (single && choice.dataset.choice !== 'other' && choice.getAttribute('aria-pressed') === 'true') setTimeout(() => { if (questionPage(card) === page) showQuestion(card, page + 1); }, 180);
+      return;
+    }
+    const tab = event.target.closest('[data-question-tab]'); if (tab) return showQuestion(card, Number(tab.dataset.questionTab));
+    const step = event.target.closest('[data-question-step]'); if (step) return showQuestion(card, questionPage(card) + Number(step.dataset.questionStep));
     const button = event.target.closest('[data-approve]'); if (button) await answer(button.dataset.approve === 'yes', button);
   }));
+  $('#approval').addEventListener('input', event => { if (event.target.matches('.choice-input')) showQuestion($('#approval'), questionPage($('#approval'))); });
   $('#approval').addEventListener('keydown', event => {
-    if (event.key === 'Enter' && event.target.matches('.choice-input')) { event.preventDefault(); guarded(toast, answer)(true); }
+    const card = $('#approval'), pages = card.querySelectorAll('.question').length;
+    if (event.key === 'Enter' && event.target.matches('.choice-input')) {
+      event.preventDefault();
+      if (pages > 1 && questionPage(card) < pages - 1) showQuestion(card, questionPage(card) + 1); else guarded(toast, answer)(true);
+      return;
+    }
+    // 1–9 pick an option of the question on screen.
+    if (/^[1-9]$/.test(event.key) && !event.target.matches('input,textarea') && !event.ctrlKey && !event.altKey) {
+      const choice = card.querySelector('.question:not([hidden])')?.querySelectorAll('.choice')[Number(event.key) - 1];
+      if (choice) { event.preventDefault(); choice.click(); }
+    }
   });
   $('#stop-inline').addEventListener('click', guarded(toast, actions.stop));
 

@@ -5,6 +5,7 @@ Claude Desk {version}（Windows 64 位）
 1. 先把压缩包完整解压到一个文件夹（不要在压缩包里直接双击）。
 2. 双击 ClaudeDesk.exe。第一次运行时 Windows 可能提示“Windows 已保护你的电脑”，
    点“更多信息”→“仍要运行”。之后开始菜单里会有 Claude Desk。
+3. 关闭窗口后 Claude Desk 留在右下角托盘，任务继续运行。要完全退出，右键托盘图标选「退出 Claude Desk」。
 
 二、第一次使用：登录 Claude
 Claude Desk 通过 Claude Code 和 Claude 对话。
@@ -15,8 +16,8 @@ Claude Desk 通过 Claude Code 和 Claude 对话。
   · 使用内置版（不用联网下载，但不会自动更新）：点「解压并使用内置版」。
 - 登录：在同一个窗口里点「登录」，在弹出的窗口里输入 /login，按提示用 Claude 账号登录，
   或者填 Anthropic Console 的 API Key。登录完关掉那个窗口，回来点「重新检测」。
-- 用第三方服务商的话，在设置 → Claude → 配置文件点「打开」，
-  在 settings.json 的 env 里填 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。
+- 用第三方服务商的话，在设置 → 服务商点「添加服务商」，填 Base URL 和密钥，点一下切换过去。
+  密钥由 Windows 加密保存。也可以照旧在 ~/.claude/settings.json 的 env 里配置。
 - 以后想再看这个窗口：点左下角的连接状态，或者设置 → Claude →「检测环境」。
 
 三、建议另外安装

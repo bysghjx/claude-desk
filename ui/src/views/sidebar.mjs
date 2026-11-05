@@ -67,7 +67,7 @@ export function createSidebar({ store, api, actions, toast, editInstructions }) 
   function openMenu(id, at) {
     const t = store.thread(id); if (!t) return;
     menu.dataset.project = ''; menu.dataset.thread = id;
-    showMenu(`<button data-menu-action="rename">重命名</button><button data-menu-action="pin">${t.pinned ? '取消置顶' : '置顶'}</button><button data-menu-action="archive">${t.archived ? '取消归档' : '归档'}</button><div class="menu-line"></div><button data-menu-action="delete" class="danger">删除会话</button>`, at);
+    showMenu(`<button data-menu-action="rename">重命名</button><button data-menu-action="pin">${t.pinned ? '取消置顶' : '置顶'}</button><button data-menu-action="archive">${t.archived ? '取消归档' : '归档'}</button><button data-menu-action="instructions">${t.projectId ? '项目提示词' : '全局提示词'}</button><div class="menu-line"></div><button data-menu-action="delete" class="danger">删除会话</button>`, at);
   }
   function openProjectMenu(id, at) {
     const p = store.state.projects.find(x => x.id === id); if (!p) return;
@@ -97,6 +97,7 @@ export function createSidebar({ store, api, actions, toast, editInstructions }) 
     if (action === 'rename') return startRename(id);
     if (action === 'pin') return actions.setPinned(id, !t.pinned);
     if (action === 'archive') return actions.setArchived(id, !t.archived);
+    if (action === 'instructions') return editInstructions(t.projectId || null);
     if (action === 'delete') return actions.deleteThread(id);
   }));
   document.addEventListener('mousedown', event => { if (!menu.hidden && event.button === 0 && !event.target.closest?.('#thread-menu,[data-thread-menu],[data-project-menu]')) closeMenu(); });

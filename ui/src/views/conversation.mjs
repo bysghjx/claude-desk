@@ -22,8 +22,32 @@ function welcomeHtml(store) {
 }
 
 export function createConversation({ store, actions, api, composer, toast, reviewPanel }) {
-  const box = $('#messages'), views = new Map();
+  const box = $('#messages'), views = new Map(), jump = $('#jump-latest');
   let shownThread = undefined;
+  // Long conversations show their latest turns first; earlier ones load from the top
+  // (button, or scrolling up to it) a window at a time.
+  const WINDOW = 30;
+  let shownCount = WINDOW;
+  const older = document.createElement('button');
+  older.type = 'button'; older.className = 'older-turns';
+  function showOlder() {
+    const thread = store.current(); if (!thread || thread.turns.length <= shownCount) return;
+    const before = box.scrollHeight;
+    shownCount += WINDOW; render();
+    box.scrollTop += box.scrollHeight - before;
+  }
+  older.addEventListener('click', showOlder);
+
+  // 回到最新: appears once you scroll more than about a screen above the latest
+  // message, and gets a dot when something new arrives while you are up there.
+  const fromBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight;
+  function updateJump(grew = false) {
+    const away = shownThread !== 'home' && fromBottom() > Math.max(240, box.clientHeight * 0.6);
+    if (!away) jump.classList.remove('has-new'); else if (grew) jump.classList.add('has-new');
+    jump.hidden = !away;
+  }
+  box.addEventListener('scroll', () => { updateJump(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
+  jump.addEventListener('click', () => { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); jump.classList.remove('has-new'); });
 
   function closeProjects(restoreFocus = false) {
     const trigger = $('#home-project'), menu = $('#home-project-menu');
@@ -55,14 +79,17 @@ export function createConversation({ store, actions, api, composer, toast, revie
   function render() {
     const thread = store.current(), home = !thread?.turns.length;
     $('.workspace').classList.toggle('home-view', home);
-    if (home) { if (shownThread !== 'home') animateIn(box, 'is-switching'); views.clear(); shownThread = 'home'; setHtml(box, welcomeHtml(store)); return; }
+    if (home) { if (shownThread !== 'home') animateIn(box, 'is-switching'); views.clear(); shownThread = 'home'; setHtml(box, welcomeHtml(store)); updateJump(); return; }
     const switched = shownThread !== thread.id;
-    if (switched) { box.__html = null; box.textContent = ''; views.clear(); shownThread = thread.id; animateIn(box, 'is-switching'); }
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 110;
-    const ids = new Set(thread.turns.map(t => t.id)), context = { cwd: thread.cwd, threadActive: isActive(thread) };
+    if (switched) { box.__html = null; box.textContent = ''; views.clear(); shownThread = thread.id; shownCount = WINDOW; animateIn(box, 'is-switching'); }
+    const nearBottom = fromBottom() < 110, height = box.scrollHeight;
+    const hidden = Math.max(0, thread.turns.length - shownCount), turns = hidden ? thread.turns.slice(hidden) : thread.turns;
+    const ids = new Set(turns.map(t => t.id)), context = { cwd: thread.cwd, threadActive: isActive(thread) };
     for (const [id, view] of views) if (!ids.has(id)) { view.root.remove(); views.delete(id); }
-    let previous = null;
-    for (const turn of thread.turns) {
+    if (hidden) { older.textContent = `显示更早的 ${Math.min(hidden, WINDOW)} 轮（共 ${hidden} 轮未显示）`; if (box.firstChild !== older) box.prepend(older); }
+    else older.remove();
+    let previous = hidden ? older : null;
+    for (const turn of turns) {
       const latest = turn === thread.turns.at(-1), turnContext = latest ? { ...context, latest, turns: thread.turns } : context;
       let view = views.get(turn.id);
       if (!view) { view = createTurn(turn, turnContext); views.set(turn.id, view); if (!switched) animateIn(view.root); }
@@ -71,6 +98,7 @@ export function createConversation({ store, actions, api, composer, toast, revie
       previous = view.root;
     }
     if (switched || nearBottom) box.scrollTop = box.scrollHeight;
+    updateJump(!switched && box.scrollHeight > height);
   }
 
   // Live "正在处理 · 1m 2s" labels advance once a second without re-rendering turns.

@@ -51,3 +51,17 @@ test('skips files above the size limit instead of copying them', async()=>{
   const {files}=await store.changes(project,tree);
   assert.deepEqual(files.map(f=>f.path),['small.txt']);
 });
+
+test('restores only the listed files and can put them back again', async()=>{
+  const project=tmp(),store=new Checkpoints(tmp());
+  write(project,'a.txt','one');write(project,'b.txt','b1');
+  const tree=await store.snapshot(project);
+  write(project,'a.txt','two');write(project,'b.txt','b2');write(project,'src/new.js','n');write(project,'other.txt','o');
+  const undo=await store.restore(project,tree,['a.txt',String.raw`SRC\new.js`]);
+  assert.deepEqual(undo.files.map(f=>f.path).sort(),['a.txt','src/new.js']);
+  assert.equal(read(project,'a.txt'),'one');assert.equal(fs.existsSync(path.join(project,'src')),false);
+  assert.equal(read(project,'b.txt'),'b2','files not listed stay as they are');assert.equal(read(project,'other.txt'),'o');
+  assert.equal((await store.restore(project,tree,[])).files.length,0,'an empty list restores nothing');
+  const redo=await store.restore(project,undo.before,undo.files.map(f=>f.path));
+  assert.equal(redo.files.length,2);assert.equal(read(project,'a.txt'),'two');assert.equal(read(project,'src/new.js'),'n');
+});

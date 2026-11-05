@@ -52,9 +52,9 @@ class JsonStore {
 }
 class Engine extends EventEmitter {
   // deskServer creates the in-process MCP server with Claude Desk's own tools (see desk-tools.cjs).
-  constructor({ query, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='', chatRoot='', deskServer=null }) {
-    super(); Object.assign(this, { query, store, cliPath, env, sessionOptions, attachmentRoot, chatRoot, deskServer }); this.runs = new Map(); this.pending = new Map();
-    this.saveTimer = null; this.eventTimers = new Map(); this.closing = false; this.deleting = new Set(); this.draining = new Set(); this.snapshots = new WeakMap(); this.revision = 0;
+  constructor({ query, startup = null, store, cliPath, env = process.env, sessionOptions=()=>({}), attachmentRoot='', chatRoot='', deskServer=null, providerOptions=()=>null }) {
+    super(); Object.assign(this, { query, startup, store, cliPath, env, sessionOptions, attachmentRoot, chatRoot, deskServer, providerOptions }); this.runs = new Map(); this.pending = new Map(); this.warm = new Map();
+    this.saveTimer = null; this.eventTimers = new Map(); this.closing = false; this.deleting = new Set(); this.draining = new Set(); this.snapshots = new WeakMap(); this.toolCopies = new WeakMap(); this.revision = 0;
     // Projects used to be listed by recent activity; keep that order once, then the user's drag order wins.
     const state = this.store.state;
     if (!state.migrations?.projectOrder) {
@@ -79,7 +79,9 @@ class Engine extends EventEmitter {
     this.syncAgentStatus(t,this.runs.get(id));
     // Messages queued while a turn ran go out once it finishes cleanly; an error or stop leaves them for the user.
     if (t.status === 'done' && t.queue?.length && !this.closing && !this.draining.has(id)) setImmediate(() => this.drain(id).catch(() => {}));
-    if (!this.saveTimer) this.saveTimer = setTimeout(() => { this.saveTimer = null; try{this.store.save();}catch(e){this.emit('storage-error',e.message);} }, 350);
+    // Streaming updates are saved lightly once a second, for the conversations they touched.
+    (this.touched ||= new Set()).add(id);
+    if (!this.saveTimer) this.saveTimer = setTimeout(() => { this.saveTimer = null; const touched = this.touched; this.touched = new Set(); try{this.store.save(false, { durable: false, touched });}catch(e){for (const x of touched) this.touched.add(x); this.emit('storage-error',e.message);} }, 1000);
     if (immediate) { clearTimeout(this.eventTimers.get(id)); this.eventTimers.delete(id); this.emit('thread', this.threadSnapshot(this.thread(id))); }
     else if (!this.eventTimers.has(id)) this.eventTimers.set(id, setTimeout(() => { this.eventTimers.delete(id); if (this.store.state.threads.some(x => x.id === id)) this.emit('thread', this.threadSnapshot(this.thread(id))); }, 70));
   }
@@ -88,12 +90,21 @@ class Engine extends EventEmitter {
   // until their content fingerprint changes, so unchanged history is not re-cloned.
   turnSnapshot(turn) {
     const live = turn.status === 'running' || turn.approvals?.length || (turn.subagents || []).some(a => ACTIVE_AGENT.has(a.status));
-    const fingerprint = live ? null : [turn.status, turn.finishedAt, turn.error, turn.answer?.length, turn.thinking?.length, turn.items?.length, turn.tools?.length, (turn.tools || []).map(x => x.status + (x.output?.length || 0)).join(), (turn.subagents || []).map(a => a.status + (a.tools?.length || 0) + (a.answer?.length || 0)).join(), turn.usage?.output, (turn.proposals || []).map(p => p.status).join()].join('|');
+    const fingerprint = live ? null : [turn.status, turn.finishedAt, turn.error, turn.answer?.length, turn.thinking?.length, turn.items?.length, turn.tools?.length, (turn.tools || []).map(x => x.status + (x.output?.length || 0)).join(), (turn.subagents || []).map(a => a.status + (a.tools?.length || 0) + (a.answer?.length || 0)).join(), turn.usage?.output, (turn.proposals || []).map(p => p.status).join(), turn.undone?.at, (turn.steers || []).map(s => s.status).join()].join('|');
     const cached = this.snapshots.get(turn);
     if (cached && fingerprint !== null && cached.fingerprint === fingerprint) return cached.copy;
-    const copy = { ...structuredClone(turn), rev: ++this.revision };
+    // Tools are copied one by one and reused while unchanged: a long turn's outputs are
+    // not cloned again on every streamed update.
+    const { tools, ...rest } = turn;
+    const copy = { ...structuredClone(rest), ...(tools ? { tools: tools.map(tool => this.toolSnapshot(tool)) } : {}), rev: ++this.revision };
     this.snapshots.set(turn, { fingerprint, copy });
     return copy;
+  }
+  // A tool's input is fixed when it is created; status and output change once it finishes.
+  toolSnapshot(tool) {
+    const key = [tool.status, tool.output?.length, tool.finishedAt].join('|'), cached = this.toolCopies.get(tool);
+    if (cached?.key === key) return cached.copy;
+    const copy = structuredClone(tool); this.toolCopies.set(tool, { key, copy }); return copy;
   }
   threadSnapshot(t) {
     const { turns, ...meta } = t;
@@ -163,7 +174,7 @@ class Engine extends EventEmitter {
     const extensionOptions=this.sessionOptions(t);const extensionKey=JSON.stringify(extensionOptions);
     let run = this.runs.get(id);
     // The system prompt is fixed when the CLI starts, so a changed global or project prompt restarts it.
-    if (run && (run.model !== model || run.mode !== mode || run.effort !== effort || run.extensionKey!==extensionKey || run.instructions !== JSON.stringify(this.instructionsOf(t)))) { await this.closeRun(id); run = null; }
+    if (run && (run.model !== model || run.mode !== mode || run.effort !== effort || run.extensionKey!==extensionKey || run.instructions !== JSON.stringify(this.instructionsOf(t)) || run.providerKey !== (this.providerOptions(t)?.key || ''))) { await this.closeRun(id); run = null; }
     const history = !run?historyTail(t.turns):'';
     Object.assign(t, { model, mode, effort, updatedAt: Date.now(), error: '', startedAt: Date.now(), finishedAt: null });
     if (!t.turns.length) t.title = (text || '图片').replace(/\s+/g, ' ').slice(0, 34);
@@ -179,7 +190,7 @@ class Engine extends EventEmitter {
       }
       run = this.startRun(t,extensionOptions,extensionKey);
     }
-    run.turnId = turn.id; run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
+    run.turnId = turn.id; run.unread = null; run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
     this.setStatus(t, 'starting', '正在启动 Claude');
     this.store.save();
     // Record the project files first so this turn can be rewound later.
@@ -189,8 +200,61 @@ class Engine extends EventEmitter {
       if (this.runs.get(id) !== run || run.turnId !== turn.id) return t;
     }
     const content = images.length ? [...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: fs.readFileSync(image.path).toString('base64') } })), { type: 'text', text: prompt }] : prompt;
-    run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, message: { role: 'user', content } });
+    run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, uuid: randomUUID(), message: { role: 'user', content } });
+    run.prompted = turn.id;
     return t;
+  }
+  // 插话: a message for the turn that is running. The CLI reads it before the model's
+  // next step (priority 'next') and the turn carries on with it. Replies name the
+  // messages they have read (user_message_uuids), which marks the message delivered
+  // and puts it into the turn at that point; one the turn ended without reading
+  // starts the next turn (see takeSteers).
+  canSteer(id) {
+    const t = this.thread(id), run = this.runs.get(id);
+    return Boolean(run && !run.finished && !run.stopping && !run.mainDone && run.prompted && run.prompted === run.turnId && ACTIVE.has(t.status) && t.status !== 'stopping');
+  }
+  steer(id, text, options = {}) {
+    const t = this.thread(id); text = String(text || '').trim(); const images = this.images(options.images);
+    if ((!text && !images.length) || text.length > 150000) throw Error('请输入消息（最多 150,000 字符）');
+    if (!this.canSteer(id)) throw Error('当前没有可以插话的运行');
+    const run = this.runs.get(id), turn = t.turns.find(x => x.id === run.turnId), uuid = randomUUID();
+    let prompt = text || '请查看我附带的图片。';
+    if (options.context) prompt = `${prompt}\n\n<user_selected_context>\n${options.context}\n</user_selected_context>`;
+    const content = images.length ? [...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: fs.readFileSync(image.path).toString('base64') } })), { type: 'text', text: prompt }] : prompt;
+    run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, uuid, priority: 'next', message: { role: 'user', content } });
+    (turn.steers ||= []).push({ id: uuid, text, images, references: options.references || [], at: Date.now(), status: 'pending' });
+    this.publish(id); this.store.save(); return t;
+  }
+  markSteers(t, run, uuids) {
+    if (!Array.isArray(uuids)) return;
+    const turn = t.turns.find(x => x.id === run.turnId);
+    for (const steer of turn?.steers || []) if (steer.status === 'pending' && uuids.includes(steer.id)) { steer.status = 'delivered'; steer.deliveredAt = Date.now(); (turn.items ||= []).push({ type: 'steer', id: steer.id }); }
+  }
+  // At the end of a turn, 插话 no reply has confirmed. Claude usually read it with a tool
+  // result without the CLI saying so, so it counts as read and shows after the last
+  // step. Should the CLI instead start replying again, it ran as a turn of its own:
+  // openSteerTurn moves it there.
+  settleSteers(t, run, turn) {
+    const pending = (turn.steers || []).filter(s => s.status === 'pending'); if (!pending.length) return;
+    let at = (turn.items ||= []).length; while (at > 0 && turn.items[at - 1].type !== 'tool' && turn.items[at - 1].type !== 'steer') at--;
+    for (const steer of pending) { steer.status = 'delivered'; steer.deliveredAt = Date.now(); }
+    turn.items.splice(at, 0, ...pending.map(s => ({ type: 'steer', id: s.id })));
+    run.unread = { turnId: turn.id, ids: pending.map(s => s.id) };
+  }
+  openSteerTurn(t, run) {
+    const { turnId, ids } = run.unread; run.unread = null;
+    const old = t.turns.find(x => x.id === turnId), moved = (old?.steers || []).filter(s => ids.includes(s.id)); if (!moved.length) return;
+    old.steers = old.steers.filter(s => !ids.includes(s.id)); old.items = old.items.filter(i => i.type !== 'steer' || !ids.includes(i.id));
+    const next = { id: randomUUID(), user: moved.map(s => s.text).filter(Boolean).join('\n\n'), context: '', references: moved.flatMap(s => s.references || []), images: moved.flatMap(s => s.images || []), answer: '', thinking: '', items: [], tools: [], startedAt: Date.now(), status: 'running', usage: null, fromSteer: true };
+    t.turns.push(next);
+    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, mainDone: false });
+    t.finishedAt = null; this.setStatus(t, 'waiting', '继续处理你插入的消息');
+  }
+  // A stop or failure leaves unread 插话 in the queue so nothing typed is lost.
+  requeueSteers(t, turn) {
+    const pending = (turn?.steers || []).filter(s => s.status === 'pending'); if (!pending.length) return;
+    turn.steers = turn.steers.filter(s => s.status !== 'pending');
+    (t.queue ||= []).unshift(...pending.map(s => ({ id: randomUUID(), text: s.text, createdAt: s.at, options: { references: s.references || [], context: '', images: s.images || [] } })));
   }
   // Images arrive already saved by the main process; only files inside the
   // attachment folder with a supported type are sent to the model.
@@ -281,29 +345,74 @@ class Engine extends EventEmitter {
     if (Number.isFinite(value.seenAt)) t.seenAt = Math.min(value.seenAt, Date.now());
     this.publish(id); this.store.save(); return t;
   }
-  startRun(t,extensionOptions={},extensionKey=JSON.stringify(extensionOptions)) {
-    const abort = new AbortController(); const input = new InputQueue();
-    const run = { input, abort, extensionKey, instructions: JSON.stringify(this.instructionsOf(t)), model: t.model, mode: t.mode, effort: t.effort, turnId: null, finished: false, sessionId: '', seen: new Set(), blocks: new Map() };
-    this.runs.set(t.id, run);
-    const env = { ...this.env }; delete env.CLAUDECODE; delete env.ELECTRON_RUN_AS_NODE;
+  // Everything that decides how the CLI starts. A pre-started CLI is only used for a
+  // message whose key matches the one it was started with.
+  runKey(t, extensionKey, { model, mode, effort }) { return JSON.stringify([t.cwd, model, mode, effort, extensionKey, this.instructionsOf(t), this.cliPath, this.providerOptions(t)?.key || '']); }
+  newRun(t, extensionKey, { model, mode, effort }) {
+    return { input: new InputQueue(), abort: new AbortController(), extensionKey, instructions: JSON.stringify(this.instructionsOf(t)), providerKey: this.providerOptions(t)?.key || '', model, mode, effort, turnId: null, finished: false, sessionId: '', seen: new Set(), blocks: new Map() };
+  }
+  runOptions(t, run, extensionOptions, { model, mode, effort }) {
+    const provider = this.providerOptions(t);
+    const env = { ...this.env, ...(provider?.env || {}) }; delete env.CLAUDECODE; delete env.ELECTRON_RUN_AS_NODE;
     // Each conversation owns a live CLI process; app history is persisted separately.
     // No temporary HOME, shared resume ID, or provider credentials in renderer state.
-    const options = {
+    // A custom provider goes in the flag settings too, which outrank ~/.claude/settings.json.
+    return {
       cwd: t.cwd, pathToClaudeCodeExecutable: this.cliPath, env,
+      ...(provider?.settings ? { settings: provider.settings } : {}),
       ...(extensionOptions.skills!==undefined?{skills:extensionOptions.skills}:{}),
       ...(extensionOptions.plugins?.length?{plugins:extensionOptions.plugins}:{}),
       ...(this.deskServer?{mcpServers:{desk:this.deskServer(t.id)},allowedTools:DESK_TOOLS}:{}),
-      model: t.model, thinking: { type: 'adaptive' }, effort: t.effort,
-      permissionMode: t.mode, settingSources: ['user', 'project', 'local'],
-      allowDangerouslySkipPermissions: t.mode === 'bypassPermissions',
+      model, thinking: { type: 'adaptive' }, effort,
+      permissionMode: mode, settingSources: ['user', 'project', 'local'],
+      allowDangerouslySkipPermissions: mode === 'bypassPermissions',
       systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + (this.deskServer ? DESK_PROMPT : '') + instructionsPrompt(this.instructionsOf(t)) },
-      includePartialMessages: true, persistSession: false, abortController: abort,
+      includePartialMessages: true, persistSession: false, abortController: run.abort,
       canUseTool: (name, args, ctx) => this.requestApproval(t, run, name, args, ctx),
       stderr: text => { run.stderr = (run.stderr || '').concat(text).slice(-8000); this.emit('diagnostic', { threadId: t.id, message: text.slice(-1500) }); }
     };
+  }
+  // Starts the CLI of an idle conversation before its next message (when it is opened
+  // or typed in), so sending skips the start-up. At most two wait at a time; one
+  // unused for four minutes, or started with other settings than the message needs, is closed.
+  prewarm(id, choice = {}) {
+    if (!this.startup || this.closing || this.runs.has(id) || this.deleting.has(id) || !this.cliPath) return false;
+    const t = this.thread(id); if (ACTIVE.has(t.status)) return false;
+    const settings = {
+      model: /^[\w.:/\-\[\]]{1,150}$/.test(String(choice.model || '')) ? choice.model : t.model,
+      mode: ['default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions'].includes(choice.mode) ? choice.mode : t.mode,
+      effort: ['low', 'medium', 'high', 'xhigh', 'max'].includes(choice.effort) ? choice.effort : t.effort || 'high'
+    };
+    const extensionOptions = this.sessionOptions(t), extensionKey = JSON.stringify(extensionOptions), key = this.runKey(t, extensionKey, settings);
+    const existing = this.warm.get(id);
+    if (existing?.key === key) { this.keepWarm(id, existing); return true; }
+    this.dropWarm(id);
+    while (this.warm.size >= 2) this.dropWarm([...this.warm.entries()].sort((a, b) => a[1].at - b[1].at)[0][0]);
+    const run = this.newRun(t, extensionKey, settings), options = this.runOptions(t, run, extensionOptions, settings);
+    const entry = { key, run, at: Date.now(), ready: Promise.resolve().then(() => this.startup({ options })).catch(() => null) };
+    this.warm.set(id, entry); this.keepWarm(id, entry); return true;
+  }
+  keepWarm(id, entry) { clearTimeout(entry.timer); entry.at = Date.now(); entry.timer = setTimeout(() => this.dropWarm(id), 4 * 60000); entry.timer.unref?.(); }
+  dropWarm(id) {
+    const entry = this.warm.get(id); if (!entry) return;
+    this.warm.delete(id); clearTimeout(entry.timer); entry.ready.then(spare => spare?.close()).catch(() => {});
+  }
+  takeWarm(id, key) {
+    const entry = this.warm.get(id); if (!entry) return null;
+    if (entry.key !== key) { this.dropWarm(id); return null; }
+    this.warm.delete(id); clearTimeout(entry.timer); return entry;
+  }
+  startRun(t,extensionOptions={},extensionKey=JSON.stringify(extensionOptions)) {
+    const settings = { model: t.model, mode: t.mode, effort: t.effort };
+    const warm = this.takeWarm(t.id, this.runKey(t, extensionKey, settings));
+    const run = warm?.run || this.newRun(t, extensionKey, settings), input = run.input;
+    this.runs.set(t.id, run);
+    const options = warm ? null : this.runOptions(t, run, extensionOptions, settings);
+    run.warm = Boolean(warm);
     run.task = (async () => {
       try {
-        run.query = this.query({ prompt: input, options });
+        const spare = warm && await warm.ready;
+        run.query = spare ? spare.query(input) : this.query({ prompt: input, options: options || this.runOptions(t, run, extensionOptions, settings) });
         for await (const msg of run.query) { if (this.runs.get(t.id) !== run) break; this.process(t, run, msg); }
         if (this.runs.get(t.id) === run && ACTIVE.has(t.status)) this.fail(t, 'Claude 进程在返回完整结果之前结束。请重试。');
       } catch (e) {
@@ -321,7 +430,7 @@ class Engine extends EventEmitter {
   }
   redact(text) { return String(text).replace(/(?:sk-ant-|sk-)[A-Za-z0-9_-]{12,}/g, '[已隐藏密钥]').replace(/(Bearer\s+)\S+/gi, '$1[已隐藏]'); }
   fail(t, message) {
-    t.error = message; t.finishedAt = Date.now(); const turn = t.turns.at(-1);
+    t.error = message; t.finishedAt = Date.now(); const turn = t.turns.at(-1); this.requeueSteers(t, turn);
     if (turn) { turn.status = 'error'; turn.error = message; turn.finishedAt = Date.now(); for (const tool of turn.tools) if (['running', 'approval'].includes(tool.status)) tool.status = 'error'; }
     this.setStatus(t, 'error', message);
   }
@@ -336,6 +445,10 @@ class Engine extends EventEmitter {
   process(t, run, msg) {
     t.lastEventAt = Date.now();
     if(handleAgentMessage(t,run,msg,text=>this.redact(text))){this.publish(t.id,false);return;}
+    if ((msg.type === 'assistant' || msg.type === 'stream_event') && msg.parent_tool_use_id == null) {
+      if (run.mainDone && run.unread && (msg.type === 'assistant' || msg.event?.type === 'message_start')) this.openSteerTurn(t, run);
+      this.markSteers(t, run, msg.user_message_uuids);
+    }
     const turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
     if (msg.type === 'system' && msg.subtype === 'init') { run.sessionId = msg.session_id; this.setStatus(t, 'waiting', '请求已发出，等待模型响应'); return; }
     if (msg.type === 'stream_event') {
@@ -397,7 +510,8 @@ class Engine extends EventEmitter {
       if (msg.is_error || msg.subtype !== 'success') { this.fail(t, this.redact((msg.errors || []).join('\n') || msg.result || `运行失败：${msg.subtype}`)); }
       else {
         if (!turn.answer && msg.result) { turn.answer = msg.result; addItem(turn, 'text', msg.result); }
-        turn.status = 'done'; this.setStatus(t, 'done', '本轮已完成');
+        turn.status = 'done'; this.settleSteers(t, run, turn);
+        this.setStatus(t, 'done', '本轮已完成');
       }
       this.publish(t.id); this.store.save(); return;
     }
@@ -450,6 +564,12 @@ class Engine extends EventEmitter {
       if (!rel.startsWith('..') && !path.isAbsolute(rel)) try { fs.unlinkSync(file); } catch {}
     }
   }
+  // `value` is {tree, files, at} after 撤销 on a turn's change card, null after 重做.
+  setUndone(id, turnId, value) {
+    const turn = this.thread(id).turns.find(x => x.id === turnId); if (!turn) throw Error('这轮问答不存在');
+    if (value) turn.undone = value; else delete turn.undone;
+    this.publish(id); this.store.save();
+  }
   deleteTurn(id, turnId) { return this.removeTurns(id, [turnId], '删除其中一轮问答'); }
   // Rewinding drops a turn and everything after it. Its text and images come back
   // for editing; restoring files is up to the caller (see checkpoint.cjs).
@@ -488,7 +608,7 @@ class Engine extends EventEmitter {
     if(this.deleting.has(id))throw Error('会话正在删除，请稍后再试');
     this.deleting.add(id);
     try {
-      await this.closeRun(id);
+      this.dropWarm(id); await this.closeRun(id);
       clearTimeout(this.eventTimers.get(id));this.eventTimers.delete(id);
       const state=this.store.state;
       const removed=state.threads.find(t=>t.id===id);this.removeImages([...(removed?.turns||[]),...(removed?.queue||[]).map(item=>item.options||{})]);
@@ -502,9 +622,9 @@ class Engine extends EventEmitter {
   async stop(id) {
     const t = this.thread(id); if (!ACTIVE.has(t.status)) return;
     this.setStatus(t, 'stopping', '正在停止运行'); await this.closeRun(id);
-    t.finishedAt = Date.now(); const turn = t.turns.at(-1); if (turn) { if(turn.status==='running'){turn.status = 'stopped'; turn.finishedAt = Date.now();} delete turn.approval; for (const tool of turn.tools) if (tool.status === 'running') tool.status = 'interrupted'; }
+    t.finishedAt = Date.now(); const turn = t.turns.at(-1); this.requeueSteers(t, turn); if (turn) { if(turn.status==='running'){turn.status = 'stopped'; turn.finishedAt = Date.now();} delete turn.approval; for (const tool of turn.tools) if (tool.status === 'running') tool.status = 'interrupted'; }
     this.setStatus(t, 'stopped', '已停止'); this.store.save();
   }
-  async shutdown() { this.closing = true; for (const id of [...this.runs.keys()]) { const t = this.thread(id); if (ACTIVE.has(t.status)) await this.stop(id); else await this.closeRun(id); } clearTimeout(this.saveTimer); for (const timer of this.eventTimers.values()) clearTimeout(timer); this.store.save(); }
+  async shutdown() { this.closing = true; for (const id of [...this.warm.keys()]) this.dropWarm(id); for (const id of [...this.runs.keys()]) { const t = this.thread(id); if (ACTIVE.has(t.status)) await this.stop(id); else await this.closeRun(id); } clearTimeout(this.saveTimer); for (const timer of this.eventTimers.values()) clearTimeout(timer); this.store.save(); }
 }
 module.exports = { Engine, JsonStore, InputQueue, ACTIVE };

@@ -12,13 +12,21 @@ test('questions render as clickable options with an "other" choice', async()=>{
   assert.match(html,/data-approve="yes" hidden/);
 });
 
-test('several or multi-select questions need an explicit submit; no options means free text', async()=>{
+test('several questions show one page at a time; no options means free text', async()=>{
   const {approvalHtml}=await load();
-  const html=approvalHtml({id:'r',name:'AskUserQuestion',input:{questions:[{question:'哪些？',multiSelect:true,options:[{label:'A'},{label:'B'}]},{question:'备注？'}]}},'reviewer');
+  const html=approvalHtml({id:'r',name:'AskUserQuestion',input:{questions:[{question:'哪些？',multiSelect:true,options:[{label:'A'},{label:'B'}]},{header:'备注',question:'备注？'}]}},'reviewer');
   assert.match(html,/<span class="approval-source">reviewer<\/span>/);
   assert.match(html,/可多选/);
   assert.match(html,/data-multi="true"/);
-  assert.doesNotMatch(html,/data-approve="yes" hidden/);
+  assert.match(html,/data-question-tab="0" aria-current="true"><span class="question-tab-mark" aria-hidden="true"><\/span>问题 1/);
+  assert.match(html,/data-question-tab="1" aria-current="false"><span class="question-tab-mark" aria-hidden="true"><\/span>备注/);
+  assert.match(html,/data-question="1" hidden/,'only the first question is on screen');
+  assert.match(html,/第 1 \/ 2 个问题/);
+  assert.match(html,/data-question-step="1">下一个/);
+  assert.match(html,/data-approve="yes" hidden/,'submit appears on the last page');
+  const single=approvalHtml({id:'r',name:'AskUserQuestion',input:{questions:[{question:'哪些？',multiSelect:true,options:[{label:'A'}]}]}});
+  assert.doesNotMatch(single,/question-tabs|data-question-step/);
+  assert.doesNotMatch(single,/data-approve="yes" hidden/);
   assert.match(html,/data-choice="other" aria-pressed="true"/,'free-text question starts with the input shown');
 });
 

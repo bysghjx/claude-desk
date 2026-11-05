@@ -1,26 +1,21 @@
 // The user's own prompts, added after Claude Desk's part of the system prompt:
 // a global one for every conversation and one per project (the project's wins
 // where they conflict). Both are edited in one dialog; changes apply from each
-// conversation's next message.
+// conversation's next message. Opened from 设置 or from a project's or
+// conversation's right-click menu.
 import { $ } from '../core/dom.mjs';
 import { guarded } from '../core/ui.mjs';
 
 const MAX = 20000;
 
 export function createInstructions({ store, api, toast }) {
-  const dialog = $('#instructions-dialog'), button = $('#instructions-toggle');
+  const dialog = $('#instructions-dialog');
   const fields = { global: $('#instructions-global'), project: $('#instructions-project') };
   let projectId = null;
   const projectOf = id => store.state.projects.find(p => p.id === id);
   // The project of the conversation on screen, or the one picked on the home page.
   const currentProject = () => projectOf(store.current() ? store.current().projectId : store.projectId);
 
-  function sync() {
-    const global = Boolean(store.state.settings?.instructions), project = Boolean(currentProject()?.instructions);
-    button.classList.toggle('set', global || project);
-    button.title = global || project ? `已设置${[global && '全局', project && '项目'].filter(Boolean).join('和')}提示词，点击查看或修改` : '设置全局提示词和项目提示词';
-    button.setAttribute('aria-label', button.title);
-  }
   function count(scope) {
     const n = fields[scope].value.trim().length, label = $(`#instructions-${scope}-count`);
     label.textContent = `${n.toLocaleString()} / ${MAX.toLocaleString()}`; label.classList.toggle('error', n > MAX);
@@ -49,15 +44,12 @@ export function createInstructions({ store, api, toast }) {
     if (project && fields.project.value.trim() !== (project.instructions || '')) {
       project.instructions = await api('instructions:set', 'project', project.id, fields.project.value.trim()); changed.push('项目');
     }
-    dialog.close(); sync();
+    dialog.close();
     if (changed.length) toast(`${changed.join('和')}提示词已保存，从每个会话的下一条消息开始生效`);
   });
   $('#instructions-form').addEventListener('submit', event => { event.preventDefault(); save(); });
   for (const scope of Object.keys(fields)) fields[scope].addEventListener('input', () => count(scope));
   $('#instructions-cancel').addEventListener('click', () => dialog.close());
   $('#instructions-close').addEventListener('click', () => dialog.close());
-  button.addEventListener('click', () => open());
-  store.on('select', sync);
-  store.on('threads', sync);
-  return { open, sync };
+  return { open };
 }
