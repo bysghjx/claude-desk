@@ -255,11 +255,11 @@ class Engine extends EventEmitter {
     Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, mainDone: false, steersAfterTool: new Set() });
     t.finishedAt = null; this.setStatus(t, 'waiting', '继续处理你插入的消息');
   }
-  // A stop or failure leaves unread 插话 in the queue so nothing typed is lost.
+  // A stop or failure leaves unread 插话 in the queue, under the same id, so nothing typed is lost.
   requeueSteers(t, turn) {
     const pending = (turn?.steers || []).filter(s => s.status === 'pending'); if (!pending.length) return;
     turn.steers = turn.steers.filter(s => s.status !== 'pending');
-    (t.queue ||= []).unshift(...pending.map(s => ({ id: randomUUID(), text: s.text, createdAt: s.at, options: { references: s.references || [], context: '', images: s.images || [] } })));
+    (t.queue ||= []).unshift(...pending.map(s => ({ id: s.id, text: s.text, createdAt: s.at, options: { references: s.references || [], context: '', images: s.images || [] } })));
   }
   // Images arrive already saved by the main process; only files inside the
   // attachment folder with a supported type are sent to the model.
@@ -284,6 +284,13 @@ class Engine extends EventEmitter {
   dequeue(id, queueId) {
     const t = this.thread(id), item = t.queue?.find(x => x.id === queueId); if (!item) return null;
     t.queue = t.queue.filter(x => x !== item); this.publish(id); this.store.save(); return item;
+  }
+  // 插话 that can't wait for the running step: stop the run, then send it as the next message.
+  async steerNow(id, steerId) {
+    const t = this.thread(id);
+    if (!(t.turns.at(-1)?.steers || []).some(s => s.id === steerId && s.status === 'pending')) throw Error('Claude 已经读到这条插话');
+    await this.stop(id);
+    await this.sendQueued(id, steerId);
   }
   async sendQueued(id, queueId) {
     const t = this.thread(id), item = this.dequeue(id, queueId); if (!item) throw Error('排队消息已不存在');

@@ -120,6 +120,7 @@ export function createConversation({ store, actions, api, composer, toast, revie
     const image = target.closest('[data-open-image]'); if (image) return api('attachment:open', store.selected, image.dataset.imageTurn, image.dataset.openImage);
     const remove = target.closest('[data-delete-turn]');
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }
+    const steerNow = target.closest('[data-steer-now]'); if (steerNow) { steerNow.disabled = true; try { await actions.steerNow(steerNow.dataset.steerNow); } finally { steerNow.disabled = false; } return; }
     const copy = target.closest('[data-copy]'); if (copy) return actions.copyAnswer(copy.dataset.copy);
     const retry = target.closest('[data-retry]'); if (retry) return actions.retry(retry.dataset.retry);
     const open = target.closest('[data-open-thread]'); if (open) return actions.selectThread(open.dataset.openThread);

@@ -66,11 +66,18 @@ test('compact step summaries hide parameters while expanded details remain escap
   const failed=worklog.stepParts({name:'Bash',input:{command:'npm test'},status:'error',output:'failure details'},{escape,cwd:''});
   assert.match(failed.summary,/失败/);assert.doesNotMatch(failed.summary,/运行了命令/);assert.match(failed.body,/npm test/);assert.match(failed.body,/failure details/);
 });
-test('插话 that Claude read stays in the work list, in the order it arrived',async()=>{
+test('插话 cuts the turn: what Claude wrote back before its next step shows under it, not in the steps',async()=>{
   const worklog=await load();
-  const turn={steers:[{id:'s1',text:'use tabs',status:'delivered'}],tools:[{id:'x',name:'Read',input:{}}],items:[{type:'tool',id:'x'},{type:'steer',id:'s1'},{type:'text',text:'final'},{type:'steer',id:'gone'}]};
-  const {work,final}=worklog.splitTurn(turn);
-  assert.deepEqual(work.map(i=>i.type),['tool','steer']);assert.equal(work[1].steer.text,'use tabs');assert.equal(final,'final');
+  const turn={steers:[{id:'s1',text:'use tabs',status:'delivered',deliveredAt:5},{id:'s2',text:'later',status:'pending'}],tools:[{id:'x',name:'Read',input:{}},{id:'y',name:'Edit',input:{}}],
+    items:[{type:'tool',id:'x'},{type:'steer',id:'s1'},{type:'thinking',text:'hm'},{type:'text',text:'OK, tabs.'},{type:'tool',id:'y'},{type:'text',text:'final'},{type:'steer',id:'gone'}]};
+  const {parts,final,pending}=worklog.turnParts(turn);
+  assert.equal(parts.length,2);assert.equal(parts[0].steer,null);assert.deepEqual(parts[0].work.map(i=>i.type),['tool']);
+  assert.equal(parts[1].steer.text,'use tabs');assert.equal(parts[1].reply,'OK, tabs.');assert.deepEqual(parts[1].work.map(i=>i.type),['thinking','tool']);
+  assert.equal(final,'final');assert.deepEqual(pending.map(s=>s.id),['s2']);
+  const split=worklog.splitTurn(turn);
+  assert.deepEqual(split.work.map(i=>i.type),['tool','steer','text','thinking','tool']);assert.equal(split.work[1].steer.text,'use tabs');
+  const short=worklog.turnParts({steers:[{id:'s1',text:'and?',status:'delivered'}],tools:[{id:'x',name:'Read',input:{}}],items:[{type:'tool',id:'x'},{type:'steer',id:'s1'},{type:'text',text:'answer'}]});
+  assert.equal(short.parts[1].reply,'');assert.equal(short.final,'answer','with no step after it the reply is the final answer');
 });
 test('runs of one kind of step fold into one row; thinking after the run stays outside',async()=>{
   const worklog=await load();

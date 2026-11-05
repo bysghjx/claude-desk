@@ -104,14 +104,26 @@ export function fileChanges(turn,cwd){
 // Claude Desk's own tools draw cards under the turn, not step rows.
 export const WRAP_UP='mcp__desk__wrap_up',PROPOSE='mcp__desk__propose_session';
 const CARD_TOOLS=new Set([WRAP_UP,PROPOSE]);
-export function splitTurn(turn){
+// A turn cut where Claude read 插话: each part is the work up to the next 插话, which shows in the
+// conversation like a message of its own, followed by what Claude wrote back before its next step
+// (reply); the last part ends with the final answer. 插话 not read yet comes back separately.
+export function turnParts(turn){
   const tools=new Map((turn?.tools||[]).filter(t=>!CARD_TOOLS.has(t.name)).map(t=>[t.id,t])),steers=new Map((turn?.steers||[]).map(s=>[s.id,s]));
-  let items=Array.isArray(turn?.items)&&turn.items.length?turn.items:[...(turn?.thinking?[{type:'thinking',text:turn.thinking}]:[]),...(turn?.tools||[]).map(t=>({type:'tool',id:t.id})),...(turn?.answer?[{type:'text',text:turn.answer}]:[])];
-  items=items.filter(item=>item.type==='tool'?tools.has(item.id):item.type==='steer'?steers.has(item.id):String(item.text||'').trim());
-  let last=-1;items.forEach((item,i)=>{if(item.type==='tool'||item.type==='steer')last=i;});
-  const rest=items.slice(last+1);
-  const work=[...items.slice(0,last+1),...rest.filter(i=>i.type==='thinking')].map(item=>item.type==='tool'?{...item,tool:tools.get(item.id)}:item.type==='steer'?{...item,steer:steers.get(item.id)}:item);
-  return{work,final:rest.filter(i=>i.type==='text').map(i=>i.text).join('\n\n')};
+  const items=Array.isArray(turn?.items)&&turn.items.length?turn.items:[...(turn?.thinking?[{type:'thinking',text:turn.thinking}]:[]),...(turn?.tools||[]).map(t=>({type:'tool',id:t.id})),...(turn?.answer?[{type:'text',text:turn.answer}]:[])];
+  const parts=[{steer:null,items:[]}],placed=new Set();
+  for(const item of items){
+    if(item.type==='steer'){if(steers.has(item.id)&&!placed.has(item.id)){placed.add(item.id);parts.push({steer:steers.get(item.id),items:[]});}}
+    else if(item.type==='tool'?tools.has(item.id):String(item.text||'').trim())parts.at(-1).items.push(item.type==='tool'?{...item,tool:tools.get(item.id)}:item);
+  }
+  for(const p of parts.slice(1)){const first=p.items.findIndex(i=>i.type==='tool');if(first<0)continue;p.reply=p.items.slice(0,first).filter(i=>i.type==='text').map(i=>i.text).join('\n\n');p.items=p.items.filter((i,n)=>n>first||i.type!=='text');}
+  const last=parts.at(-1).items;let at=-1;last.forEach((item,i)=>{if(item.type==='tool')at=i;});
+  const rest=last.slice(at+1);parts.at(-1).items=[...last.slice(0,at+1),...rest.filter(i=>i.type==='thinking')];
+  return{parts:parts.map(p=>({steer:p.steer,reply:p.reply||'',work:p.items})),final:rest.filter(i=>i.type==='text').map(i=>i.text).join('\n\n'),pending:(turn?.steers||[]).filter(s=>s.status==='pending'&&!placed.has(s.id))};
+}
+// Every step in order, 插话 in its place, and the final answer.
+export function splitTurn(turn){
+  const {parts,final}=turnParts(turn);
+  return{work:parts.flatMap(p=>p.steer?[{type:'steer',id:p.steer.id,steer:p.steer},...(p.reply?[{type:'text',text:p.reply}]:[]),...p.work]:p.work),final};
 }
 const STATE_LABELS={running:'运行中',error:'失败',interrupted:'已中断',approval:'等待批准'};
 const STEP_ICONS={

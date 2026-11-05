@@ -122,6 +122,7 @@ export function createActions({ store, api, composer, toast, confirm }) {
   }
   async function sendQueuedNow(queueId) { await api('queue:send', store.selected, queueId); }
   async function steerQueued(queueId) { await apply(await api('queue:steer', store.selected, queueId)); toast('已插话，Claude 会在下一步之前读到'); }
+  async function steerNow(steerId) { await api('thread:steer-now', store.selected, steerId); }
   async function removeQueued(queueId) { await api('queue:remove', store.selected, queueId); }
   async function editQueued(queueId) {
     if (!composer.isEmpty()) { toast('输入框里还有内容，请先发送或清空后再编辑排队消息'); return; }
@@ -133,5 +134,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, steerQueued, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, steerQueued, steerNow, removeQueued, editQueued, retry, copyAnswer };
 }

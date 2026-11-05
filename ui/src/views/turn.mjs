@@ -3,7 +3,7 @@
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
 import { elapsed, STATUS_LABELS } from '../core/format.mjs';
-import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
+import { turnParts, toolView, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
 function userHtml(turn) {
@@ -39,7 +39,15 @@ export function animateIn(node, className = 'is-entering') {
 }
 
 const itemKey = (item, index) => item.type === 'tool' || item.type === 'steer' ? item.type + ':' + item.id : item.type + ':' + index;
-const steerHtml = steer => `<span class="work-steer-label">你插话</span><span>${escape(steer.text || '（图片）')}${steer.images?.length ? ` · ${steer.images.length} 张图片` : ''}</span>`;
+// 插话 reads like one of your messages, in the place Claude read it. Until then it waits at the
+// end of the turn, saying what it waits for, with a way to stop the step and send it at once.
+function steerHtml(steer, turn) {
+  const images = steer.images?.length ? `<span class="turn-steer-images">${steer.images.length} 张图片</span>` : '';
+  const running = steer.status === 'pending' && (turn.tools || []).findLast(t => t.status === 'running');
+  const wait = running ? `等「${escape(running.input?.description || toolView(running).target.split('\n')[0].slice(0, 60) || running.name)}」完成后交给 Claude` : '这一步结束后交给 Claude';
+  const meta = steer.status === 'pending' ? `<span class="turn-steer-state">${wait}</span><button type="button" data-steer-now="${escape(steer.id)}" title="停止当前步骤，马上把这条消息发给 Claude">打断并立即发送</button>` : '<span class="turn-steer-state">插话 · Claude 已读到</span>';
+  return `<div class="turn-steer-text">${escape(steer.text || '（图片）')}${images}</div><div class="turn-steer-meta">${meta}</div>`;
+}
 
 function updateItem(node, item, cwd) {
   if (item.type === 'tool') {
@@ -47,14 +55,12 @@ function updateItem(node, item, cwd) {
     if (node.className !== parts.className) node.className = parts.className;
     setHtml(node.firstChild, parts.summary); setHtml(node.lastChild, parts.body);
   } else if (item.type === 'thinking') setHtml(node.lastChild, escape(item.text));
-  else if (item.type === 'steer') setHtml(node, steerHtml(item.steer));
   else setHtml(node, markdown(item.text));
 }
 function createItem(item, cwd) {
   let node;
   if (item.type === 'tool') { node = element('details'); node.append(element('summary'), element('div', 'step-body')); }
   else if (item.type === 'thinking') { node = element('details', 'work-thinking'); node.append(element('summary', '', '思考'), element('div', 'work-thinking-text')); }
-  else if (item.type === 'steer') node = element('div', 'work-steer');
   else node = element('div', 'work-note markdown');
   updateItem(node, item, cwd); return node;
 }
@@ -66,16 +72,16 @@ export function liveLabel(status, since, lastEventAt, detail, now = Date.now()) 
   const quiet = Math.floor((now - (lastEventAt || since)) / 1000);
   return { label: `${STATUS_LABELS[status] || '正在处理'} · ${elapsed(since, now)}`, detail: quiet > 25 && status !== 'approval' ? `${quiet}s 未收到新事件，可能在等服务商` : detail || '' };
 }
-function updateWork(view, turn, work, live, run = {}) {
-  if (!work.length && !live) { view.work?.remove(); view.work = null; view.items.clear(); return; }
-  if (!view.work) {
-    view.work = element('details', 'work-group');
-    view.work.append(element('summary', '', '<span class="work-label"></span><span class="work-count"></span><span class="work-detail"></span>'), element('div', 'work-items'));
-    view.work.firstChild.addEventListener('click', () => { view.work.dataset.userToggled = '1'; });
-    view.final.before(view.work);
-    if (view.ready) animateIn(view.work);
+// `part` holds one folded group and its step nodes; a turn has one per stretch between 插话.
+function updateWork(view, part, turn, work, live, run, span) {
+  if (!work.length && !live) { part.work?.remove(); part.work = null; part.items.clear(); return null; }
+  if (!part.work) {
+    const node = part.work = element('details', 'work-group');
+    node.append(element('summary', '', '<span class="work-label"></span><span class="work-count"></span><span class="work-detail"></span>'), element('div', 'work-items'));
+    node.firstChild.addEventListener('click', () => { node.dataset.userToggled = '1'; });
+    if (view.ready) animateIn(node);
   }
-  const group = view.work, steps = work.filter(i => i.type === 'tool').length;
+  const group = part.work, steps = work.filter(i => i.type === 'tool').length;
   group.classList.toggle('live', live);
   // Open while running, fold when finished, unless the user chose otherwise.
   if (!group.dataset.userToggled) group.open = live;
@@ -83,15 +89,15 @@ function updateWork(view, turn, work, live, run = {}) {
   if (live) Object.assign(label.dataset, { since: turn.startedAt, status: run.status || '', lastEvent: run.lastEventAt || '', detail: run.detail || '' });
   else for (const key of ['since', 'status', 'lastEvent', 'detail']) delete label.dataset[key];
   const now = live ? liveLabel(run.status, turn.startedAt, run.lastEventAt, run.detail) : null;
-  label.textContent = live ? now.label : steps ? `已处理 ${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}` : '已思考';
+  label.textContent = live ? now.label : steps ? `已处理 ${elapsed(span.since, span.until)}` : '已思考';
   detail.textContent = live ? now.detail : '';
   group.querySelector('.work-count').textContent = steps ? `${steps} 个步骤` : '';
   const list = group.lastChild, seen = new Set();
   const place = (node, parent, before) => { if (node.previousSibling !== before || node.parentNode !== parent) before ? before.after(node) : parent.prepend(node); };
   const itemNode = index => {
     const item = work[index], key = itemKey(item, index); seen.add(key);
-    let node = view.items.get(key);
-    if (!node) { node = createItem(item, view.cwd); view.items.set(key, node); if (view.ready) animateIn(node); }
+    let node = part.items.get(key);
+    if (!node) { node = createItem(item, view.cwd); part.items.set(key, node); if (view.ready) animateIn(node); }
     else updateItem(node, item, view.cwd);
     return node;
   };
@@ -101,8 +107,8 @@ function updateWork(view, turn, work, live, run = {}) {
     let node;
     if (entry.indices) {
       const key = 'group:' + itemKey(work[entry.indices[0]], entry.indices[0]); seen.add(key);
-      node = view.items.get(key);
-      if (!node) { node = element('details', 'step-group'); node.append(element('summary'), element('div', 'step-group-items')); view.items.set(key, node); }
+      node = part.items.get(key);
+      if (!node) { node = element('details', 'step-group'); node.append(element('summary'), element('div', 'step-group-items')); part.items.set(key, node); }
       node.classList.toggle('running', entry.running);
       setHtml(node.firstChild, groupSummaryHtml(entry));
       let before = null;
@@ -110,14 +116,45 @@ function updateWork(view, turn, work, live, run = {}) {
     } else node = itemNode(entry.index);
     place(node, list, previous); previous = node;
   }
-  for (const [key, node] of view.items) if (!seen.has(key)) { node.remove(); view.items.delete(key); }
+  for (const [key, node] of part.items) if (!seen.has(key)) { node.remove(); part.items.delete(key); }
+  return group;
+}
+
+// The turn's steps and 插话 in order, between the question and the final answer; 插话 not read yet after the answer.
+function updateBody(view, turn, live, run) {
+  const { parts, final, pending } = turnParts(turn), keep = new Set();
+  const place = (node, parent, before) => { if (node.parentNode !== parent || node.previousSibling !== before) before ? before.after(node) : parent.prepend(node); return node; };
+  const steerNode = steer => {
+    keep.add(steer.id); let node = view.steers.get(steer.id);
+    if (!node) { node = element('div', 'turn-steer'); view.steers.set(steer.id, node); if (view.ready) animateIn(node); }
+    node.classList.toggle('pending', steer.status === 'pending'); setHtml(node, steerHtml(steer, turn)); return node;
+  };
+  let previous = null, since = turn.startedAt;
+  parts.forEach((p, index) => {
+    const key = p.steer?.id || ''; keep.add('part:' + key);
+    let part = view.parts.get(key); if (!part) view.parts.set(key, part = { work: null, items: new Map() });
+    if (p.steer) {
+      previous = place(steerNode(p.steer), view.body, previous); since = p.steer.deliveredAt || since;
+      let reply = view.replies.get(p.steer.id);
+      if (p.reply) { if (!reply) view.replies.set(p.steer.id, reply = element('div', 'markdown turn-steer-reply')); setHtml(reply, markdown(p.reply)); previous = place(reply, view.body, previous); }
+      else if (reply) { reply.remove(); view.replies.delete(p.steer.id); }
+    }
+    const last = index === parts.length - 1, until = last ? turn.finishedAt || since : parts[index + 1].steer.deliveredAt || since;
+    const group = updateWork(view, part, turn, p.work, live && last, run, { since, until });
+    if (group) previous = place(group, view.body, previous);
+  });
+  let after = null;
+  for (const steer of live ? pending : []) after = place(steerNode(steer), view.pending, after);
+  for (const [key, part] of view.parts) if (!keep.has('part:' + key)) { part.work?.remove(); view.parts.delete(key); }
+  for (const [id, node] of view.steers) if (!keep.has(id)) { node.remove(); view.steers.delete(id); view.replies.get(id)?.remove(); view.replies.delete(id); }
+  return final;
 }
 
 export function createTurn(turn, context) {
   const root = element('article', 'turn');
   root.dataset.turn = turn.id;
-  const view = { root, rev: null, cwd: context.cwd, items: new Map(), work: null, head: element('div', 'turn-head'), final: element('div', 'markdown turn-final'), tail: element('div', 'turn-tail') };
-  root.append(view.head, view.final, view.tail);
+  const view = { root, rev: null, cwd: context.cwd, parts: new Map(), steers: new Map(), replies: new Map(), head: element('div', 'turn-head'), body: element('div', 'turn-body'), final: element('div', 'markdown turn-final'), pending: element('div', 'turn-pending'), tail: element('div', 'turn-tail') };
+  root.append(view.head, view.body, view.final, view.pending, view.tail);
   updateTurn(view, turn, context);
   // From now on, new steps and the finishing summary animate; the initial render does not.
   view.ready = true;
@@ -130,9 +167,8 @@ export function updateTurn(view, turn, { threadActive, latest = false, turns = n
   if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && view.runKey === runKey && turn.rev != null) return false;
   view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest; view.runKey = runKey;
   const live = turn.status === 'running';
-  const { work, final } = splitTurn(turn);
   setHtml(view.head, userHtml(turn));
-  updateWork(view, turn, work, live, run || {});
+  const final = updateBody(view, turn, live, run || {});
   if (setHtml(view.final, markdown(final)) && final && !view.hadFinal && view.ready) animateIn(view.final);
   view.hadFinal = Boolean(final);
   if (view.ready && view.live && !live) animateIn(view.root, 'just-finished');

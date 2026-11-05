@@ -334,9 +334,12 @@
   .source-row>span:first-child{color:#626262}
   .context-empty{color:#686868}
   .agent-card{border:1px solid #d0d0d0;background:#efefef}
-  .steer-item .queue-badge,.work-steer-label,.steer-tag{color:#2f63a6}
-  .steer-item .queue-badge,.steer-tag{background:#2f63a612;border-color:#2f63a633}
-  .work-steer{background:#00000006;border-color:#0000000f;color:#2a2a2a}
+  .turn-steer-state,.steer-tag{color:#2f63a6}
+  .steer-tag{background:#2f63a612;border-color:#2f63a633}
+  .turn-steer-text{background:#ebebeb;color:#1e1e1e}
+  .turn-steer.pending .turn-steer-text{background:transparent;border-color:#2f63a655}
+  .turn-steer-meta button{color:#555;border-color:#0000001f}
+  .turn-steer-meta button:hover{color:#1e1e1e;border-color:#00000040}
   .provider-row{border-color:#dcdcdc;background:#fafafa}
   .provider-row.selected{border-color:#a9a9a9;background:#f0f0f0}
   .provider-row.selected .provider-radio{box-shadow:inset 0 0 0 3px #f0f0f0}
@@ -740,7 +743,7 @@ body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
 .rail-button.active{background:#0000000f;color:#111}
 .rail-button[data-tip]:hover::after,.rail-button[data-tip]:focus-visible::after{background:#1f1f1e;border-color:#1f1f1e;color:#f4f4f2}
 .composer{background:#ffffff;border-color:#dcdcd8;box-shadow:0 2px 14px #0000000f}
-.user-message{background:#f1f1ef;border-color:#ececea;color:#1d1d1b}
+.user-message,.turn-steer-text{background:#f1f1ef;border-color:#ececea;color:#1d1d1b}
 .inspector,.context-panel{background:#ffffff;border-color:#e3e3e0;box-shadow:0 12px 40px #0000001a}
 .send-button{background:#1d1d1b;color:#ffffff}
 .send-button.stop{background:#1d1d1b;color:#ffffff}

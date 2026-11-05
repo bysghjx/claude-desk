@@ -352,6 +352,19 @@ test('unconfirmed 插话 counts as read at the end of the turn, unless the CLI g
   assert.equal(t.queue.length,1);assert.equal(t.queue[0].text,'never read');assert.equal((t.turns.at(-1).steers||[]).length,0);
   await engine.shutdown();
 });
+test('插话 sent at once stops the running step and goes out as the next message',async()=>{
+  const sessions=[];const{engine,t}=setup(args=>{const sdk=fakeSdk();sessions.push(sdk);return sdk.query(args);});
+  await engine.send(t.id,'first');await tick();
+  sessions[0].outputs.push({type:'assistant',uuid:'a0',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'tool-1',name:'Bash',input:{command:'npm test'}}]}});await tick();
+  engine.steer(t.id,'stop testing, check the README');await tick();
+  const id=t.turns[0].steers[0].id;
+  await engine.steerNow(t.id,id);await tick();
+  assert.equal(t.turns[0].status,'stopped');assert.equal(t.turns[0].steers.length,0);
+  assert.equal(sessions.length,2);assert.match(sessions[1].messages[0].message.content,/check the README/);
+  assert.equal(t.turns.length,2);assert.equal(t.turns[1].user,'stop testing, check the README');assert.equal(t.queue.length,0);
+  await assert.rejects(engine.steerNow(t.id,id),/已经读到/);
+  await engine.shutdown();
+});
 test('插话 written before a tool result joins the turn with the first reply after it',async()=>{
   const sdk=fakeSdk();const{engine,t}=setup(sdk.query);
   await engine.send(t.id,'build it');await tick();

@@ -8,7 +8,7 @@ body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
 .rail-button.active{background:#0000000f;color:#111}
 .rail-button[data-tip]:hover::after,.rail-button[data-tip]:focus-visible::after{background:#1f1f1e;border-color:#1f1f1e;color:#f4f4f2}
 .composer{background:#ffffff;border-color:#dcdcd8;box-shadow:0 2px 14px #0000000f}
-.user-message{background:#f1f1ef;border-color:#ececea;color:#1d1d1b}
+.user-message,.turn-steer-text{background:#f1f1ef;border-color:#ececea;color:#1d1d1b}
 .inspector,.context-panel{background:#ffffff;border-color:#e3e3e0;box-shadow:0 12px 40px #0000001a}
 .send-button{background:#1d1d1b;color:#ffffff}
 .send-button.stop{background:#1d1d1b;color:#ffffff}

@@ -19,13 +19,11 @@ export function createStatus({ store, actions, api, composer, toast }) {
     send.title = stop ? '停止当前运行' : active ? '插话 · Enter（不停止任务，下一步之前交给 Claude）；Tab 加入队列' : '发送 · Enter';
   }
 
-  // 插话 not yet read by Claude, then queued messages.
+  // Queued messages; 插话 not read yet shows in the conversation, at the end of the running turn.
   function queue() {
     const thread = store.current(), items = thread?.queue || [], active = isActive(thread);
-    const steers = active ? (thread.turns.at(-1)?.steers || []).filter(s => s.status === 'pending') : [];
-    $('#queue-list').hidden = !items.length && !steers.length;
-    const steerRows = steers.map(s => `<div class="queue-item steer-item"><span class="queue-badge">插话 · 等待当前步骤完成</span><span class="queue-text" title="${escape(s.text)}">${escape(s.text || '（仅图片）')}</span>${s.images?.length ? `<span class="queue-images">${s.images.length} 张图片</span>` : ''}</div>`).join('');
-    setHtml($('#queue-list'), steerRows + items.map((q, i) => `<div class="queue-item"><span class="queue-badge">${i ? '排队 ' + (i + 1) : '下一条'}</span><span class="queue-text" title="${escape(q.text)}">${escape(q.text || '（仅图片）')}</span>${q.options?.images?.length ? `<span class="queue-images">${q.options.images.length} 张图片</span>` : ''}${active ? `<button type="button" data-queue-steer="${escape(q.id)}" title="不停止任务，在 Claude 的下一步之前交给它">插话</button>` : ''}<button type="button" data-queue-send="${escape(q.id)}" title="停止当前运行并立即发送这条">立即发送</button><button type="button" data-queue-edit="${escape(q.id)}" title="移回输入框修改">编辑</button><button type="button" class="queue-remove" data-queue-remove="${escape(q.id)}" title="从队列中删除" aria-label="删除排队消息">×</button></div>`).join(''));
+    $('#queue-list').hidden = !items.length;
+    setHtml($('#queue-list'), items.map((q, i) => `<div class="queue-item"><span class="queue-badge">${i ? '排队 ' + (i + 1) : '下一条'}</span><span class="queue-text" title="${escape(q.text)}">${escape(q.text || '（仅图片）')}</span>${q.options?.images?.length ? `<span class="queue-images">${q.options.images.length} 张图片</span>` : ''}${active ? `<button type="button" data-queue-steer="${escape(q.id)}" title="不停止任务，在 Claude 的下一步之前交给它">插话</button>` : ''}<button type="button" data-queue-send="${escape(q.id)}" title="停止当前运行并立即发送这条">立即发送</button><button type="button" data-queue-edit="${escape(q.id)}" title="移回输入框修改">编辑</button><button type="button" class="queue-remove" data-queue-remove="${escape(q.id)}" title="从队列中删除" aria-label="删除排队消息">×</button></div>`).join(''));
   }
 
   function approval() {

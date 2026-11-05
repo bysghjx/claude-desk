@@ -300,6 +300,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     const item=engine.dequeue(id,queueId);if(!item)throw Error('排队消息已不存在');
     try{return threadOut(engine.steer(id,item.text,item.options));}catch(e){engine.thread(id).queue.unshift(item);engine.publish(id);throw e;}
   });
+  handle('thread:steer-now',(id,steerId)=>engine.steerNow(id,steerId));
   handle('queue:send',(id,queueId)=>engine.sendQueued(id,queueId));
   handle('queue:take',(id,queueId)=>{const item=engine.dequeue(id,queueId);return item&&{text:item.text,options:{references:item.options.references||[],images:item.options.images||[]}};});
   handle('queue:remove',(id,queueId)=>{const item=engine.dequeue(id,queueId);if(item)engine.removeImages([item.options]);return Boolean(item);});
