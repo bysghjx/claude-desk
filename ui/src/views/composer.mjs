@@ -15,6 +15,14 @@ export const modes=[
   {id:'bypassPermissions',name:'完全访问',description:'跳过常规权限提示，可直接修改文件和运行命令；适合隔离环境',icon:'<path d="m9.5 1.5-7 8H8l-1.5 5 7-8H8Z"/>',tag:'高级',advanced:true}
 ];
 
+// Models the provider names in its own way (a gateway's ocx-claude-claude--claude-opus-5-5,
+// or anything not called claude-…) come first, Claude models among them first; the
+// plain claude-… names follow, since a gateway may route those to another provider.
+export function orderModels(ids){
+  const plain=ids.filter(id=>/^claude-/.test(id)),own=ids.filter(id=>!/^claude-/.test(id));
+  const claude=id=>/claude-(opus|sonnet|haiku|fable)-/.test(id);
+  return{own:[...own.filter(claude),...own.filter(id=>!claude(id))],plain};
+}
 export function modeListHtml(current){
   return modes.map(mode=>`<button type="button" class="mode-choice ${mode.id===current?'selected':''} ${mode.advanced?'advanced':''}" data-mode="${mode.id}" role="option" aria-selected="${mode.id===current}"><svg class="mode-choice-icon" viewBox="0 0 16 16" aria-hidden="true">${mode.icon}</svg><span class="mode-choice-copy"><strong>${mode.name}${mode.tag?`<small class="mode-tag">${mode.tag}</small>`:''}</strong><span>${mode.description}</span></span>${mode.id===current?'<span class="mode-choice-check">✓</span>':''}</button>`).join('');
 }
@@ -156,7 +164,9 @@ export function createComposer({ store, api, toast, actions }) {
     const models=[...new Set([...(store.state.availableModels||[]),...[...$('#model').options].map(x=>x.value)])];
     const filtered=models.filter(id=>!query||`${id} ${modelName(id)}`.toLowerCase().includes(query));
     $('#model-provider').textContent=store.state.provider?.host||'';
-    $('#model-list').innerHTML=filtered.map(id=>`<button class="model-choice ${id===chosen?'selected':''}" data-model="${escape(id)}" role="option" aria-selected="${id===chosen}"><span class="choice-icon">✳</span><span class="choice-copy"><strong>${escape(modelName(id))}</strong><small>${escape(id)}</small></span>${id===chosen?'<span class="choice-check">✓</span>':''}</button>`).join('');
+    const {own,plain}=orderModels(filtered),sections=own.length&&plain.length;
+    const choice=id=>`<button class="model-choice ${id===chosen?'selected':''}" data-model="${escape(id)}" role="option" aria-selected="${id===chosen}"><span class="choice-icon">✳</span><span class="choice-copy"><strong>${escape(modelName(id))}</strong><small>${escape(id)}</small></span>${id===chosen?'<span class="choice-check">✓</span>':''}</button>`;
+    $('#model-list').innerHTML=sections?`<div class="model-section">服务商提供的模型</div>${own.map(choice).join('')}<div class="model-section" title="网关可能把不带前缀的名称发给别的服务商">通用名称 · 可能被网关转到其他服务商</div>${plain.map(choice).join('')}`:[...own,...plain].map(choice).join('');
     if(!filtered.length){$('#model-list').innerHTML=/^[\w.:/\-\[\]]{1,150}$/.test(query)?`<button class="model-choice" data-model="${escape($('#model-search').value.trim())}"><span class="choice-icon">＋</span><span class="choice-copy"><strong>使用这个模型 ID</strong><small>${escape($('#model-search').value.trim())}</small></span></button>`:'<div class="prompt-empty">没有匹配的模型</div>';}
   }
   async function refreshModels(){

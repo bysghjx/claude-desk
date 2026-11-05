@@ -87,6 +87,12 @@ test('finished sub-agents fold into one 已结束 row with a compact list',async
   assert.match(html,/data-agent-window="c" data-agent-thread="t"[^>]*><span class="dot error">/);
   assert.doesNotMatch(agentCardsHtml([agent('a','tool')],{home:false,now}),/agent-history/);
 });
+test('provider-specific model IDs come before the plain claude-… names',async()=>{
+  const {orderModels}=await import('../ui/src/views/composer.mjs');
+  assert.deepEqual(orderModels(['claude-opus-5-5','ocx-openai-gpt-5','ocx-claude-claude--claude-opus-5-5','claude-sonnet-5-5','ocx-claude-claude--claude-haiku-5-5']),
+    {own:['ocx-claude-claude--claude-opus-5-5','ocx-claude-claude--claude-haiku-5-5','ocx-openai-gpt-5'],plain:['claude-opus-5-5','claude-sonnet-5-5']});
+  assert.deepEqual(orderModels(['claude-opus-5-5']),{own:[],plain:['claude-opus-5-5']});
+});
 test('all six permission modes share their menu icon with the toolbar',async()=>{
   const {modes,modeListHtml}=await import('../ui/src/views/composer.mjs');
   assert.equal(new Set(modes.map(m=>m.icon)).size,6);
