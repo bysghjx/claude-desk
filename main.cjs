@@ -407,7 +407,12 @@ if(primaryInstance)app.whenReady().then(async () => {
   // A console window running Claude Code, for logging in (/login) when it was never set up on this computer.
   handle('cli:open', () => { const cli = findCli(); if (!cli) throw Error('没有找到 Claude Code'); spawn('cmd.exe', ['/d', '/s', '/c', `start "Claude Code" "${cli}"`], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsHide:true, windowsVerbatimArguments: true }).unref(); return true; });
   handle('data:open',()=>shell.openPath(dataRoot));
-  handle('env:check', async options => { const result = await cli.check({ quick: Boolean(options?.quick) }); useCli(); return { ...result, provider: providerInfo() }; });
+  // A provider chosen in Desk carries its own key, so Claude Code needs no /login of its own.
+  handle('env:check', async options => {
+    const result = await cli.check({ quick: Boolean(options?.quick) }); useCli();
+    const custom = providers?.list().providers.find(p => p.id === providers.activeId() && p.hasKey);
+    return { ...result, ...(custom ? { login: { ok: true, how: `服务商「${custom.name}」（在 Claude Desk 里配置）` } } : {}), provider: providerInfo() };
+  });
   handle('cli:extract', async () => { const result = await cli.extract(); useCli(); return result; });
   // Opens a console window running an official install command, so its progress and questions stay visible.
   handle('cli:install', id => {
