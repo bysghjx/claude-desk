@@ -22,7 +22,9 @@ function run(args, { cwd, env, input, timeout = 60000 }) {
 const nulList = text => text.split('\0').filter(Boolean);
 
 class Checkpoints {
-  constructor(root) { this.root = root; this.busy = new Map(); }
+  // A folder found to have too many files is not listed again for ten minutes:
+  // listing it takes seconds before every message only to give up.
+  constructor(root) { this.root = root; this.busy = new Map(); this.tooMany = new Map(); }
   key(cwd) { return createHash('sha1').update(path.resolve(cwd).toLowerCase()).digest('hex').slice(0, 16); }
   async git(cwd, args, options = {}) {
     const gitDir = path.join(this.root, this.key(cwd) + '.git');
@@ -45,12 +47,16 @@ class Checkpoints {
   }
 
   // Records the folder and returns the tree id.
-  snapshot(cwd) { return this.serial(cwd, () => this.record(cwd)); }
+  snapshot(cwd) {
+    const skipped = this.tooMany.get(this.key(cwd));
+    if (skipped && Date.now() - skipped.at < 10 * 60000) return Promise.reject(Error(skipped.message));
+    return this.serial(cwd, () => this.record(cwd)).catch(e => { if (e.tooMany) this.tooMany.set(this.key(cwd), { at: Date.now(), message: e.message }); throw e; });
+  }
   async record(cwd) {
     if (!fs.statSync(cwd).isDirectory()) throw Error('项目文件夹不存在');
     const listed = nulList(await this.git(cwd, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']));
     const unique = [...new Set(listed)];
-    if (unique.length > MAX_FILES) throw Error(`文件超过 ${MAX_FILES} 个，未记录快照`);
+    if (unique.length > MAX_FILES) throw Object.assign(Error(`文件超过 ${MAX_FILES} 个，未记录快照（可在项目里加 .gitignore 排除构建产物）`), { tooMany: true });
     const add = [], drop = [];
     for (const rel of unique) {
       let stat; try { stat = fs.lstatSync(path.join(cwd, rel)); } catch { add.push(rel); continue; } // deleted: `add -A` records the removal

@@ -21,6 +21,7 @@ const {Worktrees}=require('./worktree.cjs');
 const {Terminals}=require('./terminal.cjs');
 const {DeskTray}=require('./tray.cjs');
 const {Providers}=require('./providers.cjs');
+const {attachContextMenu}=require('./context-menu.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
 let win, engine, extensions, agentWindows, terminals, tray, providers, quitting = false;
@@ -275,6 +276,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     const images=saveImages(opts.images);
     try{return threadOut(engine.enqueue(id, text, {...opts,...selectedContext(id,opts.references||[]),images}));}catch(e){dropSaved(images,opts.images);throw e;}
   });
+  handle('context:details', (id, detail) => engine.contextDetails(id, detail === 'full' ? 'full' : 'summary'));
   handle('thread:prewarm', (id, choice) => engine.prewarm(id, choice && typeof choice === 'object' ? choice : {}));
   handle('thread:steer', (id, text, opts={}) => {
     const images=saveImages(opts.images),options={...opts,...selectedContext(id,opts.references||[]),images};
@@ -421,6 +423,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   win.webContents.on('did-attach-webview',(_event,contents)=>{contents.setWindowOpenHandler(({url})=>{if(PAGE_URL.test(url))contents.loadURL(url);return{action:'deny'};});contents.on('will-navigate',(e,url)=>{if(!PAGE_URL.test(url))e.preventDefault();});contents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));});
   win.on('closed',()=>{agentWindows.close();terminals?.closeAll();});
   win.on('focus',()=>win.flashFrame(false));
+  attachContextMenu(win.webContents,{Menu,clipboard,shell,onQuote:text=>win.webContents.send('app:command',{quote:text})});
   // Closing hides the window to the tray (unless turned off in 设置); quitting from the tray menu really closes.
   tray=new DeskTray({Tray,Menu,icon:icon.resize({width:16,height:16}),onAction:({action,threadId})=>{
     if(action==='quit')app.quit();

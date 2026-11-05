@@ -163,6 +163,36 @@ export function stepParts(tool,{escape,cwd}){
 // 查看变更. Three rows show; the rest fold under 再显示.
 const CHANGES_ICON='<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3.5"/><path d="M10 6v5M7.5 8.5h5M7.5 13.5h5"/></svg>';
 const UNDO_ICON='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 0 1 0 7H7M3.5 6.5 6 4M3.5 6.5 6 9"/></svg>';
+// Consecutive steps of one kind fold into one row such as 运行了 4 个命令; thinking
+// between them stays inside, thinking after the last one stays outside. Returns
+// {index} for a single work item or {kind, indices, count, running} for a group.
+const GROUPED={command:(n,f)=>`运行了 ${n} 个命令`,read:(n,f)=>`读取了 ${f} 个文件`,edit:(n,f)=>`编辑了 ${f} 个文件`,search:(n,f)=>`搜索了 ${n} 次`,web:(n,f)=>`访问了 ${n} 次网页`};
+const RUNNING_GROUP={command:'正在运行命令',read:'正在读取文件',edit:'正在编辑文件',search:'正在搜索',web:'正在访问网页'};
+export function groupSteps(work){
+  const out=[];let run=null;
+  const flush=()=>{
+    if(!run)return;
+    const tail=[];while(work[run.indices.at(-1)].type==='thinking')tail.unshift(run.indices.pop());
+    if(run.count>=2)out.push(run);else out.push(...run.indices.map(index=>({index})));
+    out.push(...tail.map(index=>({index})));run=null;
+  };
+  work.forEach((item,index)=>{
+    const view=item.type==='tool'&&item.tool?toolView(item.tool):null,kind=view&&GROUPED[view.kind]?view.kind:null;
+    if(kind){
+      if(run&&run.kind!==kind)flush();
+      run||={kind,indices:[],count:0,running:false,files:new Set()};
+      run.indices.push(index);run.count++;
+      if(['running','approval'].includes(item.tool.status))run.running=true;
+      for(const file of view.files.length?view.files.map(f=>f.path):[view.target])if(file)run.files.add(String(file).toLowerCase());
+    }else if(item.type==='thinking'&&run)run.indices.push(index);
+    else{flush();out.push({index});}
+  });
+  flush();return out;
+}
+export function groupSummaryHtml(group){
+  const label=group.running?`${RUNNING_GROUP[group.kind]} · 已 ${group.count} 步`:GROUPED[group.kind](group.count,group.files.size||group.count);
+  return `<span class="step-icon" aria-hidden="true"><svg viewBox="0 0 18 18">${STEP_ICONS[group.kind]||STEP_ICONS.other}</svg></span><span class="step-label">${label}</span><svg class="step-group-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="m4.5 3 3 3-3 3"/></svg>`;
+}
 export function changesHtml(changes,escape,{turnId='',undo='',disabled=false}={}){
   if(!changes.length)return'';
   const added=changes.reduce((n,f)=>n+f.added,0),removed=changes.reduce((n,f)=>n+f.removed,0),undone=undo==='undone';

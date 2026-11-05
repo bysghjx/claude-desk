@@ -236,7 +236,7 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .plan-feedback{width:100%;resize:vertical;min-height:44px;background:#181914;border:1px solid #514735;border-radius:7px;padding:8px 10px;color:inherit;font:inherit;font-size:12.5px}
 dialog{width:660px;max-width:90vw;color:var(--text);border:1px solid #48443c;border-radius:17px;padding:30px;box-shadow:0 20px 120px #0009}
 dialog::backdrop{background:#0009;backdrop-filter:blur(5px)}
-.toast{position:fixed;bottom:27px;left:50%;transform:translateX(-50%);padding:12px 20px;border:1px solid #655a4a;border-radius:9px;box-shadow:0 10px 40px #0006;z-index:20;font-size:13px;max-width:650px;line-height:1.6}
+.toast{position:fixed;top:58px;left:50%;transform:translateX(-50%);padding:12px 20px;border:1px solid #655a4a;border-radius:9px;box-shadow:0 10px 40px #0006;z-index:20;font-size:13px;max-width:650px;line-height:1.6}
 .empty-list{padding:13px 12px;color:#64675d;font-size:12px;line-height:1.8}
 .draft-notice{font-size:11px;color:#777d6b}
 .jump-bottom{position:sticky;bottom:8px;display:block;margin:10px auto;background:#33332b;border:1px solid #515242;color:#c5c7b6;font-size:12px;padding:7px 12px}
@@ -621,6 +621,23 @@ dialog{background:#252525;border-color:#484848}
 .usage-detail-row strong{font-size:12px;font-weight:400;text-align:right;color:#d0d0d0;overflow-wrap:anywhere}
 .usage-note{font-size:11px;color:#868686;line-height:1.8;margin:11px 18px 0;padding-top:11px;border-top:1px solid #414141}
 .home-view .usage-picker{right:0;bottom:calc(100% + 8px)}
+.usage-picker{max-height:min(640px,calc(100vh - 200px));overflow:auto}
+.usage-breakdown{margin:6px 18px 0;padding-top:10px;border-top:1px solid #414141}
+.usage-breakdown:empty{display:none}
+.usage-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#343434;margin-bottom:8px}
+.usage-bar i{display:block;height:100%;min-width:1px}
+.usage-part{display:grid;grid-template-columns:8px 1fr auto 46px;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:#bdbdbd}
+.usage-part strong{font-weight:400;color:#e0e0e0}
+.usage-part small{font-size:11px;color:#8a8a8a;text-align:right}
+.usage-part.free{color:#8a8a8a}
+.usage-dot{width:8px;height:8px;border-radius:2px}
+.usage-sub{margin-top:8px;font-size:11.5px;color:#8f8f8f}
+.usage-sub>div{display:flex;justify-content:space-between;gap:10px;padding:2px 0 2px 16px;color:#b5b5b5}
+.usage-sub>div>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usage-sub strong{font-weight:400}
+.usage-estimate{margin:6px 0 0;font-size:11px;line-height:1.6;color:#8a8a8a}
+.usage-actions{display:flex;gap:8px;margin:12px 18px 0}
+.usage-actions button{flex:1;font-size:12px;padding:6px 8px}
 @media(max-width:1250px){
   .home-view .model-list-picker{left:calc(50% + 112px)}
   .send-actions{gap:6px}
@@ -926,6 +943,13 @@ dialog{background:#252525;border-color:#484848}
 .work-thinking-text{white-space:pre-wrap;color:#8c8a83;font-size:12px;line-height:1.7;padding:2px 0 8px;max-height:320px;overflow:auto}
 .step>summary{display:flex;align-items:center;gap:7px;cursor:pointer;list-style:none;padding:4px 6px;margin:0 -6px;border-radius:6px;font-size:12.5px;min-width:0}
 .step>summary::-webkit-details-marker{display:none}
+.step-group>summary{display:flex;align-items:center;gap:7px;cursor:pointer;list-style:none;padding:4px 6px;margin:0 -6px;border-radius:6px;font-size:12.5px;min-width:0}
+.step-group>summary::-webkit-details-marker{display:none}
+.step-group>summary:hover{background:#ffffff08}
+.step-group.running>summary .step-icon{color:var(--accent);animation:step-pulse 1.2s ease-in-out infinite}
+.step-group-chevron{width:11px;height:11px;flex:none;fill:none;stroke:#7d7c76;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;transition:transform var(--motion-fast) var(--ease-out)}
+.step-group[open]>summary .step-group-chevron{transform:rotate(90deg)}
+.step-group-items{margin:2px 0 4px 8px;padding-left:12px;border-left:1px solid #3a3a37}
 .step>summary:hover{background:#ffffff08}
 .step-icon{display:flex;align-items:center;justify-content:center;flex:none;width:18px;height:18px;color:#96958f}
 .step-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
@@ -1002,7 +1026,6 @@ dialog{background:#252525;border-color:#484848}
 .image-chip.loading img{opacity:.7}
 .image-chip button{position:absolute;top:3px;right:3px;width:18px;height:18px;padding:0;border-radius:50%;background:#000a;color:#eee;font-size:12px;line-height:18px}
 .image-chip button:hover{background:#000d}
-.image-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle}
 .composer.dropping{border-color:var(--accent);box-shadow:0 0 0 3px #dba18522}
 .queue-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
 .queue-item{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 12px;border:1px solid #3a3935;border-radius:12px;background:#22221f;font-size:12.5px}
@@ -1083,7 +1106,19 @@ dialog{background:#252525;border-color:#484848}
 .composer-options .context-button{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border-radius:7px;font-size:0;line-height:0;color:#b9b8b2}
 .composer-options .context-button:hover{background:#ffffff10;color:#eeece6}
 .composer-options .context-button svg{display:block;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
-.composer-options .image-button{margin-right:4px}
+.composer-options #add-context{margin-right:4px}
+.add-menu{left:max(32px,calc((100% - 760px)/2));width:min(420px,calc(100% - 64px));max-height:min(460px,calc(100vh - 220px));overflow:auto;padding:6px}
+.add-menu-section{padding:8px 10px 4px;font-size:11.5px;color:#8d8d8d}
+.add-menu-line{height:1px;margin:5px 6px;background:#3d3d3d}
+.add-menu-item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:9px;text-align:left;font-size:13px;color:#e6e6e6}
+.add-menu-item:hover,.add-menu-item.active,.add-menu-item:focus-visible{background:#383838;outline:none}
+.add-menu-item svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;color:#bdbdbd}
+.add-menu-item strong{font-weight:500;flex:none}
+.add-menu-item span{min-width:0;flex:1;font-size:12px;color:#8f8f8f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.add-menu-switch{margin-left:auto;flex:none;width:26px;height:15px;border-radius:999px;background:#4a4a4a;position:relative}
+.add-menu-switch::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:#cfcfcf;transition:translate var(--motion-fast) var(--ease-out)}
+.add-menu-switch.on{background:var(--accent,#d9d9d9)}
+.add-menu-switch.on::after{translate:11px 0;background:#1d1d1d}
 .app-rail{flex:none;width:56px;display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 0 14px;background:#0d0d0d;border-right:1px solid #1f1f1f;-webkit-app-region:drag;position:relative;z-index:30}
 .rail-button{-webkit-app-region:no-drag;position:relative;display:flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border-radius:10px;color:#9a9a95;background:transparent}
 .rail-button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
@@ -1117,6 +1152,7 @@ button.small{flex:none;padding:5px 10px;font-size:12px}
 :root{--ease-out:cubic-bezier(.2,.8,.2,1);--ease-in-out:cubic-bezier(.45,0,.2,1);--motion-fast:.14s;--motion:.24s;--motion-slow:.32s;interpolate-size:allow-keywords}
 @keyframes fade-in{from{opacity:0}}
 @keyframes rise-in{from{opacity:0;translate:0 8px}}
+@keyframes drop-in{from{opacity:0;translate:0 -8px}}
 @keyframes pop-in{from{opacity:0;translate:0 4px;scale:.97}}
 @keyframes dialog-in{from{opacity:0;translate:0 10px;scale:.98}}
 @keyframes slide-in-right{from{opacity:0;translate:18px 0}}
@@ -1138,7 +1174,7 @@ button.small{flex:none;padding:5px 10px;font-size:12px}
 /* Overlays appear instead of popping in */
 .composer-popover:not([hidden]),.thread-menu:not([hidden]){animation:pop-in var(--motion-fast) var(--ease-out)}
 #approval:not([hidden]),.queue-list:not([hidden]){animation:rise-in var(--motion) var(--ease-out)}
-.toast:not([hidden]){animation:rise-in var(--motion) var(--ease-out)}
+.toast:not([hidden]){animation:drop-in var(--motion) var(--ease-out)}
 dialog[open]{animation:dialog-in var(--motion) var(--ease-out)}
 dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .agent-dock:not([hidden]){animation:slide-in-right var(--motion) var(--ease-out)}

@@ -370,3 +370,18 @@ test('a pre-started CLI takes the next message when its settings match and is cl
   assert.equal(closed.length,1,'a spare started with another model is closed');assert.equal(engine.runs.get(other.id).warm,false);
   await engine.shutdown();
 });
+test('context details come from the live CLI and fill in the window; compaction is reported in the turn',async()=>{
+  const sdk=fakeSdk();const{engine,t}=setup(sdk.query);
+  assert.equal(await engine.contextDetails(t.id),null,'no CLI yet');
+  await engine.send(t.id,'hello');await tick();
+  engine.runs.get(t.id).query.getContextUsage=async({detail})=>({model:'m',totalTokens:5000,maxTokens:180000,rawMaxTokens:200000,percentage:3,categories:[{id:'messages',name:'Messages',tokens:3000,kind:'used'},{id:'mcp_tools_deferred',name:'x',tokens:9,kind:'deferred'},{id:'free_space',name:'Free',tokens:195000,kind:'free'}],memoryFiles:[{path:'C:/p/CLAUDE.md',type:'Project',tokens:200}],mcpTools:[{name:'a',serverName:'desk',tokens:50},{name:'b',serverName:'desk',tokens:25}],detail});
+  const d=await engine.contextDetails(t.id,'full');
+  assert.equal(d.maxTokens,200000);assert.deepEqual(d.categories.map(c=>c.id),['messages','free_space']);assert.deepEqual(d.mcpServers,[{name:'desk',tokens:75}]);
+  assert.equal(t.contextUsage.contextWindow,200000);
+  await complete(sdk,'hi');
+  await engine.send(t.id,'/compact');await tick();
+  sdk.outputs.push({type:'system',subtype:'compact_boundary',compact_metadata:{trigger:'manual',pre_tokens:90000,post_tokens:12000}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'',usage:{output_tokens:0},total_cost_usd:0});await tick();await tick();
+  assert.match(t.turns.at(-1).answer,/上下文已压缩：约 90,000 → 12,000 tokens/);assert.equal(t.contextUsage.usedTokens,12000);
+  await engine.shutdown();
+});

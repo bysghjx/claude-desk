@@ -352,6 +352,23 @@
   .provider-grid input,.provider-grid select,.provider-grid textarea{border-color:#cfcfcf;background:#fff;color:#222}
   .older-turns{border-color:#d4d4d4;color:#555}
   .older-turns:hover{background:#0000000a;color:#111}
+  .add-menu-section{color:#777}
+  .add-menu-line{background:#dedede}
+  .add-menu-item{color:#222}
+  .add-menu-item:hover,.add-menu-item.active,.add-menu-item:focus-visible{background:#ebebeb}
+  .add-menu-item svg{color:#555}
+  .add-menu-item span{color:#777}
+  .add-menu-switch{background:#cfcfcf}
+  .add-menu-switch::after{background:#fff}
+  .add-menu-switch.on{background:var(--accent,#333)}
+  .add-menu-switch.on::after{background:#fff}
+  .step-group>summary:hover{background:#0000000a}
+  .step-group-items{border-left-color:#dcdcd8}
+  .usage-breakdown{border-top-color:#dcdcdc}
+  .usage-bar{background:#e4e4e4}
+  .usage-part{color:#555}
+  .usage-part strong{color:#222}
+  .usage-sub>div{color:#555}
   .jump-latest{background:#fff;border-color:#d0d0d0;color:#333;box-shadow:0 4px 14px #0000001f}
   .jump-latest:hover{background:#f2f2f2}
   .jump-latest.has-new::after{border-color:#fff}

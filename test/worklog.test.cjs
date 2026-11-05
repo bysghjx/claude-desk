@@ -72,3 +72,15 @@ test('插话 that Claude read stays in the work list, in the order it arrived',a
   const {work,final}=worklog.splitTurn(turn);
   assert.deepEqual(work.map(i=>i.type),['tool','steer']);assert.equal(work[1].steer.text,'use tabs');assert.equal(final,'final');
 });
+test('runs of one kind of step fold into one row; thinking after the run stays outside',async()=>{
+  const worklog=await load();
+  const bash=(id,status='done')=>({type:'tool',id,tool:{id,name:'Bash',status,input:{command:'echo '+id}}});
+  const read=(id,file)=>({type:'tool',id,tool:{id,name:'Read',status:'done',input:{file_path:file}}});
+  const work=[bash('a'),{type:'thinking',text:'t1'},bash('b'),{type:'thinking',text:'t2'},bash('c'),{type:'thinking',text:'t3'},read('r1','x.js'),read('r2','x.js'),read('r3','y.js'),bash('d')];
+  const groups=worklog.groupSteps(work);
+  assert.deepEqual(groups.map(g=>g.indices?g.kind+':'+g.indices.join(','):String(g.index)),['command:0,1,2,3,4','5','read:6,7,8','9']);
+  assert.match(worklog.groupSummaryHtml(groups[0]),/运行了 3 个命令/);
+  assert.match(worklog.groupSummaryHtml(groups[2]),/读取了 2 个文件/,'files are counted once');
+  const live=worklog.groupSteps([bash('a'),bash('b','running')]);
+  assert.match(worklog.groupSummaryHtml(live[0]),/正在运行命令 · 已 2 步/);
+});

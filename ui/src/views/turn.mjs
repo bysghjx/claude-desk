@@ -3,7 +3,7 @@
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
 import { elapsed } from '../core/format.mjs';
-import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml } from '../lib/worklog.mjs';
+import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
 function userHtml(turn) {
@@ -78,15 +78,29 @@ function updateWork(view, turn, work, live) {
   label.textContent = live ? `正在处理 · ${elapsed(turn.startedAt)}` : steps ? `已处理 ${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}` : '已思考';
   group.querySelector('.work-count').textContent = steps ? `${steps} 个步骤` : '';
   const list = group.lastChild, seen = new Set();
-  let previous = null;
-  work.forEach((item, index) => {
-    const key = itemKey(item, index); seen.add(key);
+  const place = (node, parent, before) => { if (node.previousSibling !== before || node.parentNode !== parent) before ? before.after(node) : parent.prepend(node); };
+  const itemNode = index => {
+    const item = work[index], key = itemKey(item, index); seen.add(key);
     let node = view.items.get(key);
     if (!node) { node = createItem(item, view.cwd); view.items.set(key, node); if (view.ready) animateIn(node); }
     else updateItem(node, item, view.cwd);
-    if (node.previousSibling !== previous || node.parentNode !== list) previous ? previous.after(node) : list.prepend(node);
-    previous = node;
-  });
+    return node;
+  };
+  // Runs of one kind of step sit in a folded row; the steps keep their own nodes.
+  let previous = null;
+  for (const entry of groupSteps(work)) {
+    let node;
+    if (entry.indices) {
+      const key = 'group:' + itemKey(work[entry.indices[0]], entry.indices[0]); seen.add(key);
+      node = view.items.get(key);
+      if (!node) { node = element('details', 'step-group'); node.append(element('summary'), element('div', 'step-group-items')); view.items.set(key, node); }
+      node.classList.toggle('running', entry.running);
+      setHtml(node.firstChild, groupSummaryHtml(entry));
+      let before = null;
+      for (const index of entry.indices) { const child = itemNode(index); place(child, node.lastChild, before); before = child; }
+    } else node = itemNode(entry.index);
+    place(node, list, previous); previous = node;
+  }
   for (const [key, node] of view.items) if (!seen.has(key)) { node.remove(); view.items.delete(key); }
 }
 

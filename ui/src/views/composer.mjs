@@ -30,10 +30,13 @@ export function createComposer({ store, api, toast, actions }) {
     {name:'stop',description:'停止当前会话正在执行的任务',action:()=>actions().stop()},
     {name:'help',description:'查看输入框快捷用法',action:()=>toast('/ 选择命令 · @ 引用文件 · @@ 引用会话 · ↑ ↓ 召回历史消息 · Shift+Enter 换行')}
   ];
+  // A gateway's prefixed ID (e.g. ocx-claude-claude--claude-opus-5-5) keeps its prefix
+  // after the name, so it is not mistaken for the plain model.
   function modelName(id) {
-    const m=/^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(.*)$/.exec(id);
+    const m=/^(.*?)claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(.*)$/.exec(id);
     if(!m)return id;
-    return `Claude ${m[1][0].toUpperCase()+m[1].slice(1)} ${m[2]}${m[3]?'.'+m[3]:''}${m[4]?' '+m[4].replace(/^-/, ''):''}`;
+    const prefix=m[1].replace(/[-_:/.]+$/,'');
+    return `Claude ${m[2][0].toUpperCase()+m[2].slice(1)} ${m[3]}${m[4]?'.'+m[4]:''}${m[5]?' '+m[5].replace(/^-/, ''):''}${prefix?' · '+prefix:''}`;
   }
   function options(){return{model:$('#model').value,effort:$('#effort').value,mode:$('#mode').value};}
   function capture(){return{text:$('#prompt').value,references:structuredClone(references),images:images.filter(i=>i.data||i.path).map(({preview,ready,...image})=>image),options:options()};}
@@ -54,7 +57,46 @@ export function createComposer({ store, api, toast, actions }) {
     $('#reference-chips').hidden=!references.length;
     $('#reference-chips').innerHTML=references.map((r,i)=>`<span class="reference-chip"><span class="reference-symbol">${r.kind==='file'?'@':'@@'}</span><span title="${escape(r.label||r.path)}">${escape(r.label||r.path)}</span><button type="button" data-remove-reference="${i}" aria-label="移除引用 ${escape(r.label||r.path)}">×</button></span>`).join('');
   }
+  // The ＋ menu, like Codex's: attach or reference something, switch plan mode, run a skill.
+  let addSkills=null,addIndex=0;
+  const ICONS={image:'<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="m3 12 3.5-3.5 2.5 2.5 1.5-1.5L13 12"/>',file:'<path d="M9.5 2.5H4.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-7Z"/><path d="M9.5 2.5v3h3"/>',thread:'<path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H7l-3 2.5V11h0a1.5 1.5 0 0 1-1-1.4Z"/>',plan:'<path d="M6.2 12.5h3.6M6.7 14.2h2.6M8 1.8a4.2 4.2 0 0 0-2.6 7.5c.5.4.8.9.8 1.5v.2h3.6v-.2c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z"/>',skill:'<path d="m8 1.5 1.9 4.3 4.6.5-3.5 3.1 1 4.6L8 11.6 4 14l1-4.6L1.5 6.3l4.6-.5Z"/>',manage:'<circle cx="8" cy="8" r="2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>'};
+  function addMenuItems(){
+    const plan=$('#mode').value==='plan';
+    return[
+      {section:'添加'},
+      {key:'image',icon:'image',label:'图片',hint:'从电脑选择，也可以直接粘贴或拖入'},
+      {key:'file',icon:'file',label:'项目文件',hint:'用 @ 引用当前项目里的文件'},
+      {key:'thread',icon:'thread',label:'其他会话',hint:'用 @@ 把另一个会话作为上下文'},
+      {key:'plan',icon:'plan',label:'计划模式',hint:plan?'已开启 · 只读探索并给出计划':'只读探索并给出计划，确认后再执行',on:plan},
+      ...(addSkills?.length?[{section:'技能'},...addSkills.slice(0,8).map(skill=>({key:'skill',icon:'skill',label:skill.name,hint:skill.description,skill:skill.name}))]:[]),
+      {section:''},
+      {key:'manage',icon:'manage',label:'管理插件和技能…',hint:''}
+    ];
+  }
+  function renderAddMenu(){
+    let index=-1;
+    $('#add-menu').innerHTML=addMenuItems().map(item=>item.section!==undefined?(item.section?`<div class="add-menu-section">${escape(item.section)}</div>`:'<div class="add-menu-line"></div>'):`<button type="button" role="menuitem" class="add-menu-item${++index===addIndex?' active':''}" data-add="${item.key}"${item.skill?` data-skill="${escape(item.skill)}"`:''}><svg viewBox="0 0 16 16" aria-hidden="true">${ICONS[item.icon]}</svg><strong>${escape(item.label)}</strong>${item.hint?`<span title="${escape(item.hint)}">${escape(item.hint)}</span>`:''}${item.on!==undefined?`<i class="add-menu-switch${item.on?' on':''}" aria-hidden="true"></i>`:''}</button>`).join('');
+  }
+  function openAddMenu(){
+    const wasOpen=!$('#add-menu').hidden;closeAll();if(wasOpen)return;
+    addIndex=0;renderAddMenu();$('#add-menu').hidden=false;$('#add-context').setAttribute('aria-expanded','true');
+    $('#add-menu .add-menu-item')?.focus();
+    // Skills of the current project, read once per opening (the main process caches the catalog).
+    api('extensions:list',store.workspace()?.id||null,false).then(catalog=>{addSkills=catalog.skills||[];if(!$('#add-menu').hidden){renderAddMenu();$('#add-menu .add-menu-item.active')?.focus();}}).catch(()=>{});
+  }
+  function insertToken(token){const p=$('#prompt');p.value+=(p.value&&!/\s$/.test(p.value)?' ':'')+token;p.focus();p.selectionStart=p.selectionEnd=p.value.length;input();}
+  let modeBeforePlan='default';
+  function chooseAdd(button){
+    const key=button.dataset.add;closePickers();
+    if(key==='image')return $('#image-input').click();
+    if(key==='file')return insertToken('@');
+    if(key==='thread')return insertToken('@@');
+    if(key==='plan'){const plan=$('#mode').value==='plan';if(!plan)modeBeforePlan=$('#mode').value;$('#mode').value=plan?modeBeforePlan:'plan';optionChanged();toast(plan?'已关闭计划模式':'已开启计划模式，Claude 会先给出计划');return $('#prompt').focus();}
+    if(key==='skill')return insertToken('/'+button.dataset.skill+' ');
+    if(key==='manage')return $('#manage-skills').click();
+  }
   function closePickers(){
+    $('#add-menu').hidden=true;$('#add-context').setAttribute('aria-expanded','false');
     for(const name of ['model','mode']){$('#'+name+'-picker').hidden=true;$('#'+name+'-toggle').setAttribute('aria-expanded','false');}
     $('#model-list-picker').hidden=true;$('#model-list-toggle').setAttribute('aria-expanded','false');
     $('#usage-picker').hidden=true;$('#context-usage').setAttribute('aria-expanded','false');
@@ -74,6 +116,30 @@ export function createComposer({ store, api, toast, actions }) {
     $('#context-usage').title=summary;$('#context-usage').setAttribute('aria-label',summary);
     const rows=[['最近上下文',used===null?'暂无统计':`${number(used)} tokens`],['上下文上限',limit===null?'CLI 尚未返回':`${number(limit)} tokens`],['剩余空间',used!==null&&limit!==null?`${number(Math.max(0,limit-used))} tokens`:'暂无统计'],['统计模型',usage?.model||'发送后更新'],['本轮输入 / 输出',last?`${number(last.input)} / ${number(last.output)} tokens`:'暂无统计']];
     $('#usage-details').innerHTML=rows.map(([name,value])=>`<div class="usage-detail-row"><span>${escape(name)}</span><strong>${escape(value)}</strong></div>`).join('');
+  }
+  // 上下文明细: what fills the window, by category, as the CLI's /context counts it.
+  const CONTEXT_PARTS={system_prompt:['系统提示词','#8b8fa3'],system_tools:['内置工具','#6f8fb8'],mcp_tools:['MCP 工具','#3fa7a0'],mcp_instructions:['MCP 说明','#5bb7a9'],custom_agents:['自定义子智能体','#b48ad6'],memory_files:['记忆文件（CLAUDE.md）','#d6a35a'],skills:['技能','#c97a9c'],messages:['对话消息','#7fb069'],autocompact_buffer:['自动压缩预留','#5c5c5c'],compact_buffer:['压缩预留','#5c5c5c'],free_space:['剩余空间','#343434']};
+  let breakdownToken=0;
+  function breakdownHtml(d){
+    const total=d.maxTokens||1,pct=n=>`${Math.max(0,n/total*100).toFixed(1)}%`,k=n=>n>=1000?(n/1000).toFixed(n>=100000?0:1)+'k':String(n);
+    const rows=d.categories.filter(c=>c.tokens>0).map(c=>{const [name,color]=CONTEXT_PARTS[c.id]||[c.name,'#777'];return{name,color,tokens:c.tokens,kind:c.kind};});
+    const bar=rows.map(r=>`<i data-w="${pct(r.tokens)}" data-c="${r.color}" title="${escape(r.name)} · ${r.tokens.toLocaleString()} tokens"></i>`).join('');
+    const list=rows.map(r=>`<div class="usage-part${r.kind==='free'?' free':''}"><span class="usage-dot" data-c="${r.color}"></span><span>${escape(r.name)}</span><strong>${k(r.tokens)}</strong><small>${pct(r.tokens)}</small></div>`).join('');
+    const extra=(title,items)=>items.length?`<div class="usage-sub"><span>${title}</span>${items.map(x=>`<div><span title="${escape(x.label)}">${escape(x.label)}</span><strong>${k(x.tokens)}</strong></div>`).join('')}</div>`:'';
+    return `<div class="usage-bar">${bar}</div>${list}${extra('记忆文件',d.memoryFiles.map(f=>({label:f.path.split(/[\\/]/).slice(-2).join('/'),tokens:f.tokens})))}${extra('MCP 服务器',d.mcpServers.map(s=>({label:s.name,tokens:s.tokens})))}${d.detail==='full'?'':'<p class="usage-estimate">按最近一次响应估算；「详细分析」逐项精确计数。</p>'}`;
+  }
+  async function loadBreakdown(detail='summary'){
+    const id=store.selected,box=$('#usage-breakdown'),token=++breakdownToken;
+    $('#usage-compact').disabled=true;$('#usage-analyze').disabled=true;
+    if(!id){box.innerHTML='<p class="usage-estimate">进入会话后可以查看明细。</p>';return;}
+    box.innerHTML=`<p class="usage-estimate">${detail==='full'?'正在逐项计数…':'正在读取明细…'}</p>`;
+    try{
+      const d=await api('context:details',id,detail);if(token!==breakdownToken)return;
+      if(!d){box.innerHTML='<p class="usage-estimate">这个会话的 Claude 还没启动，发送一条消息后可以查看明细和压缩。重新打开的会话只带最近的历史，一般不需要压缩。</p>';return;}
+      box.innerHTML=breakdownHtml(d);for(const el of box.querySelectorAll('[data-c]')){el.style.background=el.dataset.c;if(el.dataset.w)el.style.width=el.dataset.w;}$('#usage-analyze').disabled=false;$('#usage-compact').disabled=store.running();
+      $('#usage-compact').title=store.running()?'运行结束后可以压缩':'让 Claude 把之前的对话总结成摘要，腾出上下文空间（/compact）';
+      renderUsage();
+    }catch(e){if(token===breakdownToken){box.innerHTML=`<p class="usage-estimate">${escape(e.message)}</p>`;$('#usage-analyze').disabled=false;}}
   }
   function openModelList(){
     closeAll();syncPickers();$('#model-list-picker').hidden=false;$('#model-toggle').setAttribute('aria-expanded','true');$('#model-list-toggle').setAttribute('aria-expanded','true');
@@ -165,7 +231,9 @@ export function createComposer({ store, api, toast, actions }) {
   function clear(){$('#prompt').value='';references=[];renderReferences();images=[];renderImages();closeAll();historyIndex=-1;historyDraft=null;$('#prompt').style.height='auto';}
   $('#model-toggle').onclick=()=>openPicker('model');$('#mode-toggle').onclick=()=>openPicker('mode');
   $('#model-list-toggle').onclick=openModelList;
-  $('#context-usage').onclick=()=>{const wasOpen=!$('#usage-picker').hidden;closeAll();if(wasOpen)return;renderUsage();$('#usage-picker').hidden=false;$('#context-usage').setAttribute('aria-expanded','true');};
+  $('#context-usage').onclick=()=>{const wasOpen=!$('#usage-picker').hidden;closeAll();if(wasOpen)return;renderUsage();$('#usage-picker').hidden=false;$('#context-usage').setAttribute('aria-expanded','true');loadBreakdown();};
+  $('#usage-analyze').onclick=()=>loadBreakdown('full');
+  $('#usage-compact').onclick=()=>{closePickers();toast('正在压缩上下文…');actions().sendMessage('/compact').catch(e=>toast(e.message));};
   $('#model-search').oninput=renderModels;
   $('#model-search').onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();$('#model-list .model-choice')?.focus();}if(event.key==='Enter'){event.preventDefault();$('#model-list .model-choice')?.click();}};
   $('#model-list').onkeydown=event=>{if(!['ArrowDown','ArrowUp'].includes(event.key))return;event.preventDefault();const choices=[...$('#model-list').querySelectorAll('.model-choice')],at=choices.indexOf(document.activeElement);choices[(at+(event.key==='ArrowDown'?1:-1)+choices.length)%choices.length]?.focus();};
@@ -177,12 +245,18 @@ export function createComposer({ store, api, toast, actions }) {
   document.querySelectorAll('[data-effort]').forEach(button=>button.onclick=()=>setEffort(levels.indexOf(button.dataset.effort)));
   $('#mode').onchange=optionChanged;
   $('#reference-chips').onclick=event=>{const b=event.target.closest('[data-remove-reference]');if(b){references.splice(Number(b.dataset.removeReference),1);renderReferences();save();}};
-  $('#add-context').onclick=()=>{const p=$('#prompt');p.value+=(p.value&&!/\s$/.test(p.value)?' ':'')+'@';p.focus();p.selectionStart=p.selectionEnd=p.value.length;input();};
+  $('#add-context').onclick=openAddMenu;
+  $('#add-menu').onclick=event=>{const b=event.target.closest('[data-add]');if(b)chooseAdd(b);};
+  $('#add-menu').onkeydown=event=>{
+    const items=[...$('#add-menu').querySelectorAll('.add-menu-item')];
+    if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();addIndex=(items.indexOf(document.activeElement)+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;items.forEach((b,i)=>b.classList.toggle('active',i===addIndex));items[addIndex].focus();}
+    if(event.key==='Escape'){event.preventDefault();closePickers();$('#add-context').focus();}
+  };
   $('#prompt-menu-list').onmousedown=event=>event.preventDefault();
   $('#prompt-menu-list').onclick=event=>{const b=event.target.closest('[data-menu-index]');if(b)chooseMenu(Number(b.dataset.menuIndex)).catch(e=>toast(e.message));};
   document.addEventListener('pointerdown',event=>{
-    if(!event.target.closest('.composer-popover,.picker-toggle'))closePickers();
-    if(!event.target.closest('#prompt-menu,#prompt,#add-context'))hidePromptMenu();
+    if(!event.target.closest('.composer-popover,.picker-toggle,#add-context'))closePickers();
+    if(!event.target.closest('#prompt-menu,#prompt,#add-menu'))hidePromptMenu();
   },true);
   document.addEventListener('keydown',event=>{if(event.key==='Escape'){
     if(!$('#model-list-picker').hidden){closePickers();$('#model-picker').hidden=false;$('#model-toggle').setAttribute('aria-expanded','true');$('#model-list-toggle').focus();return;}
@@ -221,7 +295,6 @@ export function createComposer({ store, api, toast, actions }) {
   // Sending waits for images still being read.
   const imagesReady=()=>Promise.all(images.map(image=>image.ready));
   $('#image-chips').onclick=event=>{const b=event.target.closest('[data-remove-image]');if(b){dropImage(images[Number(b.dataset.removeImage)]);renderImages();store.emit('composer');}};
-  $('#add-image').onclick=()=>$('#image-input').click();
   $('#image-input').onchange=()=>{addImages($('#image-input').files);$('#image-input').value='';};
   $('#prompt').addEventListener('paste',event=>{const files=[...(event.clipboardData?.items||[])].filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addImages(files);}});
   $('#composer').addEventListener('dragover',event=>{if([...(event.dataTransfer?.items||[])].some(item=>item.kind==='file')){event.preventDefault();$('#composer').classList.add('dropping');}});
@@ -231,6 +304,8 @@ export function createComposer({ store, api, toast, actions }) {
   // Grows with the text; an empty box keeps its default height (placeholder text does not count).
   function autosize(){const prompt=$('#prompt');prompt.style.height='auto';prompt.style.height=prompt.value?Math.min(200,Math.max(52,prompt.scrollHeight))+'px':'';}
   function setText(text){$('#prompt').value=text;autosize();store.emit('composer');}
+  // 引用到输入框 from the right-click menu: the selection as a Markdown quote.
+  function quote(text){const p=$('#prompt'),block=String(text).trim().split(/\r?\n/).map(line=>'> '+line).join('\n')+'\n\n';p.value=p.value.trim()?p.value.replace(/\s*$/,'\n\n')+block:block;autosize();p.focus();p.selectionStart=p.selectionEnd=p.value.length;input();store.emit('composer');}
   const isEmpty=()=>!$('#prompt').value.trim()&&!images.length;
   // Enter sends (or queues while running); with an empty box the send button stops the run.
   $('#composer').addEventListener('submit',event=>event.preventDefault());
@@ -240,7 +315,7 @@ export function createComposer({ store, api, toast, actions }) {
     else if(event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.altKey&&store.running()&&!isEmpty()){event.preventDefault();await actions().sendMessage(undefined,{queue:true});}}));
   $('#prompt').addEventListener('input',()=>{autosize();input();store.emit('composer');});
   function setMode(mode){if(modes.some(m=>m.id===mode)&&$('#mode').value!==mode){$('#mode').value=mode;optionChanged();}}
-  return{capture,imagesReady,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,addReference,
+  return{capture,imagesReady,quote,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,addReference,
     focus:()=>$('#prompt').focus(),focusProject:()=>$('#home-project')?.focus(),
     initialize(){ready=true;syncPickers();renderModels();save();}};
 }

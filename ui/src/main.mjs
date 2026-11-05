@@ -71,7 +71,7 @@ desk.onThread(thread => {
 });
 // A conversation that finished while the window was in the background is read once you come back to it.
 window.addEventListener('focus', () => { if (isUnread(store.current())) actions.markSeen(store.selected); });
-desk.onCommand?.(command => { if (command === 'new-task') { actions.showHome(); composer.focus(); } });
+desk.onCommand?.(command => { if (command === 'new-task') { actions.showHome(); composer.focus(); } if (command?.quote) composer.quote(command.quote); });
 desk.onNavigateThread?.(id => { if (store.thread(id)) actions.selectThread(id); else toast('所属会话已删除'); });
 desk.onStorageError?.(message => { $('#save-indicator').textContent = '保存失败'; $('#save-indicator').classList.add('error'); toast('会话保存失败：' + message); });
 // Elapsed times advance without re-rendering anything else.

@@ -172,7 +172,7 @@ class Engine extends EventEmitter {
     if (!['default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions'].includes(mode)) throw Error('权限模式不合法');
     const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort) ? options.effort : t.effort || 'high';
     const extensionOptions=this.sessionOptions(t);const extensionKey=JSON.stringify(extensionOptions);
-    let run = this.runs.get(id);
+    let run = this.runs.get(id); const reused = Boolean(run);
     // The system prompt is fixed when the CLI starts, so a changed global or project prompt restarts it.
     if (run && (run.model !== model || run.mode !== mode || run.effort !== effort || run.extensionKey!==extensionKey || run.instructions !== JSON.stringify(this.instructionsOf(t)) || run.providerKey !== (this.providerOptions(t)?.key || ''))) { await this.closeRun(id); run = null; }
     const history = !run?historyTail(t.turns):'';
@@ -191,13 +191,16 @@ class Engine extends EventEmitter {
       run = this.startRun(t,extensionOptions,extensionKey);
     }
     run.turnId = turn.id; run.unread = null; run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
-    this.setStatus(t, 'starting', '正在启动 Claude');
+    // A conversation keeps its CLI between messages; only a new one says it is starting.
+    const ready = reused ? '已发送，等待模型响应' : '正在启动 Claude';
+    this.setStatus(t, reused ? 'waiting' : 'starting', this.checkpoint ? '正在记录文件快照（用于回退和撤销）' : ready);
     this.store.save();
     // Record the project files first so this turn can be rewound later.
     if (this.checkpoint) {
       try { turn.checkpoint = await Promise.race([this.checkpoint(t), new Promise((_, reject) => setTimeout(() => reject(Error('记录文件快照超时')), 30000))]); }
       catch (e) { turn.checkpointError = String(e.message || e).slice(0, 300); }
       if (this.runs.get(id) !== run || run.turnId !== turn.id) return t;
+      if (['starting', 'waiting'].includes(t.status)) this.setStatus(t, t.status, ready);
     }
     const content = images.length ? [...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: fs.readFileSync(image.path).toString('base64') } })), { type: 'text', text: prompt }] : prompt;
     run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, uuid: randomUUID(), message: { role: 'user', content } });
@@ -434,6 +437,26 @@ class Engine extends EventEmitter {
     if (turn) { turn.status = 'error'; turn.error = message; turn.finishedAt = Date.now(); for (const tool of turn.tools) if (['running', 'approval'].includes(tool.status)) tool.status = 'error'; }
     this.setStatus(t, 'error', message);
   }
+  // The breakdown the CLI computes for /context (by category, against the window it
+  // compacts at). Needs the conversation's live CLI; null without one. A known window
+  // also fills in the context meter when the result did not report one.
+  async contextDetails(id, detail = 'summary') {
+    const t = this.thread(id), run = this.runs.get(id);
+    if (!run || run.finished || typeof run.query?.getContextUsage !== 'function') return null;
+    const usage = await Promise.race([run.query.getContextUsage({ detail: detail === 'full' ? 'full' : 'summary' }), new Promise((_, reject) => setTimeout(() => reject(Error('读取上下文明细超时')), 30000))]);
+    const window = usage.rawMaxTokens || usage.maxTokens;
+    if (Number.isFinite(window) && window > 0) {
+      t.contextUsage = { ...(t.contextUsage || {}), usedTokens: Number.isFinite(t.contextUsage?.usedTokens) ? t.contextUsage.usedTokens : usage.totalTokens, contextWindow: window, model: t.contextUsage?.model || usage.model, updatedAt: Date.now() };
+      this.publish(id);
+    }
+    const servers = new Map(); for (const tool of usage.mcpTools || []) if (tool.isLoaded !== false) servers.set(tool.serverName, (servers.get(tool.serverName) || 0) + tool.tokens);
+    return {
+      model: usage.model, totalTokens: usage.totalTokens, maxTokens: window, percentage: usage.percentage, detail,
+      categories: (usage.categories || []).filter(c => c.kind !== 'deferred' && !c.isDeferred).map(c => ({ id: c.id || '', name: c.name, tokens: c.tokens, kind: c.kind })),
+      memoryFiles: (usage.memoryFiles || []).slice(0, 8).map(f => ({ path: f.path, tokens: f.tokens })),
+      mcpServers: [...servers].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, tokens]) => ({ name, tokens }))
+    };
+  }
   recordContext(t,run,usage,model) {
     if(!usage || !Number.isFinite(usage.input_tokens) || usage.input_tokens<0)return;
     const fields=['input_tokens','cache_read_input_tokens','cache_creation_input_tokens','output_tokens'];
@@ -510,12 +533,19 @@ class Engine extends EventEmitter {
       if (msg.is_error || msg.subtype !== 'success') { this.fail(t, this.redact((msg.errors || []).join('\n') || msg.result || `运行失败：${msg.subtype}`)); }
       else {
         if (!turn.answer && msg.result) { turn.answer = msg.result; addItem(turn, 'text', msg.result); }
+        if (!turn.answer && turn.compacted) { const c = turn.compacted, text = `上下文已压缩${Number.isFinite(c.preTokens) ? `：约 ${c.preTokens.toLocaleString()}${Number.isFinite(c.postTokens) ? ` → ${c.postTokens.toLocaleString()}` : ''} tokens` : ''}`; turn.answer = text; addItem(turn, 'text', text); }
         turn.status = 'done'; this.settleSteers(t, run, turn);
+        if (!t.contextUsage?.contextWindow) this.contextDetails(t.id).catch(() => {});
         this.setStatus(t, 'done', '本轮已完成');
       }
       this.publish(t.id); this.store.save(); return;
     }
     if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting') this.setStatus(t, 'thinking', '正在压缩上下文');
+    if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+      const meta = msg.compact_metadata || {}; turn.compacted = { trigger: meta.trigger, preTokens: meta.pre_tokens, postTokens: meta.post_tokens };
+      t.contextUsage = Number.isFinite(meta.post_tokens) ? { ...(t.contextUsage || {}), usedTokens: meta.post_tokens, updatedAt: Date.now() } : null;
+      this.publish(t.id);
+    }
   }
   requestApproval(t, run, name, args, ctx = {}) {
     if (run.stopping || run.abort.signal.aborted) return Promise.resolve({ behavior: 'deny', message: '运行已停止' });
