@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 60
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      DESK_BUILD_DIR: ${{ runner.temp }}/claude-desk-build
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,6 +33,9 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - name: Set build directory
+        shell: pwsh
+        run: '"DESK_BUILD_DIR=$env:RUNNER_TEMP/claude-desk-build" >> $env:GITHUB_ENV'
       - name: Validate tag and fetch previous file manifest
         run: node scripts/github-release.cjs prepare
         env:
