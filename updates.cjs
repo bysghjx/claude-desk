@@ -11,6 +11,7 @@ const { execFile, spawn } = require('node:child_process');
 
 const UPDATE_FILE = 'claude-desk-update.json';
 const UPDATER_EXE='ClaudeDesk.Updater.exe';
+const SOURCE_FILE='source-zip.json';
 // Files that are not part of a release: Electron's crash log, and an update package's own description and instructions.
 const SKIP = new Set(['debug.log', UPDATE_FILE, '怎么安装.txt','.claude-desk-update.lock']);
 
@@ -111,13 +112,21 @@ function findUpdates(dirs, version) {
   return { ready: ready.sort(order), other: other.sort(order) };
 }
 
+function sourceZip(dir) {
+  try { const { file, size, modified } = JSON.parse(fs.readFileSync(path.join(dir, SOURCE_FILE), 'utf8')); const stat = fs.statSync(file); return stat.isFile() && /\.zip$/i.test(file) && stat.size === size && stat.mtimeMs === modified ? file : ''; } catch { return ''; }
+}
 class Updater {
   constructor({ installDir, version, tempRoot = os.tmpdir(),helperPath=path.join(installDir,UPDATER_EXE) }) { Object.assign(this, { installDir, version, tempRoot,helperPath }); this.staged = null; }
   async stage(zip) {
     this.staged=null;
     fs.mkdirSync(this.tempRoot,{recursive:true});
     const dir = fs.mkdtempSync(path.join(this.tempRoot, 'claude-desk-update-'));
-    try { await extract(zip, dir); this.staged = { dir, ...await verifyUpdate(dir, this.version) }; return this.staged; }
+    try {
+      await extract(zip, dir); this.staged = { dir, ...await verifyUpdate(dir, this.version) };
+      // Remember which zip this was, so it can go to the recycle bin once it is installed.
+      const stat = fs.statSync(zip); fs.writeFileSync(path.join(dir, SOURCE_FILE), JSON.stringify({ file: path.resolve(zip), size: stat.size, modified: stat.mtimeMs }));
+      return this.staged;
+    }
     catch (e) {
       try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:4,retryDelay:250});}
       catch(cleanup){throw Error(e.message+'；更新暂存目录未能清理：'+dir+'（'+cleanup.message+'）',{cause:e});}
@@ -146,13 +155,14 @@ class Updater {
     }catch(e){this.applying=false;throw e;}
   }
   // On the next start: remove staged packages and report an install that failed;
-  // a successful one is left in this.installed ("0.25.0 -> 0.25.1").
+  // a successful one is left in this.installed ("0.25.0 -> 0.25.1"), and the zip it came
+  // from in this.installedZip if that file is still there unchanged.
   cleanup() {
-    let failed = ''; this.installed = '';
+    let failed = ''; this.installed = ''; this.installedZip = '';
     let names = []; try { names = fs.readdirSync(this.tempRoot).filter(name => name.startsWith('claude-desk-update-')); } catch {}
     for (const name of names) {
       const dir = path.join(this.tempRoot, name);
-      try { const log = fs.readFileSync(path.join(dir, 'install.log'), 'utf8').replace(/^﻿/, '').trim(); if (log.startsWith('failed')) failed = log.replace(/^failed:\s*/, ''); else if (log.startsWith('ok ')) this.installed = log.slice(3); } catch {}
+      try { const log = fs.readFileSync(path.join(dir, 'install.log'), 'utf8').replace(/^﻿/, '').trim(); if (log.startsWith('failed')) failed = log.replace(/^failed:\s*/, ''); else if (log.startsWith('ok ')) { this.installed = log.slice(3); this.installedZip = sourceZip(dir) || this.installedZip; } } catch {}
       const lock=path.join(dir,'install.lock');if(fs.existsSync(lock)){let fd;try{fd=fs.openSync(lock,'r+');}catch{continue;}finally{if(fd!==undefined)fs.closeSync(fd);}}
       let result;try{result=JSON.parse(fs.readFileSync(path.join(dir,'install-result.json'),'utf8'));}catch{}
       if(result?.rollbackComplete===false||(!result&&fs.existsSync(path.join(dir,'backup-index.json')))){failed=(failed?failed+'；':'上次更新未完成；')+'恢复备份已保留：'+dir;continue;}

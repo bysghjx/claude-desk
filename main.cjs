@@ -161,6 +161,8 @@ if(primaryInstance)app.whenReady().then(async () => {
   const { query, startup, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   const updater=new Updater({installDir:path.dirname(process.execPath),version:app.getVersion(),tempRoot:path.join(dataRoot,'updates')});
   const updateFailure=updater.cleanup();
+  // An installed update package is no longer needed: move it to the recycle bin.
+  let updatePackageRemoved='';if(updater.installedZip){try{await shell.trashItem(updater.installedZip);updatePackageRemoved=path.basename(updater.installedZip);}catch{}}
   const preview=new BrowserPreview({nativeImage,send:event=>{if(win&&!win.isDestroyed())win.webContents.send('preview:event',event);}});const { z } = require('zod');
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
@@ -197,7 +199,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   engine.on('thread', t => { if(!win?.isDestroyed()) win?.webContents.send('thread:update', forRenderer(t)); agentWindows.refresh(t.id); for(const notice of notifications.update(t))showNotice(notice); });
   handle('thread:get', id => { sentRevs.delete(id); return threadOut(id); });
   handle('agent:open',(threadId,agentId)=>agentWindows.open(threadId,agentId));
-  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;delete snapshot.settings.providers;return({ ...snapshot, providers: providers.list(), material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), updateFailure, updateInstalled: updater.installed, recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
+  handle('state', () => {const snapshot=engine.snapshot();sentRevs.clear();for(const t of snapshot.threads)sentRevs.set(t.id,new Map(t.turns.map(turn=>[turn.id,turn.rev])));delete snapshot.usageLog;delete snapshot.settings.providers;return({ ...snapshot, providers: providers.list(), material: materialOf(), materialSupported, provider: providerInfo(), version: app.getVersion(), updateFailure, updateInstalled: updater.installed, updatePackageRemoved, recovery:{fromBackup:engine.store.recovered,merged:engine.store.recoveredCount||0} });});
   const extensionCwd=id=>id?project(id).path:undefined;
   async function extensionList(id,refresh=false){
     const cwd=extensionCwd(id);let catalog={installed:[],available:[]},warning='';

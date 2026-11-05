@@ -87,7 +87,7 @@ setInterval(() => { conversation.tick(); status.tick(); inspector.tick(); }, 100
   composer.initialize();
   inspector.selectTab(store.panelTab);
   if (!state.provider.cliPath) env.open().catch(e => toast(e.message));
-  if (state.updateInstalled) toast(`已更新到 ${state.updateInstalled.split('->').pop().trim()}`);
+  if (state.updateInstalled) toast(`已更新到 ${state.updateInstalled.split('->').pop().trim()}${state.updatePackageRemoved ? '，更新包已移到回收站' : ''}`);
   if (state.updateFailure) toast('上次安装更新包没有成功，仍是原来的版本：' + state.updateFailure);
   if (state.recovery?.fromBackup || state.recovery?.merged) toast('已恢复并合并本地会话记录。项目和对话现在统一保存在固定目录。');
 })().catch(e => { toast('启动失败：' + e.message); $('#connection-label').textContent = '连接失败'; });

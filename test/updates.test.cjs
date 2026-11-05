@@ -38,7 +38,7 @@ test('a real update zip is extracted, checked and installed by the independent e
   const log=path.join(staged.dir,'install.log');for(let i=0;i<100&&child.exitCode===null;i++)await new Promise(r=>setTimeout(r,100));
   assert.match(fs.readFileSync(path.join(staged.dir,'install.log'),'utf8'),/ok 1\.0\.0 -> 1\.1\.0/);
   assert.deepEqual((await manifestOf(old,'x')).files,(await manifestOf(next,'x')).files);
-  assert.equal(updater.cleanup(),'');assert.equal(fs.readdirSync(path.join(root,'temp')).length,0);
+  assert.equal(updater.cleanup(),'');assert.equal(updater.installedZip,zip);assert.equal(fs.readdirSync(path.join(root,'temp')).length,0);
   await assert.rejects(()=>new Updater({installDir:old,version:'1.1.0',tempRoot:path.join(root,'temp')}).stage(zip),/当前是 1\.1\.0/);
   assert.equal(fs.readdirSync(path.join(root,'temp')).length,0,'a rejected package leaves nothing behind');
 });
@@ -63,7 +63,17 @@ test('update packages are found in the watched folders by what they contain, not
 });
 test('a finished install is reported once on the next start',()=>{
   const temp=fs.mkdtempSync(path.join(scratch,'t-'));write(temp,{'claude-desk-update-ok/install.log':'﻿ok 1.0.0 -> 1.1.0'});
-  const updater=new Updater({installDir:temp,version:'1.1.0',tempRoot:temp});assert.equal(updater.cleanup(),'');assert.equal(updater.installed,'1.0.0 -> 1.1.0');
+  const updater=new Updater({installDir:temp,version:'1.1.0',tempRoot:temp});assert.equal(updater.cleanup(),'');assert.equal(updater.installed,'1.0.0 -> 1.1.0');assert.equal(updater.installedZip,'');
+});
+test('the zip an install came from is reported for removal only if it is unchanged',()=>{
+  const temp=fs.mkdtempSync(path.join(scratch,'t-')),zip=path.join(temp,'ClaudeDesk-1.0.0-to-1.1.0-update.zip');fs.writeFileSync(zip,'zip');const stat=fs.statSync(zip);
+  const source=JSON.stringify({file:zip,size:stat.size,modified:stat.mtimeMs});
+  write(temp,{'claude-desk-update-a/install.log':'ok 1.0.0 -> 1.1.0','claude-desk-update-a/source-zip.json':source});
+  let updater=new Updater({installDir:temp,version:'1.1.0',tempRoot:temp});updater.cleanup();assert.equal(updater.installedZip,zip);
+  write(temp,{'claude-desk-update-b/install.log':'failed: 文件被占用','claude-desk-update-b/source-zip.json':source});
+  updater=new Updater({installDir:temp,version:'1.0.0',tempRoot:temp});updater.cleanup();assert.equal(updater.installedZip,'','a failed install keeps its package');
+  write(temp,{'claude-desk-update-c/install.log':'ok 1.0.0 -> 1.1.0','claude-desk-update-c/source-zip.json':source});fs.writeFileSync(zip,'changed zip');
+  updater=new Updater({installDir:temp,version:'1.1.0',tempRoot:temp});updater.cleanup();assert.equal(updater.installedZip,'','a replaced file is left alone');
 });
 test('failed staging preserves the validation error even when Windows denies temporary cleanup',{skip:process.platform!=='win32'},async()=>{
   const {root,pkg}=await versions(),zip=path.join(root,'update.zip'),temp=path.join(root,'temp');
