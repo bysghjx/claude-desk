@@ -190,7 +190,7 @@ class Engine extends EventEmitter {
       }
       run = this.startRun(t,extensionOptions,extensionKey);
     }
-    run.turnId = turn.id; run.unread = null; run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
+    run.turnId = turn.id; run.unread = null; run.steersAfterTool = new Set(); run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
     // A conversation keeps its CLI between messages; only a new one says it is starting.
     const ready = reused ? '已发送，等待模型响应' : '正在启动 Claude';
     this.setStatus(t, reused ? 'waiting' : 'starting', this.checkpoint ? '正在记录文件快照（用于回退和撤销）' : ready);
@@ -208,10 +208,12 @@ class Engine extends EventEmitter {
     return t;
   }
   // 插话: a message for the turn that is running. The CLI reads it before the model's
-  // next step (priority 'next') and the turn carries on with it. Replies name the
-  // messages they have read (user_message_uuids), which marks the message delivered
-  // and puts it into the turn at that point; one the turn ended without reading
-  // starts the next turn (see takeSteers).
+  // next step (priority 'next') and the turn carries on with it. It is marked delivered
+  // and put into the turn at that point by the first of: a reply naming it
+  // (user_message_uuids), the CLI starting it (command_lifecycle 'started'), or the
+  // first reply after a tool result that came once it was written: the CLI reads
+  // queued messages between a step's tool results and its next request. One the turn
+  // ended without reading is settled by settleSteers.
   canSteer(id) {
     const t = this.thread(id), run = this.runs.get(id);
     return Boolean(run && !run.finished && !run.stopping && !run.mainDone && run.prompted && run.prompted === run.turnId && ACTIVE.has(t.status) && t.status !== 'stopping');
@@ -229,7 +231,7 @@ class Engine extends EventEmitter {
     this.publish(id); this.store.save(); return t;
   }
   markSteers(t, run, uuids) {
-    if (!Array.isArray(uuids)) return;
+    if (!Array.isArray(uuids) || !uuids.length) return;
     const turn = t.turns.find(x => x.id === run.turnId);
     for (const steer of turn?.steers || []) if (steer.status === 'pending' && uuids.includes(steer.id)) { steer.status = 'delivered'; steer.deliveredAt = Date.now(); (turn.items ||= []).push({ type: 'steer', id: steer.id }); }
   }
@@ -250,7 +252,7 @@ class Engine extends EventEmitter {
     old.steers = old.steers.filter(s => !ids.includes(s.id)); old.items = old.items.filter(i => i.type !== 'steer' || !ids.includes(i.id));
     const next = { id: randomUUID(), user: moved.map(s => s.text).filter(Boolean).join('\n\n'), context: '', references: moved.flatMap(s => s.references || []), images: moved.flatMap(s => s.images || []), answer: '', thinking: '', items: [], tools: [], startedAt: Date.now(), status: 'running', usage: null, fromSteer: true };
     t.turns.push(next);
-    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, mainDone: false });
+    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, mainDone: false, steersAfterTool: new Set() });
     t.finishedAt = null; this.setStatus(t, 'waiting', '继续处理你插入的消息');
   }
   // A stop or failure leaves unread 插话 in the queue so nothing typed is lost.
@@ -471,7 +473,9 @@ class Engine extends EventEmitter {
     if ((msg.type === 'assistant' || msg.type === 'stream_event') && msg.parent_tool_use_id == null) {
       if (run.mainDone && run.unread && (msg.type === 'assistant' || msg.event?.type === 'message_start')) this.openSteerTurn(t, run);
       this.markSteers(t, run, msg.user_message_uuids);
+      if ((msg.type === 'assistant' || msg.event?.type === 'message_start') && run.steersAfterTool?.size) { this.markSteers(t, run, [...run.steersAfterTool]); run.steersAfterTool.clear(); this.publish(t.id); }
     }
+    if (msg.type === 'command_lifecycle') { if (msg.state === 'started' && msg.command_uuid) { this.markSteers(t, run, [msg.command_uuid]); this.publish(t.id); } return; }
     const turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
     if (msg.type === 'system' && msg.subtype === 'init') { run.sessionId = msg.session_id; this.setStatus(t, 'waiting', '请求已发出，等待模型响应'); return; }
     if (msg.type === 'stream_event') {
@@ -511,7 +515,9 @@ class Engine extends EventEmitter {
       this.publish(t.id); return;
     }
     if (msg.type === 'user') {
-      for (const b of msg.message?.content || []) if (b.type === 'tool_result') {
+      const content = msg.message?.content, results = Array.isArray(content) ? content.filter(b => b?.type === 'tool_result') : [];
+      if (results.length && msg.parent_tool_use_id == null) for (const s of turn.steers || []) if (s.status === 'pending') (run.steersAfterTool ||= new Set()).add(s.id);
+      for (const b of results) {
         const tool = turn.tools.find(x => x.id === b.tool_use_id);
         finishAgentTool(t,b.tool_use_id,b.is_error,this.redact(typeof b.content==='string'?b.content:JSON.stringify(b.content||'')));
         if (tool) { tool.output = this.redact(typeof b.content === 'string' ? b.content : JSON.stringify(b.content || '')).slice(-80000); tool.status = b.is_error ? 'error' : 'done'; tool.finishedAt = Date.now(); }
@@ -521,7 +527,7 @@ class Engine extends EventEmitter {
     }
     if (msg.type === 'tool_progress') { if (t.status !== 'approval') this.setStatus(t, 'tool', `${msg.tool_name || '工具'} 执行中 · ${msg.elapsed_time_seconds || 0}s`); return; }
     if (msg.type === 'result') {
-      run.mainDone=true;run.resultStatus=msg.is_error||msg.subtype!=='success'?'error':'done';
+      run.mainDone=true;run.steersAfterTool?.clear();run.resultStatus=msg.is_error||msg.subtype!=='success'?'error':'done';
       turn.finishedAt = Date.now(); t.finishedAt = Date.now();
       const entries=Object.entries(msg.modelUsage||{});
       const modelUsage=entries.find(([id,value])=>id===run.contextModel||value.canonicalModel===run.contextModel)||entries.find(([id,value])=>id===t.model||value.canonicalModel===t.model);
