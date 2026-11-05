@@ -5,7 +5,7 @@ const fs = require('./disk-fs.cjs');
 const {historyTail}=require('./json-stream.cjs');
 const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
-const {ACTIVE_AGENT,activeAgents,findAgent,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
+const {ACTIVE_AGENT,activeAgents,findAgent,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
 const {WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT:DESK_PROMPT,wrapUpOf,proposalOf}=require('./desk-tools.cjs');
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
@@ -43,7 +43,7 @@ class JsonStore {
       if(activeAgents(t).length&&!ACTIVE.has(t.status)){t.status='interrupted';t.error='上次运行的子智能体随应用退出而中断。';}
       settleAgents(t,'interrupted');
       if (ACTIVE.has(t.status)) { t.status = 'interrupted'; t.error = '上次运行随应用退出而中断。可以重试。'; const last=t.turns.at(-1); if(last){last.status='interrupted';last.error=t.error;delete last.approval;} }
-      for (const turn of t.turns) for (const tool of turn.tools || []) if (['running', 'approval'].includes(tool.status)) tool.status = 'interrupted';
+      for (const turn of t.turns) { dropToolAgents(turn); for (const tool of turn.tools || []) if (['running', 'approval'].includes(tool.status)) tool.status = 'interrupted'; }
     }
   }
   save() {
@@ -379,7 +379,8 @@ class Engine extends EventEmitter {
       permissionMode: mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: mode === 'bypassPermissions',
       systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + (this.deskServer ? DESK_PROMPT : '') + instructionsPrompt(this.instructionsOf(t)) },
-      includePartialMessages: true, persistSession: false, abortController: run.abort,
+      // Sub-agents send their text and thinking too, so the 子智能体 step shows what they wrote.
+      includePartialMessages: true, forwardSubagentText: true, persistSession: false, abortController: run.abort,
       canUseTool: (name, args, ctx) => this.requestApproval(t, run, name, args, ctx),
       stderr: text => { run.stderr = (run.stderr || '').concat(text).slice(-8000); this.emit('diagnostic', { threadId: t.id, message: text.slice(-1500) }); }
     };

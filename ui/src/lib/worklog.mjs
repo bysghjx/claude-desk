@@ -170,6 +170,60 @@ export function stepParts(tool,{escape,cwd}){
     body:detailHead+(body||'<p class="step-empty">没有更多信息</p>')
   };
 }
+// The sub-agent an Agent / Task step started, when Claude Desk recorded one.
+export function agentOf(turn,tool){
+  const id=tool?.id;if(!id)return null;
+  return(turn?.subagents||[]).find(a=>a.toolUseId===id||a.id===id||a.aliases?.includes(id))||null;
+}
+// The Agent tool hands back the sub-agent's report inside a frame (notes, an indented
+// report, agentId and usage lines); keep the report.
+export function agentReport(output){
+  let text=String(output||'');
+  if(/^\s*\[/.test(text))try{const blocks=JSON.parse(text);if(Array.isArray(blocks))text=blocks.map(b=>typeof b==='string'?b:b?.text||'').join('\n');}catch{}
+  const start=text.indexOf('The report follows:');if(start>=0)text=text.slice(text.indexOf('\n',start)+1);
+  text=text.replace(/<tools-used-before-summary>[\s\S]*?<\/tools-used-before-summary>/g,'').replace(/\n[ \t]*agentId: [\s\S]*$/,'').replace(/<usage>[\s\S]*?<\/usage>/g,'');
+  const rows=text.replace(/\r\n/g,'\n').split('\n');
+  if(rows.some(l=>l.trim())&&rows.every(l=>!l.trim()||l.startsWith('  ')))text=rows.map(l=>l.slice(2)).join('\n');
+  return text.trim();
+}
+const AGENT_LIVE=new Set(['running','waiting','thinking','generating','tool','approval','paused']);
+const AGENT_STATES={running:'运行中',waiting:'等待中',thinking:'思考中',generating:'生成中',tool:'执行工具',approval:'等待批准',paused:'已暂停',error:'失败',stopped:'已停止',interrupted:'已中断',ended:'已结束'};
+// A sub-agent's steps in the order they came (thinking, notes, tool calls) and its conclusion:
+// the report the Agent tool returned, the summary of a finished background agent, or while
+// it runs the text after its last step.
+export function agentWork(agent,tool){
+  const tools=new Map((agent?.tools||[]).map(t=>[t.id,t]));
+  const items=agent?.items?.length?agent.items:[...(agent?.thinking?[{type:'thinking',text:agent.thinking}]:[]),...(agent?.tools||[]).map(t=>({type:'tool',id:t.id})),...(agent?.answer?[{type:'text',text:agent.answer}]:[])];
+  const work=[];
+  for(const item of items)if(item.type==='tool'){if(tools.has(item.id))work.push({...item,tool:tools.get(item.id)});}else if(String(item.text||'').trim())work.push(item);
+  let at=-1;work.forEach((item,i)=>{if(item.type==='tool')at=i;});
+  const tail=work.slice(at+1),text=tail.filter(i=>i.type==='text').map(i=>i.text).join('\n\n').trim();
+  const background=agent?.background||tool?.input?.run_in_background;
+  const report=!background&&tool&&['done','error'].includes(tool.status)?agentReport(tool.output):'';
+  const finished=agent&&!AGENT_LIVE.has(agent.status);
+  const final=report||(finished&&agent.summary?String(agent.summary).trim():'')||text;
+  // Notes after the last step stay steps unless they are the conclusion itself.
+  const notes=tail.filter(i=>i.type==='thinking'||(i.type==='text'&&final!==text&&i.text.trim()!==final));
+  return{work:[...work.slice(0,at+1),...notes],final,live:Boolean(agent&&AGENT_LIVE.has(agent.status))};
+}
+// The Agent step's row and the parts of its body above the sub-agent's own steps.
+export function agentParts(tool,agent,{escape}){
+  const view=toolView(tool),input=tool?.input&&typeof tool.input==='object'?tool.input:{};
+  const {work,final,live}=agentWork(agent,tool),steps=work.filter(i=>i.type==='tool').length;
+  const status=agent?AGENT_STATES[agent.status]||'':STATE_LABELS[tool.status]||'';
+  const running=live||['running','approval'].includes(tool.status);
+  const label=running?(steps?`子智能体正在工作 · 已 ${steps} 步`:'正在启动子智能体'):steps?`子智能体完成了 ${steps} 个步骤`:'启动了子智能体';
+  const icon=STEP_ICONS.agent;
+  const meta=[agent?.type||input.subagent_type,agent?.background||input.run_in_background?'后台':'',agent?.usage?.totalTokens?`${Number(agent.usage.totalTokens).toLocaleString()} tokens`:''].filter(Boolean);
+  return{
+    className:`step step-agent ${running?'running':tool.status||''}${agent?.status==='error'?' error':''}`,
+    summary:`<span class="step-icon" aria-hidden="true"><svg viewBox="0 0 18 18">${icon}</svg></span><span class="step-label">${escape(label)}</span>${view.target?`<span class="step-target">${escape(view.target)}</span>`:''}${status&&status!=='已完成'?`<span class="step-state">${escape(status)}</span>`:''}`,
+    head:`<div class="step-detail-head"><span>${escape(view.verb)}</span>${view.target?`<code>${escape(view.target)}</code>`:''}${meta.map(m=>`<span class="agent-step-meta">${escape(m)}</span>`).join('')}</div>`,
+    prompt:String(input.prompt||agent?.description||''),
+    work,final,
+    empty:work.length?'':running?'已启动，等待子智能体的第一步':'没有记录到子智能体的步骤'
+  };
+}
 // The card under a finished turn: the files it edited, 撤销 / 重做 for them (`undo`
 // is 'ready' with a snapshot from before the turn, 'undone' after an undo) and
 // 查看变更. Three rows show; the rest fold under 再显示.

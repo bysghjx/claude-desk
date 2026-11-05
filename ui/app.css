@@ -984,6 +984,21 @@ dialog{background:#252525;border-color:#484848}
 .step-todos li.done{color:#7c7b75;text-decoration:line-through}
 .step-todos li.done::before{content:'✓';color:var(--green)}
 .step-empty{color:#6c6c66;font-size:12px;margin:4px 0}
+/* An Agent step opens up the sub-agent it started: its task, its own steps and its conclusion. */
+.step-target{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#77766f;font-size:12px}
+.agent-step-meta{color:#85847d;font-size:11px}
+.agent-step-prompt>summary{cursor:pointer;list-style:none;color:#85847d;font-size:12px;padding:4px 0}
+.agent-step-prompt>summary::-webkit-details-marker{display:none}
+.agent-step-prompt>summary::before{content:'▸ ';color:#6a6a64}
+.agent-step-prompt[open]>summary::before{content:'▾ '}
+.agent-step-prompt-text{white-space:pre-wrap;color:#a5a39b;font-size:12px;line-height:1.7;padding:2px 0 6px;max-height:240px;overflow:auto}
+.agent-steps{margin:2px 0 4px;padding-left:12px;border-left:1px solid #3a3a37}
+.agent-steps:empty{display:none}
+.agent-steps .work-note{font-size:13px;line-height:1.7;color:#c9c7c0}
+.agent-step-final{margin-top:8px}
+.agent-step-final-label{color:#85847d;font-size:11.5px;margin-bottom:2px}
+.agent-step-final .markdown{color:#cfcdc6;font-size:13px;line-height:1.75}
+.agent-step-final .markdown p{margin:4px 0}
 .turn-changes{margin:16px 0 4px;border:1px solid #33332f;border-radius:12px;background:#1d1d1c;overflow:hidden}
 .turn-changes-head{display:flex;align-items:center;gap:12px;padding:12px 14px;color:#d3d0c7;border-bottom:1px solid #2b2b28}
 .changes-icon{width:38px;height:38px;flex:none;border-radius:9px;display:grid;place-items:center;background:#131312;color:#cfcfcf}

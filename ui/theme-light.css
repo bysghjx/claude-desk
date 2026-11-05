@@ -365,6 +365,11 @@
   .add-menu-switch.on::after{background:#fff}
   .step-group>summary:hover{background:#0000000a}
   .step-group-items{border-left-color:#dcdcd8}
+  .agent-steps{border-left-color:#dcdcd8}
+  .agent-steps .work-note{color:#3a3934}
+  .step-target,.agent-step-meta,.agent-step-prompt>summary,.agent-step-final-label{color:#77766f}
+  .agent-step-prompt-text{color:#5b5952}
+  .agent-step-final .markdown{color:#2f2e2a}
   .usage-breakdown{border-top-color:#dcdcdc}
   .usage-bar{background:#e4e4e4}
   .usage-part{color:#555}

@@ -461,3 +461,31 @@ test('context details come from the live CLI and fill in the window; compaction 
   assert.match(t.turns.at(-1).answer,/上下文已压缩：约 90,000 → 12,000 tokens/);assert.equal(t.contextUsage.usedTokens,12000);
   await engine.shutdown();
 });
+test('a long Bash call is not taken for a sub-agent, and a sub-agent keeps its steps in order',async()=>{
+  const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);await engine.send(t.id,'work');await tick();
+  assert.equal(sdk.contexts[0].forwardSubagentText,true);
+  sdk.outputs.push({type:'assistant',message:{content:[{type:'tool_use',id:'sh',name:'Bash',input:{command:'npm test',description:'Run tests'}}]}});
+  // bash_progress names the Bash call itself as its parent.
+  sdk.outputs.push({type:'tool_progress',tool_use_id:'bash-progress-0',tool_name:'Bash',parent_tool_use_id:'sh',elapsed_time_seconds:4});await tick();
+  assert.equal(t.turns[0].subagents,undefined);assert.match(t.detail,/Bash 执行中 · 4s/);
+  sdk.outputs.push({type:'assistant',message:{content:[{type:'tool_use',id:'spawn',name:'Agent',input:{description:'Look',prompt:'look around'}}]}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:'spawn',event:{type:'content_block_start',index:0,content_block:{type:'thinking'}}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:'spawn',event:{type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'plan'}}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn',uuid:'c1',message:{content:[{type:'thinking',thinking:'plan'}]}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn',uuid:'c2',message:{content:[{type:'tool_use',id:'inner',name:'Bash',input:{command:'ls'}}]}});
+  sdk.outputs.push({type:'tool_progress',tool_use_id:'bash-progress-1',tool_name:'Bash',parent_tool_use_id:'inner',elapsed_time_seconds:2});
+  sdk.outputs.push({type:'user',parent_tool_use_id:'spawn',message:{content:[{type:'tool_result',tool_use_id:'inner',content:'a.txt'}]}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn',uuid:'c3',message:{content:[{type:'text',text:'Found a.txt'}]}});await tick();
+  const agents=t.turns[0].subagents;assert.equal(agents.length,1);
+  const a=agents[0];assert.equal(a.thinking,'plan');assert.equal(a.tools[0].output,'a.txt');assert.equal(a.lastTool,'Bash');
+  assert.deepEqual(a.items.map(i=>i.type+':'+(i.text||i.id)),['thinking:plan','tool:inner','text:Found a.txt']);
+  await complete(sdk);await engine.shutdown();
+});
+test('empty sub-agents older versions made for Bash calls are dropped on load',async()=>{
+  const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);await engine.send(t.id,'old');await tick();await complete(sdk);
+  const turn=t.turns[0];turn.tools=[{id:'sh',name:'Bash',input:{command:'npm test'},status:'done'},{id:'sp',name:'Agent',input:{},status:'done'}];
+  turn.subagents=[{id:'sh',toolUseId:'sh',name:'子智能体',status:'done',tools:[],answer:''},{id:'sp',toolUseId:'sp',name:'Real',status:'done',tools:[],answer:''}];
+  store.save();await engine.shutdown();
+  const restored=new JsonStore(store.file).state.threads[0].turns[0];
+  assert.deepEqual(restored.subagents.map(a=>a.name),['Real']);
+});

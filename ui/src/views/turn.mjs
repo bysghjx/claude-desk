@@ -3,7 +3,7 @@
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
 import { elapsed, STATUS_LABELS } from '../core/format.mjs';
-import { turnParts, toolView, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
+import { turnParts, toolView, stepParts, agentOf, agentParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
 function userHtml(turn) {
@@ -49,20 +49,69 @@ function steerHtml(steer, turn) {
   return `<div class="turn-steer-text">${escape(steer.text || '（图片）')}${images}</div><div class="turn-steer-meta">${meta}</div>`;
 }
 
-function updateItem(node, item, cwd) {
-  if (item.type === 'tool') {
-    const parts = stepParts(item.tool, { escape, cwd });
+// `ctx` is { cwd, turn, ready }: the turn holds the sub-agents an Agent step opens up.
+const isAgentStep = tool => toolView(tool).kind === 'agent';
+// An Agent step shows what its sub-agent did: the task, every step it took (drawn like the
+// turn's own steps) and its conclusion. The task and the steps keep their nodes, so what
+// you opened stays open while the sub-agent works.
+function updateAgent(node, tool, ctx) {
+  const parts = agentParts(tool, agentOf(ctx.turn, tool), { escape });
+  if (node.className !== parts.className) node.className = parts.className;
+  setHtml(node.firstChild, parts.summary);
+  const [head, prompt, steps, empty, final] = node.lastChild.children;
+  setHtml(head, parts.head);
+  prompt.hidden = !parts.prompt; setHtml(prompt.lastChild, escape(parts.prompt));
+  renderSteps(steps, node.agentSteps ||= new Map(), parts.work, ctx);
+  empty.hidden = !parts.empty; setHtml(empty, escape(parts.empty));
+  final.hidden = !parts.final; setHtml(final.lastChild, markdown(parts.final));
+}
+function updateItem(node, item, ctx) {
+  if (item.type === 'tool' && isAgentStep(item.tool)) updateAgent(node, item.tool, ctx);
+  else if (item.type === 'tool') {
+    const parts = stepParts(item.tool, { escape, cwd: ctx.cwd });
     if (node.className !== parts.className) node.className = parts.className;
     setHtml(node.firstChild, parts.summary); setHtml(node.lastChild, parts.body);
   } else if (item.type === 'thinking') setHtml(node.lastChild, escape(item.text));
   else setHtml(node, markdown(item.text));
 }
-function createItem(item, cwd) {
+function createItem(item, ctx) {
   let node;
-  if (item.type === 'tool') { node = element('details'); node.append(element('summary'), element('div', 'step-body')); }
+  if (item.type === 'tool' && isAgentStep(item.tool)) {
+    node = element('details'); node.append(element('summary'), element('div', 'step-body'));
+    const prompt = element('details', 'agent-step-prompt'); prompt.append(element('summary', '', '任务说明'), element('div', 'agent-step-prompt-text'));
+    const final = element('div', 'agent-step-final'); final.append(element('div', 'agent-step-final-label', '结论'), element('div', 'markdown'));
+    node.lastChild.append(element('div'), prompt, element('div', 'agent-steps'), element('p', 'step-empty'), final);
+  } else if (item.type === 'tool') { node = element('details'); node.append(element('summary'), element('div', 'step-body')); }
   else if (item.type === 'thinking') { node = element('details', 'work-thinking'); node.append(element('summary', '', '思考'), element('div', 'work-thinking-text')); }
   else node = element('div', 'work-note markdown');
-  updateItem(node, item, cwd); return node;
+  updateItem(node, item, ctx); return node;
+}
+// Steps in `list`, runs of one kind folded into a row; `nodes` keeps each step's node by key.
+function renderSteps(list, nodes, work, ctx) {
+  const seen = new Set();
+  const place = (node, parent, before) => { if (node.previousSibling !== before || node.parentNode !== parent) before ? before.after(node) : parent.prepend(node); };
+  const itemNode = index => {
+    const item = work[index], key = itemKey(item, index); seen.add(key);
+    let node = nodes.get(key);
+    if (!node) { node = createItem(item, ctx); nodes.set(key, node); if (ctx.ready) animateIn(node); }
+    else updateItem(node, item, ctx);
+    return node;
+  };
+  let previous = null;
+  for (const entry of groupSteps(work)) {
+    let node;
+    if (entry.indices) {
+      const key = 'group:' + itemKey(work[entry.indices[0]], entry.indices[0]); seen.add(key);
+      node = nodes.get(key);
+      if (!node) { node = element('details', 'step-group'); node.append(element('summary'), element('div', 'step-group-items')); nodes.set(key, node); }
+      node.classList.toggle('running', entry.running);
+      setHtml(node.firstChild, groupSummaryHtml(entry));
+      let before = null;
+      for (const index of entry.indices) { const child = itemNode(index); place(child, node.lastChild, before); before = child; }
+    } else node = itemNode(entry.index);
+    place(node, list, previous); previous = node;
+  }
+  for (const [key, node] of nodes) if (!seen.has(key)) { node.remove(); nodes.delete(key); }
 }
 
 // The folded group with everything that happened before the final answer.
@@ -92,31 +141,8 @@ function updateWork(view, part, turn, work, live, run, span) {
   label.textContent = live ? now.label : steps ? `已处理 ${elapsed(span.since, span.until)}` : '已思考';
   detail.textContent = live ? now.detail : '';
   group.querySelector('.work-count').textContent = steps ? `${steps} 个步骤` : '';
-  const list = group.lastChild, seen = new Set();
-  const place = (node, parent, before) => { if (node.previousSibling !== before || node.parentNode !== parent) before ? before.after(node) : parent.prepend(node); };
-  const itemNode = index => {
-    const item = work[index], key = itemKey(item, index); seen.add(key);
-    let node = part.items.get(key);
-    if (!node) { node = createItem(item, view.cwd); part.items.set(key, node); if (view.ready) animateIn(node); }
-    else updateItem(node, item, view.cwd);
-    return node;
-  };
   // Runs of one kind of step sit in a folded row; the steps keep their own nodes.
-  let previous = null;
-  for (const entry of groupSteps(work)) {
-    let node;
-    if (entry.indices) {
-      const key = 'group:' + itemKey(work[entry.indices[0]], entry.indices[0]); seen.add(key);
-      node = part.items.get(key);
-      if (!node) { node = element('details', 'step-group'); node.append(element('summary'), element('div', 'step-group-items')); part.items.set(key, node); }
-      node.classList.toggle('running', entry.running);
-      setHtml(node.firstChild, groupSummaryHtml(entry));
-      let before = null;
-      for (const index of entry.indices) { const child = itemNode(index); place(child, node.lastChild, before); before = child; }
-    } else node = itemNode(entry.index);
-    place(node, list, previous); previous = node;
-  }
-  for (const [key, node] of part.items) if (!seen.has(key)) { node.remove(); part.items.delete(key); }
+  renderSteps(group.lastChild, part.items, work, { cwd: view.cwd, turn, ready: view.ready });
   return group;
 }
 

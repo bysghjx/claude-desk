@@ -91,3 +91,36 @@ test('runs of one kind of step fold into one row; thinking after the run stays o
   const live=worklog.groupSteps([bash('a'),bash('b','running')]);
   assert.match(worklog.groupSummaryHtml(live[0]),/正在运行命令 · 已 2 步/);
 });
+
+test('an Agent step opens up its sub-agent: steps in order, notes, and the report as conclusion',async()=>{
+  const worklog=await load();
+  const tool={id:'spawn',name:'Agent',status:'done',input:{description:'看看仓库',subagent_type:'Explore',prompt:'读 README'},output:JSON.stringify([{type:'text',text:'  <tools-used-before-summary>Read</tools-used-before-summary>\n  \n[Subagent hand-back] The text below is the final report. The report follows:\n  仓库很小。\n  只有 README。\n  \nagentId: abc (use SendMessage)\n<usage>subagent_tokens: 10</usage>'}])};
+  const agent={id:'spawn',toolUseId:'spawn',status:'done',type:'Explore',summary:'仓库很小。',usage:{totalTokens:1234},
+    tools:[{id:'r',name:'Read',input:{file_path:'README.md'},status:'done',output:'# hi'},{id:'b',name:'Bash',input:{command:'git log'},status:'done',output:'abc'}],
+    items:[{type:'thinking',text:'先读文件'},{type:'tool',id:'r'},{type:'text',text:'再看提交'},{type:'tool',id:'b'},{type:'text',text:'仓库很小。\n只有 README。'}]};
+  assert.equal(worklog.agentReport(tool.output),'仓库很小。\n只有 README。');
+  assert.equal(worklog.agentOf({subagents:[agent]},tool),agent);
+  const {work,final}=worklog.agentWork(agent,tool);
+  assert.deepEqual(work.map(i=>i.type==='tool'?i.tool.name:i.type),['thinking','Read','text','Bash']);
+  assert.equal(final,'仓库很小。\n只有 README。');
+  const parts=worklog.agentParts(tool,agent,{escape});
+  assert.match(parts.summary,/子智能体完成了 2 个步骤/);assert.match(parts.summary,/看看仓库/);
+  assert.match(parts.head,/Explore/);assert.match(parts.head,/1,234 tokens/);assert.equal(parts.prompt,'读 README');assert.equal(parts.empty,'');
+  // The sub-agent's steps fold like the turn's own.
+  assert.equal(worklog.groupSteps(parts.work).length,4);
+});
+
+test('a running sub-agent shows live progress, and a background one concludes with its summary',async()=>{
+  const worklog=await load();
+  const tool={id:'s',name:'Agent',status:'running',input:{description:'调查'}};
+  const agent={id:'s',toolUseId:'s',status:'tool',tools:[{id:'x',name:'Bash',input:{command:'ls'},status:'running',output:''}],items:[{type:'tool',id:'x'}]};
+  const live=worklog.agentParts(tool,agent,{escape});
+  assert.match(live.summary,/子智能体正在工作 · 已 1 步/);assert.match(live.className,/running/);assert.equal(live.final,'');
+  assert.equal(worklog.agentParts(tool,null,{escape}).empty,'已启动，等待子智能体的第一步');
+  const bg={...agent,status:'done',background:true,summary:'调查完毕',tools:[{...agent.tools[0],status:'done'}]};
+  const parts=worklog.agentParts({...tool,status:'done',output:'Async agent launched'},bg,{escape});
+  assert.equal(parts.final,'调查完毕');assert.match(parts.head,/后台/);
+  // Records from before items were kept still list the tools and the answer.
+  const old=worklog.agentWork({status:'done',answer:'旧结论',tools:[{id:'y',name:'Read',input:{file_path:'a'},status:'done'}]},{status:'done',output:''});
+  assert.deepEqual(old.work.map(i=>i.type),['tool']);assert.equal(old.final,'旧结论');
+});
