@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents, Tray, Menu, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents, Tray, Menu, safeStorage, net } = require('electron');
 const fs = require('node:fs');
 const diskFs=require('./disk-fs.cjs');
 const {within,listProjectFiles,readProjectFile}=require('./project-files.cjs');
@@ -21,6 +21,8 @@ const {Worktrees}=require('./worktree.cjs');
 const {Terminals}=require('./terminal.cjs');
 const {DeskTray}=require('./tray.cjs');
 const {Providers}=require('./providers.cjs');
+const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
+const {newer}=require('./updates.cjs');
 const {attachContextMenu}=require('./context-menu.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
@@ -160,6 +162,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed()){if(w===win)applyMaterial(w);else w.setBackgroundColor(windowBackground());}});
   const { query, startup, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   const updater=new Updater({installDir:path.dirname(process.execPath),version:app.getVersion(),tempRoot:path.join(dataRoot,'updates')});
+  const githubUpdates=new GitHubUpdates({version:app.getVersion(),downloadDir:path.join(dataRoot,'update-downloads'),fetch:(...args)=>net.fetch(...args)});
   const updateFailure=updater.cleanup();
   // Update packages are looked for where people usually leave a download: Downloads, the desktop,
   // and the folder Claude Desk runs from or the one holding it.
@@ -399,10 +402,22 @@ if(primaryInstance)app.whenReady().then(async () => {
   // Update packages replace files next to ClaudeDesk.exe, so only the packaged app installs them.
   handle('update:pick', async () => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); const r = await dialog.showOpenDialog(win, { title: '选择 Claude Desk 更新包', filters: [{ name: '更新包', extensions: ['zip'] }], properties: ['openFile'] }); return r.canceled ? null : updater.stage(r.filePaths[0]); });
   // Only packages found by updateDirs (above) can be installed by path.
-  let foundUpdates=new Set();
-  handle('update:scan', () => { const dirs=updateDirs(),result=findUpdates(dirs.map(d=>d.path),app.getVersion()); foundUpdates=new Set(result.ready.map(u=>u.file)); return { ...result, dirs, version: app.getVersion(), installable: app.isPackaged }; });
-  handle('update:stage', file => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); if (!foundUpdates.has(file)) throw Error('找不到这个更新包，请重新检查'); return updater.stage(file); });
-  handle('update:reveal', file => { if (foundUpdates.has(file)) shell.showItemInFolder(file); });
+  let foundUpdates=new Map();
+  handle('update:scan', async force => {
+    const dirs=updateDirs(),result=findUpdates(dirs.map(d=>d.path),app.getVersion()),online=await githubUpdates.check(force===true);
+    if(online.update&&!result.ready.some(u=>u.to===online.update.to))result.ready.push(online.update);
+    result.ready.sort((a,b)=>newer(b.to,a.to)?1:newer(a.to,b.to)?-1:0);
+    foundUpdates=new Map(result.ready.map(u=>[u.file,u]));
+    return { ...result, online, dirs, version: app.getVersion(), installable: app.isPackaged };
+  });
+  handle('update:stage', async file => {
+    if (!app.isPackaged) throw Error('开发版不能安装更新包');
+    const update=foundUpdates.get(file);if(!update)throw Error('找不到这个更新包，请重新检查');
+    const zip=update.source==='github'?await githubUpdates.download(update,event=>{if(win&&!win.isDestroyed())win.webContents.send('update:progress',event);}):file;
+    return updater.stage(zip);
+  });
+  handle('update:reveal', file => { const update=foundUpdates.get(file);if(update?.source==='github')return shell.openExternal(RELEASES);if(update)shell.showItemInFolder(file); });
+  handle('update:releases',()=>shell.openExternal(RELEASES));
   handle('update:apply', async () => { await updater.apply(); setTimeout(() => app.quit(), 200); return true; });
   // A console window running Claude Code, for logging in (/login) when it was never set up on this computer.
   handle('cli:open', () => { const cli = findCli(); if (!cli) throw Error('没有找到 Claude Code'); spawn('cmd.exe', ['/d', '/s', '/c', `start "Claude Code" "${cli}"`], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsHide:true, windowsVerbatimArguments: true }).unref(); return true; });

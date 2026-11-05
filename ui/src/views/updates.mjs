@@ -5,7 +5,7 @@ import { guarded } from '../core/ui.mjs';
 import { isActive } from '../core/format.mjs';
 import { updateCardHtml, noticeOf } from '../lib/updates.mjs';
 
-const COUNTDOWN = 10, RESCAN_AFTER = 20000;
+const COUNTDOWN = 10, RESCAN_AFTER = 20000, ONLINE_INTERVAL = 60 * 60 * 1000;
 
 export function createUpdates({ store, api, toast, confirm }) {
   let scan = null, scannedAt = 0, scanning = null, installing = '';
@@ -17,6 +17,7 @@ export function createUpdates({ store, api, toast, confirm }) {
   function renderCard() {
     setHtml($('#update-card'), updateCardHtml(scan, { scanning: Boolean(scanning), installing }));
     $('#auto-update-toggle').checked = auto();
+    $('#install-update').disabled = Boolean(installing);
   }
   function renderNotice() {
     const box = $('#update-notice');
@@ -45,20 +46,24 @@ export function createUpdates({ store, api, toast, confirm }) {
   }
 
   async function check(force = false) {
+    if (installing) return scan;
     if (scanning) return scanning;
     if (!force && scan && Date.now() - scannedAt < RESCAN_AFTER) return scan;
-    scanning = api('update:scan').then(result => { scan = result; scannedAt = Date.now(); return result; }).finally(() => { scanning = null; renderCard(); offer(); });
+    scanning = api('update:scan', force).then(result => { scan = result; scannedAt = Date.now(); return result; }).finally(() => { scanning = null; renderCard(); offer(); });
     renderCard(); return scanning;
   }
 
   // Checks the package, then closes Claude Desk; the installer copies the files and starts it again.
   async function install(update, { ask = true } = {}) {
     if (installing) return;
-    const n = running();
-    if (n && ask && !await confirm({ title: `升级到 ${update.to}？`, description: `正在运行的 ${n} 个会话会停止。Claude Desk 会关闭，更新后自动重新打开，会话记录不受影响。`, preview: `${update.from} → ${update.to}`, label: '停止任务并安装', kind: 'neutral' })) return;
-    stopCountdown(); shown = update; installing = `正在检查 ${update.to} 更新包…`; renderNotice(); renderCard();
+    if (!ask && (running() || !auto())) return offer();
+    stopCountdown(); shown = update; installing = update.source === 'github' ? `正在下载 ${update.to} 更新包…` : `正在检查 ${update.to} 更新包…`; renderNotice(); renderCard();
     try {
       const staged = await api('update:stage', update.file);
+      // Tasks and the auto-install setting may have changed during a long download.
+      if (!ask && (running() || !auto())) { installing = ''; mode = ''; renderCard(); offer(); return; }
+      const n = running();
+      if (n && !await confirm({ title: `升级到 ${update.to}？`, description: `正在运行的 ${n} 个会话会停止。Claude Desk 会关闭，更新后自动重新打开，会话记录不受影响。`, preview: `${update.from} → ${update.to}`, label: '停止任务并安装', kind: 'neutral' })) { installing = ''; later.add(update.file); hide(); renderCard(); return; }
       installing = `检查通过，正在关闭并安装 ${staged.to}…`; renderNotice(); renderCard();
       await api('update:apply');
     } catch (e) {
@@ -75,6 +80,7 @@ export function createUpdates({ store, api, toast, confirm }) {
     if (action === 'scan') return check(true);
     if (action === 'install' && update) { later.delete(update.file); return install(update); }
     if (action === 'reveal' && update) return api('update:reveal', update.file);
+    if (action === 'releases') return api('update:releases');
   }));
   $('#auto-update-toggle').addEventListener('change', guarded(toast, async () => {
     const on = $('#auto-update-toggle').checked;
@@ -83,6 +89,8 @@ export function createUpdates({ store, api, toast, confirm }) {
   }));
   // A package anywhere else: pick the zip by hand.
   $('#install-update').addEventListener('click', guarded(toast, async () => {
+    if (installing) return;
+    stopCountdown(); installing = '正在选择并检查更新包…'; renderCard(); renderNotice();
     const button = $('#install-update'); button.disabled = true;
     try {
       const update = await api('update:pick');
@@ -93,12 +101,18 @@ export function createUpdates({ store, api, toast, confirm }) {
         installing = `正在关闭并安装 ${update.to}…`; renderCard();
         try { await api('update:apply'); } catch (e) { installing = ''; renderCard(); throw Error('更新包没有安装：' + e.message); }
       }
-    } finally { button.disabled = false; }
+    } finally { installing = ''; button.disabled = false; renderCard(); offer(); }
   }));
 
   // Looks again when you come back to the window, e.g. after downloading a package.
   window.addEventListener('focus', () => check().catch(() => {}));
-  store.on('load', () => check(true).catch(() => {}));
+  store.on('load', () => check().catch(() => {}));
+  setInterval(() => check().catch(() => {}), ONLINE_INTERVAL);
+  window.desk?.onUpdateProgress(event => {
+    if (!installing || event.file !== shown?.file) return;
+    installing = `正在下载 ${shown.to} 更新包… ${Math.min(100, Math.floor(event.received / event.total * 100))}%`;
+    renderCard(); renderNotice();
+  });
   // A task starting cancels the countdown; the last one finishing starts it.
   store.on('threads', offer); store.on('thread', () => { if (shown && !installing && mode !== 'ask') offer(); });
 

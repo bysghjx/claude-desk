@@ -1,0 +1,48 @@
+name: Release Windows
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag, for example v0.29.2'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      DESK_BUILD_DIR: ${{ runner.temp }}/claude-desk-build
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate tag and fetch previous file manifest
+        run: node scripts/github-release.cjs prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: npm ci
+      - run: npm test
+      - run: npm run package
+      - run: npm run release
+      - name: Upload assets and publish release
+        run: node scripts/github-release.cjs publish
+        env:
+          GH_TOKEN: ${{ github.token }}
