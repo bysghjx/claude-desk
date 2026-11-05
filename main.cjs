@@ -373,10 +373,11 @@ if(primaryInstance)app.whenReady().then(async () => {
       let fetched = []; try { fetched = await providers.models({ id: custom.id }); } catch (e) { if (!custom.models.length) throw e; }
       const models = [...new Set([...custom.models, ...fetched])]; engine.store.state.availableModels = models; engine.store.save(); return models;
     }
-    const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/settings.json'), 'utf8')); const env = cfg.env || {};
+    let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude/settings.json'), 'utf8')); } catch {} const env = cfg.env || {};
     const base = process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
     const token = process.env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN;
     const key = process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY;
+    if (!token && !key) throw Error('Claude Code 自己的配置里没有 API 密钥（用账号登录时读不到模型列表）');
     const response = await fetch(base.replace(/\/+$/, '') + '/v1/models', { signal: AbortSignal.timeout(15000), headers: token ? { Authorization: `Bearer ${token}`, 'anthropic-version': '2023-06-01' } : { 'x-api-key': key || '', 'anthropic-version': '2023-06-01' } });
     if(!response.ok) throw Error('读取模型列表失败：HTTP ' + response.status);
     const json = await response.json();const models=(json.data || []).map(x => x.id).filter(x => typeof x === 'string' && x.length < 150);engine.store.state.availableModels=models;engine.store.save();return models;

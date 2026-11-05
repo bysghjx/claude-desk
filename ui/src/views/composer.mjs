@@ -171,7 +171,11 @@ export function createComposer({ store, api, toast, actions }) {
   }
   async function refreshModels(){
     if(modelsLoading)return store.state.availableModels||[];modelsLoading=true;$('#model-refresh').disabled=true;$('#model-status').textContent='正在读取服务商的模型列表…';
-    try{const models=await api('models');store.state.availableModels=models;for(const m of models)if(![...$('#model').options].some(x=>x.value===m))$('#model').add(new Option(m,m));renderModels();$('#model-status').textContent=`${models.length} 个服务商模型 · 点击即可选择`;return models;}
+    try{const models=await api('models');store.state.availableModels=models;
+      // Models added by an earlier fetch (another provider's) go, except the one still selected.
+      for(const o of [...$('#model').options])if(o.dataset.fetched&&!models.includes(o.value)&&o.value!==$('#model').value)o.remove();
+      for(const m of models)if(![...$('#model').options].some(x=>x.value===m)){const o=new Option(m,m);o.dataset.fetched='1';$('#model').add(o);}
+      renderModels();$('#model-status').textContent=`${models.length} 个服务商模型 · 点击即可选择`;return models;}
     catch(e){$('#model-status').textContent='未能刷新：'+e.message;throw e;}
     finally{modelsLoading=false;$('#model-refresh').disabled=false;}
   }
@@ -310,6 +314,9 @@ export function createComposer({ store, api, toast, actions }) {
   $('#composer').addEventListener('dragover',event=>{if([...(event.dataTransfer?.items||[])].some(item=>item.kind==='file')){event.preventDefault();$('#composer').classList.add('dropping');}});
   $('#composer').addEventListener('dragleave',()=>$('#composer').classList.remove('dropping'));
   $('#composer').addEventListener('drop',event=>{$('#composer').classList.remove('dropping');const files=[...(event.dataTransfer?.files||[])];if(files.length){event.preventDefault();addImages(files);}});
+  // Models a fetch added (a provider's own list), and dropping them when that provider is left.
+  const fetchedModels=()=>[...$('#model').options].filter(o=>o.dataset.fetched).map(o=>o.value);
+  function dropModels(ids){for(const o of [...$('#model').options])if(ids.includes(o.value))o.remove();syncPickers();}
   function ensureModel(model){if(!model)return;if(![...$('#model').options].some(x=>x.value===model))$('#model').add(new Option(model,model));$('#model').value=model;syncPickers();}
   // Grows with the text; an empty box keeps its default height (placeholder text does not count).
   function autosize(){const prompt=$('#prompt');prompt.style.height='auto';prompt.style.height=prompt.value?Math.min(200,Math.max(52,prompt.scrollHeight))+'px':'';}
@@ -325,7 +332,7 @@ export function createComposer({ store, api, toast, actions }) {
     else if(event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.altKey&&store.running()&&!isEmpty()){event.preventDefault();await actions().sendMessage(undefined,{queue:true});}}));
   $('#prompt').addEventListener('input',()=>{autosize();input();store.emit('composer');});
   function setMode(mode){if(modes.some(m=>m.id===mode)&&$('#mode').value!==mode){$('#mode').value=mode;optionChanged();}}
-  return{capture,imagesReady,quote,restore,clear,save,syncPickers,renderUsage,refreshModels,options,ensureModel,setText,isEmpty,setMode,addReference,
+  return{capture,imagesReady,quote,restore,clear,save,syncPickers,renderUsage,refreshModels,fetchedModels,dropModels,options,ensureModel,setText,isEmpty,setMode,addReference,
     focus:()=>$('#prompt').focus(),focusProject:()=>$('#home-project')?.focus(),
     initialize(){ready=true;syncPickers();renderModels();save();}};
 }

@@ -3,7 +3,9 @@
 // the key left blank keeps it.
 import { $, escape, setHtml, setText } from '../core/dom.mjs';
 import { guarded } from '../core/ui.mjs';
+import { orderModels } from './composer.mjs';
 
+const DEFAULT_MODEL = 'claude-opus-5-5';
 const host = url => { try { return new URL(url).host; } catch { return url; } };
 
 export function providerListHtml({ active = '', providers = [] }, info = {}) {
@@ -35,16 +37,24 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
   function closeForm() { form.hidden = true; $('#provider-add').hidden = false; editing = null; }
   const values = () => ({ id: editing, name: $('#provider-name').value, baseUrl: $('#provider-url').value, authType: $('#provider-auth').value, key: $('#provider-key').value, models: $('#provider-models').value, fastModel: $('#provider-fast').value });
 
-  // Switching provider: the composer moves to one of its models when the current one is not offered.
+  // Switching provider reads its model list right away, so the picker no longer offers the
+  // previous provider's models; the composer moves to one of the new ones when the current
+  // model is not offered (the provider's own names first, then its configured list).
   async function activate(id) {
     apply(await api('providers:activate', id));
-    const chosen = state().providers.find(p => p.id === id), model = composer.options().model;
-    if (chosen?.models?.length && !chosen.models.includes(model)) {
-      composer.ensureModel(chosen.models[0]);
-      store.state.settings = { ...store.state.settings, model: chosen.models[0] }; await api('settings', store.state.settings);
-    }
+    const chosen = state().providers.find(p => p.id === id), model = composer.options().model, stale = composer.fetchedModels();
     store.state.availableModels = chosen?.models?.length ? chosen.models : [];
-    toast(`已切换到${chosen ? `「${chosen.name}」` : ' Claude Code 自己的配置'}，从每个会话的下一条消息开始生效`);
+    let fetched = [], failure = ''; try { fetched = await composer.refreshModels(); } catch (e) { failure = e.message; }
+    const offered = [...new Set([...(chosen?.models || []), ...fetched])], gone = stale.filter(m => !offered.includes(m));
+    // A model only the previous provider offered falls back to the plain Claude name when the new list is unknown.
+    let next = offered.length && !offered.includes(model) ? chosen?.models?.[0] || orderModels(fetched).own[0] || (fetched.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : fetched[0]) : '';
+    if (!next && gone.includes(model)) next = DEFAULT_MODEL;
+    composer.dropModels(gone.filter(m => m !== next));
+    if (next && next !== model) {
+      composer.ensureModel(next);
+      store.state.settings = { ...store.state.settings, model: next }; await api('settings', store.state.settings);
+    }
+    toast(`已切换到${chosen ? `「${chosen.name}」` : ' Claude Code 自己的配置'}，从每个会话的下一条消息开始生效${fetched.length ? `；读到 ${fetched.length} 个模型` : failure ? `；模型列表没读到（${failure}）` : ''}`);
   }
 
   $('#provider-list').addEventListener('click', guarded(toast, async event => {
