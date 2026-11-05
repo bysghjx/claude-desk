@@ -160,7 +160,6 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .activity-symbol{display:inline-block;width:10px;height:10px;border:1.5px solid #634f3f;border-radius:50%;animation:spin 1.3s linear infinite}
 .activity-sub{display:flex;justify-content:space-between;gap:10px;font-size:11px;margin:8px 0 0 19px;line-height:1.5}
 .activity-sub #last-event{white-space:nowrap}
-.activity-main button{margin-left:auto;font-size:11px;padding:4px 8px;border:1px solid #4b4135}
 .activity.approval-state{border-color:#665838;background:#2a261d}
 .activity.approval-state .activity-symbol{animation:none;background:var(--yellow);border:0;border-radius:2px}
 .composer-wrap{padding:0 max(26px,calc((100% - 790px)/2)) 17px;flex-shrink:0}
@@ -511,7 +510,6 @@ a{color:#b5c9ee}
 .activity-symbol{border-color:#555;border-top-color:#ddd}
 .activity-sub{color:#8d8d8d}
 .activity-sub #last-event{color:#777}
-.activity-main button{color:#bbb;border-color:#444}
 .inspector{border-color:#343434}
 .inspector-head,.project-caption,.inspector-foot{border-color:#333;color:#8c8c8c}
 .tab.selected{border-bottom-color:#aaa;color:#ddd}
@@ -934,6 +932,8 @@ dialog{background:#252525;border-color:#484848}
 .work-group.live .work-label{background:linear-gradient(90deg,#8f8f89 0%,#efe6d8 45%,#8f8f89 90%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:work-shimmer 2.2s linear infinite}
 @keyframes work-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
 .work-count{color:#62625d;font-size:11.5px}
+.work-detail{color:#6f6f6a;font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.work-detail:empty{display:none}
 .work-items{margin:10px 0 4px;display:flex;flex-direction:column;gap:8px}
 .work-note{color:#dedede;font-size:14px;line-height:1.8}
 .work-note.markdown p{margin:4px 0}

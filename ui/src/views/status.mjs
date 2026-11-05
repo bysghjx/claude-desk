@@ -38,9 +38,16 @@ export function createStatus({ store, actions, api, composer, toast }) {
     $('#approval').innerHTML = approvalHtml(request, source, markdown);
   }
 
+  // The running turn shows its own state; this bar only stands in for it while you
+  // read further up and the turn is out of sight.
+  function liveTurnVisible() {
+    const box = $('#messages'), turn = [...box.querySelectorAll('article.turn')].at(-1); if (!turn) return false;
+    const a = turn.getBoundingClientRect(), b = box.getBoundingClientRect();
+    return a.bottom > b.top + 24 && a.top < b.bottom - 24;
+  }
   function activity() {
     const thread = store.current(), active = isActive(thread);
-    $('#activity').hidden = !active;
+    $('#activity').hidden = !active || liveTurnVisible();
     $('#prompt').placeholder = active ? '运行中可以插话：Enter 交给 Claude（不停止任务），Tab 加入队列…' : '发送消息到 Claude Code… 输入 / 唤起命令，@ 引用文件，@@ 引用会话，可粘贴图片';
     if (!active) { setText($('#context-hint'), thread?.status === 'error' ? '运行失败，可查看具体错误并重试' : '沿用本机 Claude CLI 配置 · 无需额外账号'); return; }
     $('#activity').classList.toggle('approval-state', thread.status === 'approval');
@@ -101,8 +108,8 @@ export function createStatus({ store, actions, api, composer, toast }) {
       if (choice) { event.preventDefault(); choice.click(); }
     }
   });
-  $('#stop-inline').addEventListener('click', guarded(toast, actions.stop));
 
+  $('#messages').addEventListener('scroll', () => { if (isActive(store.current())) $('#activity').hidden = liveTurnVisible(); }, { passive: true });
   store.on('select', render);
   store.on('composer', sendButton);
   store.on('thread', thread => { if (thread.id === store.selected) render(); });

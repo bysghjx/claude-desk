@@ -2,7 +2,7 @@
 // parts whose content changed; <details> elements are kept, so their open state
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
-import { elapsed } from '../core/format.mjs';
+import { elapsed, STATUS_LABELS } from '../core/format.mjs';
 import { splitTurn, stepParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
@@ -60,11 +60,17 @@ function createItem(item, cwd) {
 }
 
 // The folded group with everything that happened before the final answer.
-function updateWork(view, turn, work, live) {
-  if (!work.length) { view.work?.remove(); view.work = null; view.items.clear(); return; }
+// While the turn runs its row reads like the status: 等待模型响应 · 41s, with the detail
+// (工具已返回，等待模型继续) after it; the row exists from the start, before any step.
+export function liveLabel(status, since, lastEventAt, detail, now = Date.now()) {
+  const quiet = Math.floor((now - (lastEventAt || since)) / 1000);
+  return { label: `${STATUS_LABELS[status] || '正在处理'} · ${elapsed(since, now)}`, detail: quiet > 25 && status !== 'approval' ? `${quiet}s 未收到新事件，可能在等服务商` : detail || '' };
+}
+function updateWork(view, turn, work, live, run = {}) {
+  if (!work.length && !live) { view.work?.remove(); view.work = null; view.items.clear(); return; }
   if (!view.work) {
     view.work = element('details', 'work-group');
-    view.work.append(element('summary', '', '<span class="work-label"></span><span class="work-count"></span>'), element('div', 'work-items'));
+    view.work.append(element('summary', '', '<span class="work-label"></span><span class="work-count"></span><span class="work-detail"></span>'), element('div', 'work-items'));
     view.work.firstChild.addEventListener('click', () => { view.work.dataset.userToggled = '1'; });
     view.final.before(view.work);
     if (view.ready) animateIn(view.work);
@@ -73,9 +79,12 @@ function updateWork(view, turn, work, live) {
   group.classList.toggle('live', live);
   // Open while running, fold when finished, unless the user chose otherwise.
   if (!group.dataset.userToggled) group.open = live;
-  const label = group.querySelector('.work-label');
-  if (live) label.dataset.since = turn.startedAt; else delete label.dataset.since;
-  label.textContent = live ? `正在处理 · ${elapsed(turn.startedAt)}` : steps ? `已处理 ${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}` : '已思考';
+  const label = group.querySelector('.work-label'), detail = group.querySelector('.work-detail');
+  if (live) Object.assign(label.dataset, { since: turn.startedAt, status: run.status || '', lastEvent: run.lastEventAt || '', detail: run.detail || '' });
+  else for (const key of ['since', 'status', 'lastEvent', 'detail']) delete label.dataset[key];
+  const now = live ? liveLabel(run.status, turn.startedAt, run.lastEventAt, run.detail) : null;
+  label.textContent = live ? now.label : steps ? `已处理 ${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}` : '已思考';
+  detail.textContent = live ? now.detail : '';
   group.querySelector('.work-count').textContent = steps ? `${steps} 个步骤` : '';
   const list = group.lastChild, seen = new Set();
   const place = (node, parent, before) => { if (node.previousSibling !== before || node.parentNode !== parent) before ? before.after(node) : parent.prepend(node); };
@@ -116,13 +125,14 @@ export function createTurn(turn, context) {
 }
 
 // `turns` is the whole conversation, passed for the latest turn only: its task list is built from every turn.
-export function updateTurn(view, turn, { threadActive, latest = false, turns = null }) {
-  if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && turn.rev != null) return false;
-  view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest;
+export function updateTurn(view, turn, { threadActive, latest = false, turns = null, run = null }) {
+  const runKey = run ? [run.status, run.detail, run.lastEventAt].join('|') : '';
+  if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && view.runKey === runKey && turn.rev != null) return false;
+  view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest; view.runKey = runKey;
   const live = turn.status === 'running';
   const { work, final } = splitTurn(turn);
   setHtml(view.head, userHtml(turn));
-  updateWork(view, turn, work, live);
+  updateWork(view, turn, work, live, run || {});
   if (setHtml(view.final, markdown(final)) && final && !view.hadFinal && view.ready) animateIn(view.final);
   view.hadFinal = Boolean(final);
   if (view.ready && view.live && !live) animateIn(view.root, 'just-finished');

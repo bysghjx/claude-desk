@@ -132,3 +132,11 @@ test('sending from home without a project starts a chat; worktree only applies t
   r.actions.selectProject('p1');r.composer.text='in the project';await r.actions.sendMessage();
   assert.deepEqual(r.calls.filter(c=>c.name==='thread:create')[1].args,['p1',{worktree:true}]);
 });
+test('the running turn reads like the status, and says when events stop coming',async()=>{
+  const {liveLabel}=await import('../ui/src/views/turn.mjs');
+  const now=1_000_000;
+  assert.deepEqual(liveLabel('waiting',now-41000,now-4000,'工具已返回，等待模型继续',now),{label:'等待模型响应 · 41s',detail:'工具已返回，等待模型继续'});
+  assert.match(liveLabel('tool',now-90000,now-30000,'执行 Bash',now).detail,/30s 未收到新事件/);
+  assert.equal(liveLabel('approval',now-90000,now-30000,'等待你批准 Bash',now).detail,'等待你批准 Bash');
+  assert.match(liveLabel(undefined,now-5000,0,'',now).label,/^正在处理 · /);
+});

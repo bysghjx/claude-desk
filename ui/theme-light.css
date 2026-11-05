@@ -50,7 +50,6 @@
   .tool-card pre{border-top:1px solid #f2f2f0}
   .error-card{border:1px solid #bc8d86;background:#f2eaea;color:#bb4b3c}
   .activity-symbol{border:1.5px solid #b09682}
-  .activity-main button{border:1px solid #cec5b9}
   .activity.approval-state{border-color:#b8a77e;background:#f5f4f1}
   .composer-options select{color:#4d4a40}
   .inspector{border-left:1px solid #f1f1f0}
@@ -230,7 +229,6 @@
   .activity-symbol{border-color:#949494;border-top-color:#292929}
   .activity-sub{color:#636363}
   .activity-sub #last-event{color:#707070}
-  .activity-main button{color:#414141;border-color:#b8b8b8}
   .inspector{border-color:#e8e8e8}
   .inspector-head,.project-caption,.inspector-foot{border-color:#ebebeb;color:#646464}
   .tab.selected{border-bottom-color:#4e4e4e;color:#292929}
@@ -369,6 +367,7 @@
   .usage-part{color:#555}
   .usage-part strong{color:#222}
   .usage-sub>div{color:#555}
+  .work-detail{color:#8a8a85}
   .jump-latest{background:#fff;border-color:#d0d0d0;color:#333;box-shadow:0 4px 14px #0000001f}
   .jump-latest:hover{background:#f2f2f2}
   .jump-latest.has-new::after{border-color:#fff}

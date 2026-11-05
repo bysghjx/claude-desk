@@ -2,7 +2,7 @@
 import { $, escape, setHtml } from '../core/dom.mjs';
 import { elapsed, isActive } from '../core/format.mjs';
 import { guarded } from '../core/ui.mjs';
-import { createTurn, updateTurn, animateIn } from './turn.mjs';
+import { createTurn, updateTurn, animateIn, liveLabel } from './turn.mjs';
 
 const SUGGESTIONS = [
   // Drawn icons: text symbols like ⌘ ⌕ ↗ sit at different heights in each font.
@@ -90,7 +90,7 @@ export function createConversation({ store, actions, api, composer, toast, revie
     else older.remove();
     let previous = hidden ? older : null;
     for (const turn of turns) {
-      const latest = turn === thread.turns.at(-1), turnContext = latest ? { ...context, latest, turns: thread.turns } : context;
+      const latest = turn === thread.turns.at(-1), turnContext = latest ? { ...context, latest, turns: thread.turns, run: { status: thread.status, detail: thread.detail, lastEventAt: thread.lastEventAt } } : context;
       let view = views.get(turn.id);
       if (!view) { view = createTurn(turn, turnContext); views.set(turn.id, view); if (!switched) animateIn(view.root); }
       else updateTurn(view, turn, turnContext);
@@ -102,7 +102,12 @@ export function createConversation({ store, actions, api, composer, toast, revie
   }
 
   // Live "正在处理 · 1m 2s" labels advance once a second without re-rendering turns.
-  function tick() { for (const label of box.querySelectorAll('.work-label[data-since]')) label.textContent = `正在处理 · ${elapsed(Number(label.dataset.since))}`; }
+  function tick() {
+    for (const label of box.querySelectorAll('.work-label[data-since]')) {
+      const now = liveLabel(label.dataset.status, Number(label.dataset.since), Number(label.dataset.lastEvent) || 0, label.dataset.detail);
+      label.textContent = now.label; label.parentNode.querySelector('.work-detail').textContent = now.detail;
+    }
+  }
 
   box.addEventListener('click', guarded(toast, async event => {
     const target = event.target;
