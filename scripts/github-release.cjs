@@ -52,7 +52,9 @@ async function run(mode) {
   if (!existing) gh(['release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', '--title', 'Claude Desk ' + version, '--notes-file', notes]);
   gh(['release', 'upload', tag, ...assets, '--repo', repo, '--clobber']);
   // Expose the release only after GitHub has processed every asset, including its digest.
-  const uploaded = JSON.parse(gh(['api', 'repos/' + repo + '/releases/tags/' + tag]));
+  // The tag endpoint only finds published releases; drafts are returned by the authenticated list.
+  const uploaded = JSON.parse(gh(['api', 'repos/' + repo + '/releases?per_page=100', '--paginate', '--slurp'])).flat().find(r => r.tag_name === tag);
+  if (!uploaded?.draft) throw Error('待发布的草稿不存在或已被发布，请检查 Release 状态');
   for (const file of assets) {
     const asset = uploaded.assets.find(a => a.name === path.basename(file));
     if (!asset || asset.state !== 'uploaded' || asset.size !== fs.statSync(file).size || asset.digest !== 'sha256:' + await hashFile(file)) throw Error('GitHub 文件尚未准备好或校验不符，Release 保持草稿，请重试：' + file);
