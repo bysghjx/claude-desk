@@ -168,6 +168,24 @@ test('turn items keep commentary, tools and the final answer in the order they s
   assert.equal(t.turns[0].answer,'Checking files.\n\nDone.');
   await engine.shutdown();
 });
+test('thinking blocks the CLI marks as narration become notes between steps',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'fix it');await tick();
+  const stream=event=>sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event});
+  // As recorded from CLI 2.1.312 with Opus 5.5: the reasoning summary and the summary of what
+  // Claude wrote to the user come as two thinking blocks; only the second is listed.
+  stream({type:'content_block_start',index:0,content_block:{type:'thinking',thinking:'',signature:''}});stream({type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'Found two bugs.\n\n'}});
+  sdk.outputs.push({type:'assistant',uuid:'a1',message:{content:[{type:'thinking',thinking:'Found two bugs.\n\n',signature:'s1'}]}});
+  stream({type:'content_block_start',index:1,content_block:{type:'thinking',thinking:'',signature:''}});stream({type:'content_block_delta',index:1,delta:{type:'thinking_delta',thinking:'两处 bug 已找到，'}});stream({type:'content_block_delta',index:1,delta:{type:'thinking_delta',thinking:'接下来修。\n\n'}});
+  sdk.outputs.push({type:'assistant',uuid:'a2',narration_block_indexes:[0],message:{content:[{type:'thinking',thinking:'两处 bug 已找到，接下来修。\n\n',signature:'s2'}]}});
+  sdk.outputs.push({type:'assistant',uuid:'a3',message:{content:[{type:'tool_use',id:'tool-1',name:'Bash',input:{command:'ls'}}]}});
+  sdk.outputs.push({type:'user',message:{content:[{type:'tool_result',tool_use_id:'tool-1',content:'ok'}]}});
+  // A listed block with no text stays thinking.
+  stream({type:'content_block_start',index:0,content_block:{type:'thinking',thinking:'',signature:''}});
+  sdk.outputs.push({type:'assistant',uuid:'a4',narration_block_indexes:[0],message:{content:[{type:'thinking',thinking:'',signature:'s3'}]}});
+  await complete(sdk,'Done.');
+  assert.deepEqual(t.turns[0].items.map(i=>i.type==='tool'?'tool':i.type+':'+i.text),['thinking:Found two bugs.\n\n','narration:两处 bug 已找到，接下来修。\n\n','tool','thinking:','text:Done.']);
+  await engine.shutdown();
+});
 test('messages queued during a turn are sent after it finishes and kept after an error',async()=>{
   const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();
   engine.enqueue(t.id,'second');engine.enqueue(t.id,'third');assert.equal(t.queue.length,2);
@@ -460,6 +478,17 @@ test('context details come from the live CLI and fill in the window; compaction 
   sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'',usage:{output_tokens:0},total_cost_usd:0});await tick();await tick();
   assert.match(t.turns.at(-1).answer,/上下文已压缩：约 90,000 → 12,000 tokens/);assert.equal(t.contextUsage.usedTokens,12000);
   await engine.shutdown();
+});
+test('a sub-agent\'s narration blocks become notes too',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'work');await tick();
+  sdk.outputs.push({type:'assistant',message:{content:[{type:'tool_use',id:'spawn',name:'Agent',input:{description:'Look',prompt:'look around'}}]}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:'spawn',event:{type:'content_block_start',index:0,content_block:{type:'thinking'}}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:'spawn',event:{type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'Reading the README next.'}}});
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn',uuid:'c1',narration_block_indexes:[0],message:{content:[{type:'thinking',thinking:'Reading the README next.'}]}});
+  // Without a stream the block still shows up as a note.
+  sdk.outputs.push({type:'assistant',parent_tool_use_id:'spawn',uuid:'c2',narration_block_indexes:[1],message:{content:[{type:'text',text:'x'},{type:'thinking',thinking:'Done reading.'}]}});await tick();
+  assert.deepEqual(t.turns[0].subagents[0].items.map(i=>i.type+':'+i.text),['narration:Reading the README next.','narration:Done reading.','text:x']);
+  await complete(sdk);await engine.shutdown();
 });
 test('a long Bash call is not taken for a sub-agent, and a sub-agent keeps its steps in order',async()=>{
   const sdk=fakeSdk();const {engine,t,store}=setup(sdk.query);await engine.send(t.id,'work');await tick();

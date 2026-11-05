@@ -13,6 +13,16 @@ function findTool(thread,toolId){
 }
 // A sub-agent's thinking, text and tool calls in the order they came, like turn.items.
 function agentItem(a,type,text=''){(a.items||=[]).push(type==='tool'?{type,id:text}:{type,text});}
+// Thinking blocks the CLI lists in narration_block_indexes are the server's summary of what
+// Claude wrote between tool calls, not its reasoning; their items become 'narration'.
+function markNarration(items,msg){
+  const blocks=msg.message?.content||[];
+  for(const i of msg.narration_block_indexes||[]){
+    const text=blocks[i]?.type==='thinking'?String(blocks[i].thinking||''):'';if(!text.trim())continue;
+    const item=items.findLast(x=>x.type==='thinking'&&x.text.trim()===text.trim());
+    if(item)item.type='narration';else items.push({type:'narration',text});
+  }
+}
 function agentAppend(a,type,text){const last=a.items?.at(-1);if(last?.type===type)last.text=(last.text+text).slice(-120000);else agentItem(a,type,text);}
 // Older versions took a long Bash call's progress (its parent_tool_use_id is the Bash call
 // itself) for a sub-agent and kept an empty 子智能体 for it.
@@ -126,6 +136,7 @@ function handleAgentMessage(thread,run,msg,redact){
     if(msg.uuid&&stream.seen.has(msg.uuid))return true;if(msg.uuid)stream.seen.add(msg.uuid);
     const blocks=msg.message?.content||[],text=blocks.filter(b=>b.type==='text').map(b=>b.text).join('\n');
     if(!stream.thought)for(const b of blocks)if(b.type==='thinking'&&b.thinking){a.thinking=(a.thinking+(a.thinking?'\n\n':'')+b.thinking).slice(-120000);agentItem(a,'thinking',b.thinking);}
+    markNarration(a.items||=[],msg);
     if(text&&!stream.partial){a.answer=(a.answer+(a.answer?'\n\n':'')+text).slice(-120000);agentItem(a,'text',text);}
     stream.partial=false;stream.thought=false;a.model=msg.message?.model||a.model;
     if(msg.message?.usage)a.lastResponseUsage=msg.message.usage;
@@ -143,4 +154,4 @@ function handleAgentMessage(thread,run,msg,redact){
   if(msg.type==='tool_progress'){a.lastTool=msg.tool_name;if(active)a.status='tool';}
   a.updatedAt=Date.now();return true;
 }
-module.exports={ACTIVE_AGENT,activeAgents,findAgent,findTool,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage};
+module.exports={markNarration,ACTIVE_AGENT,activeAgents,findAgent,findTool,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage};

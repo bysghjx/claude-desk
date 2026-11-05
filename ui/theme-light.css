@@ -480,6 +480,7 @@
   .work-group.live .work-label{background:linear-gradient(90deg,#666661 0%,#30271a 45%,#666661 90%)}
   .work-count{color:#8c8c85}
   .work-note{color:#292929}
+  .work-narration>:last-child::after{color:#84847c}
   .work-thinking>summary{color:#77766f}
   .work-thinking>summary::before{color:#84847c}
   .work-thinking-text{color:#6a6862}

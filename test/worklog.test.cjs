@@ -109,6 +109,16 @@ test('an Agent step opens up its sub-agent: steps in order, notes, and the repor
   // The sub-agent's steps fold like the turn's own.
   assert.equal(worklog.groupSteps(parts.work).length,4);
 });
+test('narration shows between steps, stays out of the final answer and breaks a run of commands',async()=>{
+  const worklog=await load();
+  const bash=id=>({id,name:'Bash',input:{command:'ls'},status:'done',output:''});
+  const turn={tools:[bash('a'),bash('b'),bash('c')],items:[{type:'tool',id:'a'},{type:'narration',text:'第一步好了'},{type:'tool',id:'b'},{type:'thinking',text:'hm'},{type:'tool',id:'c'},{type:'narration',text:'都跑完了'},{type:'text',text:'final'}]};
+  const {work,final}=worklog.splitTurn(turn);
+  assert.deepEqual(work.map(i=>i.type),['tool','narration','tool','thinking','tool','narration']);assert.equal(final,'final');
+  assert.deepEqual(worklog.groupSteps(work).map(g=>g.indices?'group:'+g.count:work[g.index].type),['tool','narration','group:2','narration']);
+  const agent={id:'s',status:'done',tools:[bash('a')],items:[{type:'tool',id:'a'},{type:'narration',text:'看完了'},{type:'text',text:'结论'}]};
+  assert.deepEqual(worklog.agentWork(agent,null).work.map(i=>i.type),['tool','narration']);
+});
 
 test('a running sub-agent shows live progress, and a background one concludes with its summary',async()=>{
   const worklog=await load();

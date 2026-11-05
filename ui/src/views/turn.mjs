@@ -83,6 +83,8 @@ function createItem(item, ctx) {
     node.lastChild.append(element('div'), prompt, element('div', 'agent-steps'), element('p', 'step-empty'), final);
   } else if (item.type === 'tool') { node = element('details'); node.append(element('summary'), element('div', 'step-body')); }
   else if (item.type === 'thinking') { node = element('details', 'work-thinking'); node.append(element('summary', '', '思考'), element('div', 'work-thinking-text')); }
+  // What Claude wrote between steps, as the server summarized it (the CLI sends it as thinking).
+  else if (item.type === 'narration') { node = element('div', 'work-note work-narration markdown'); node.title = 'Claude 在步骤之间的说明（服务端摘要）'; }
   else node = element('div', 'work-note markdown');
   updateItem(node, item, ctx); return node;
 }

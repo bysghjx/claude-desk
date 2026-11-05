@@ -117,7 +117,7 @@ export function turnParts(turn){
   }
   for(const p of parts.slice(1)){const first=p.items.findIndex(i=>i.type==='tool');if(first<0)continue;p.reply=p.items.slice(0,first).filter(i=>i.type==='text').map(i=>i.text).join('\n\n');p.items=p.items.filter((i,n)=>n>first||i.type!=='text');}
   const last=parts.at(-1).items;let at=-1;last.forEach((item,i)=>{if(item.type==='tool')at=i;});
-  const rest=last.slice(at+1);parts.at(-1).items=[...last.slice(0,at+1),...rest.filter(i=>i.type==='thinking')];
+  const rest=last.slice(at+1);parts.at(-1).items=[...last.slice(0,at+1),...rest.filter(i=>i.type==='thinking'||i.type==='narration')];
   return{parts:parts.map(p=>({steer:p.steer,reply:p.reply||'',work:p.items})),final:rest.filter(i=>i.type==='text').map(i=>i.text).join('\n\n'),pending:(turn?.steers||[]).filter(s=>s.status==='pending'&&!placed.has(s.id))};
 }
 // Every step in order, 插话 in its place, and the final answer.
@@ -203,7 +203,7 @@ export function agentWork(agent,tool){
   const finished=agent&&!AGENT_LIVE.has(agent.status);
   const final=report||(finished&&agent.summary?String(agent.summary).trim():'')||text;
   // Notes after the last step stay steps unless they are the conclusion itself.
-  const notes=tail.filter(i=>i.type==='thinking'||(i.type==='text'&&final!==text&&i.text.trim()!==final));
+  const notes=tail.filter(i=>i.type==='thinking'||i.type==='narration'||(i.type==='text'&&final!==text&&i.text.trim()!==final));
   return{work:[...work.slice(0,at+1),...notes],final,live:Boolean(agent&&AGENT_LIVE.has(agent.status))};
 }
 // The Agent step's row and the parts of its body above the sub-agent's own steps.

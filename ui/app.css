@@ -938,6 +938,7 @@ dialog{background:#252525;border-color:#484848}
 .work-items{margin:10px 0 4px;display:flex;flex-direction:column;gap:8px}
 .work-note{color:#dedede;font-size:14px;line-height:1.8}
 .work-note.markdown p{margin:4px 0}
+.work-narration>:last-child::after{content:' · 摘要';color:#6a6a64;font-size:12px}
 .work-thinking>summary{cursor:pointer;color:#77766f;font-size:12px;padding:3px 0;list-style:none}
 .work-thinking>summary::-webkit-details-marker{display:none}
 .work-thinking>summary::before{content:'✻ ';color:#6a6a64}

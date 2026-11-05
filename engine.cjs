@@ -5,7 +5,7 @@ const fs = require('./disk-fs.cjs');
 const {historyTail}=require('./json-stream.cjs');
 const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
-const {ACTIVE_AGENT,activeAgents,findAgent,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
+const {markNarration,ACTIVE_AGENT,activeAgents,findAgent,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
 const {WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT:DESK_PROMPT,wrapUpOf,proposalOf}=require('./desk-tools.cjs');
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
@@ -509,6 +509,7 @@ class Engine extends EventEmitter {
       if(msg.parent_tool_use_id==null)this.recordContext(t,run,msg.message?.usage,msg.message?.model);
       if (run.seen.has(msg.uuid)) return; if (msg.uuid) run.seen.add(msg.uuid);
       const blocks = msg.message?.content || [];
+      markNarration(turn.items ||= [], msg);
       const text = blocks.filter(x => x.type === 'text').map(x => x.text).join('\n');
       if (text && !run.partialText) { turn.answer += (turn.answer ? '\n\n' : '') + text; addItem(turn, 'text', text); }
       run.partialText = false;
