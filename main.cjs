@@ -12,7 +12,7 @@ const {ExtensionsManager}=require('./extensions.cjs');
 const {McpManager}=require('./mcp.cjs');
 const {DatabaseStore}=require('./database.cjs');
 const {AgentWindows}=require('./agent-windows.cjs');
-const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');const {Updater,findUpdates}=require('./updates.cjs');const {ClaudeCli,INSTALL_COMMANDS}=require('./cli-setup.cjs');
+const {CodexImporter}=require('./codex-import.cjs');const {ClaudeImporter}=require('./claude-import.cjs');const {deskServerFactory}=require('./desk-tools.cjs');const {KeepAwake}=require('./awake.cjs');const {StorageUsage}=require('./storage-usage.cjs');const {PullRequests}=require('./pr.cjs');const {BrowserPreview,PAGE_URL}=require('./preview.cjs');const {Updater,findUpdates,packagesFor}=require('./updates.cjs');const {ClaudeCli,INSTALL_COMMANDS}=require('./cli-setup.cjs');
 const {usageSummary,usageCsv}=require('./usage.cjs');
 const review=require('./review.cjs');
 const {NotificationTracker}=require('./notify.cjs');
@@ -161,8 +161,13 @@ if(primaryInstance)app.whenReady().then(async () => {
   const { query, startup, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   const updater=new Updater({installDir:path.dirname(process.execPath),version:app.getVersion(),tempRoot:path.join(dataRoot,'updates')});
   const updateFailure=updater.cleanup();
-  // An installed update package is no longer needed: move it to the recycle bin.
-  let updatePackageRemoved='';if(updater.installedZip){try{await shell.trashItem(updater.installedZip);updatePackageRemoved=path.basename(updater.installedZip);}catch{}}
+  // Update packages are looked for where people usually leave a download: Downloads, the desktop,
+  // and the folder Claude Desk runs from or the one holding it.
+  const updateDirs=()=>{const install=path.dirname(process.execPath);return [{label:'下载',path:app.getPath('downloads')},{label:'桌面',path:app.getPath('desktop')},{label:'Claude Desk 所在文件夹',path:install},{label:'它的上一级文件夹',path:path.dirname(install)}];};
+  // An installed update package is no longer needed: move it to the recycle bin. A version that
+  // did not yet remember the zip it installed from leaves only from -> to, so look for that package.
+  let updatePackageRemoved=0;
+  if(updater.installed){const [from,to]=updater.installed.split('->').map(x=>x.trim());for(const file of updater.installedZip?[updater.installedZip]:packagesFor(updateDirs().map(d=>d.path),from,to)){try{await shell.trashItem(file);updatePackageRemoved++;}catch{}}}
   const preview=new BrowserPreview({nativeImage,send:event=>{if(win&&!win.isDestroyed())win.webContents.send('preview:event',event);}});const { z } = require('zod');
   const projectRoot=app.isPackaged?path.resolve(path.dirname(process.execPath),'../../..'):path.resolve(__dirname,'../..');
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
@@ -392,9 +397,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('config:open', () => shell.openPath(providerInfo().configPath));
   // Update packages replace files next to ClaudeDesk.exe, so only the packaged app installs them.
   handle('update:pick', async () => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); const r = await dialog.showOpenDialog(win, { title: '选择 Claude Desk 更新包', filters: [{ name: '更新包', extensions: ['zip'] }], properties: ['openFile'] }); return r.canceled ? null : updater.stage(r.filePaths[0]); });
-  // Update packages are looked for where people usually leave a download: Downloads, the desktop,
-  // and the folder Claude Desk runs from or the one holding it. Only packages found there can be installed by path.
-  const updateDirs=()=>{const install=path.dirname(process.execPath);return [{label:'下载',path:app.getPath('downloads')},{label:'桌面',path:app.getPath('desktop')},{label:'Claude Desk 所在文件夹',path:install},{label:'它的上一级文件夹',path:path.dirname(install)}];};
+  // Only packages found by updateDirs (above) can be installed by path.
   let foundUpdates=new Set();
   handle('update:scan', () => { const dirs=updateDirs(),result=findUpdates(dirs.map(d=>d.path),app.getVersion()); foundUpdates=new Set(result.ready.map(u=>u.file)); return { ...result, dirs, version: app.getVersion(), installable: app.isPackaged }; });
   handle('update:stage', file => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); if (!foundUpdates.has(file)) throw Error('找不到这个更新包，请重新检查'); return updater.stage(file); });

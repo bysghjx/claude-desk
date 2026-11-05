@@ -88,6 +88,19 @@ function readZipEntry(zip, name, limit = 4 << 20) {
     return null;
   } finally { fs.closeSync(fd); }
 }
+// The packages for one finished install (from -> to) left in the folders update packages are looked for in.
+function packagesFor(dirs, from, to) {
+  const found = [];
+  for (const dir of dirs) {
+    let names = []; try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      if (!/^claude.?desk.*\.zip$/i.test(name)) continue;
+      const file = path.join(dir, name);
+      try { if (!fs.statSync(file).isFile()) continue; const info = JSON.parse(readZipEntry(file, UPDATE_FILE)?.toString('utf8') || '{}'); if (info.app === 'ClaudeDesk' && info.from === from && info.to === to) found.push(file); } catch {}
+    }
+  }
+  return found;
+}
 const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
 // Looks through a few folders (not their subfolders) for update packages newer than the running
 // version. Only zips named like Claude Desk's are opened, and only their description is read.
@@ -172,4 +185,4 @@ class Updater {
     return failed;
   }
 }
-module.exports = { Updater, findUpdates, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, UPDATER_EXE };
+module.exports = { Updater, findUpdates, packagesFor, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, UPDATER_EXE };
