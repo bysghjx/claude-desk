@@ -1,4 +1,4 @@
-const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const {execFileSync}=require('node:child_process');
+const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const {createZip}=require('../scripts/zip.cjs');
 const {Updater,manifestOf,diff,verifyUpdate,safe,packagesFor,UPDATE_FILE}=require('../updates.cjs');
 const scratch=path.resolve(__dirname,'../../../work/update-tests');fs.mkdirSync(scratch,{recursive:true});
 const write=(dir,files)=>{for(const [rel,text] of Object.entries(files)){const file=path.join(dir,rel);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text);}};
@@ -31,7 +31,7 @@ test('an update package must be for the running version, complete and untampered
 });
 test('a real update zip is extracted, checked and installed by the independent executable',{skip:process.platform!=='win32'},async()=>{
   const {root,old,next,pkg}=await versions();
-  const zip=path.join(root,'update.zip');execFileSync('C:/Windows/System32/tar.exe',['-a','-c','-f',zip,'-C',pkg,...fs.readdirSync(pkg)]);
+  const zip=path.join(root,'update.zip');createZip(pkg,zip);
   const updater=new Updater({installDir:old,version:'1.0.0',tempRoot:path.join(root,'temp')});
   const staged=await updater.stage(zip);assert.equal(staged.to,'1.1.0');
   const child=await updater.apply({pid:0,exe:path.join(old,'ClaudeDesk.exe'),restart:false});
@@ -49,7 +49,7 @@ test('cleanup reports a failed install from its log',()=>{
 test('update packages are found in the watched folders by what they contain, not their exact name',{skip:process.platform!=='win32'},async()=>{
   const {findUpdates,readZipEntry}=require('../updates.cjs');
   const {root,pkg}=await versions(),downloads=path.join(root,'下载'),desktop=path.join(root,'desktop');fs.mkdirSync(downloads);fs.mkdirSync(desktop);
-  const tar=(out,dir)=>execFileSync('C:/Windows/System32/tar.exe',['-a','-c','-f',out,'-C',dir,...fs.readdirSync(dir)]);
+  const tar=(out,dir)=>createZip(dir,out);
   tar(path.join(downloads,'ClaudeDesk-1.0.0-to-1.1.0-update (1).zip'),pkg);
   tar(path.join(desktop,'ClaudeDesk-1.0.0-to-1.1.0-update.zip'),pkg); // the same package twice is listed once
   const later=path.join(root,'later');fs.cpSync(pkg,later,{recursive:true});fs.writeFileSync(path.join(later,UPDATE_FILE),JSON.stringify({app:'ClaudeDesk',from:'1.1.0',to:'1.2.0',files:{}}));tar(path.join(desktop,'claudedesk-1.1.0-to-1.2.0.zip'),later);
@@ -66,7 +66,7 @@ test('a finished install is reported once on the next start',()=>{
   const updater=new Updater({installDir:temp,version:'1.1.0',tempRoot:temp});assert.equal(updater.cleanup(),'');assert.equal(updater.installed,'1.0.0 -> 1.1.0');assert.equal(updater.installedZip,'');
 });
 test('packages for a finished install are found by their from and to versions',{skip:process.platform!=='win32'},()=>{
-  const temp=fs.mkdtempSync(path.join(scratch,'t-')),zip=(name,info)=>{const dir=fs.mkdtempSync(path.join(scratch,'p-'));fs.writeFileSync(path.join(dir,UPDATE_FILE),JSON.stringify({app:'ClaudeDesk',files:{},...info}));execFileSync('C:/Windows/System32/tar.exe',['-a','-c','-f',path.join(temp,name),'-C',dir,UPDATE_FILE]);};
+  const temp=fs.mkdtempSync(path.join(scratch,'t-')),zip=(name,info)=>{const dir=fs.mkdtempSync(path.join(scratch,'p-'));fs.writeFileSync(path.join(dir,UPDATE_FILE),JSON.stringify({app:'ClaudeDesk',files:{},...info}));createZip(dir,path.join(temp,name));};
   zip('ClaudeDesk-1.0.0-to-1.1.0-update.zip',{from:'1.0.0',to:'1.1.0'});zip('ClaudeDesk-1.0.0-to-1.1.0-update (1).zip',{from:'1.0.0',to:'1.1.0'});zip('ClaudeDesk-1.1.0-to-1.2.0-update.zip',{from:'1.1.0',to:'1.2.0'});zip('other-1.0.0-to-1.1.0.zip',{from:'1.0.0',to:'1.1.0'});
   assert.deepEqual(packagesFor([temp,path.join(temp,'missing')],'1.0.0','1.1.0').map(f=>path.basename(f)).sort(),['ClaudeDesk-1.0.0-to-1.1.0-update (1).zip','ClaudeDesk-1.0.0-to-1.1.0-update.zip']);
 });
@@ -82,7 +82,7 @@ test('the zip an install came from is reported for removal only if it is unchang
 });
 test('failed staging preserves the validation error even when Windows denies temporary cleanup',{skip:process.platform!=='win32'},async()=>{
   const {root,pkg}=await versions(),zip=path.join(root,'update.zip'),temp=path.join(root,'temp');
-  execFileSync('C:/Windows/System32/tar.exe',['-a','-c','-f',zip,'-C',pkg,...fs.readdirSync(pkg)],{windowsHide:true});
+  createZip(pkg,zip);
   const remove=fs.rmSync;fs.rmSync=(file,options)=>{if(path.dirname(file)===temp){const error=Error('locked fixture');error.code='EPERM';throw error;}return remove(file,options);};
   try{await assert.rejects(()=>new Updater({installDir:root,version:'0.9.0',tempRoot:temp}).stage(zip),e=>/当前是 0\.9\.0/.test(e.message)&&/暂存目录未能清理/.test(e.message)&&/locked fixture/.test(e.message));}
   finally{fs.rmSync=remove;}

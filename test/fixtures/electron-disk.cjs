@@ -20,7 +20,7 @@ const root=process.argv.at(-1),source=path.resolve(__dirname,'../..');
   const pkg=path.join(root,'package'),zip=path.join(root,'update.zip');
   const packageManifest=await manifestOf(pkg,'1.1.0');fs.writeFileSync(path.join(pkg,UPDATE_FILE),JSON.stringify({app:'ClaudeDesk',from:'1.0.0',to:'1.1.0',files:packageManifest.files,removed:[]}));
   await verifyUpdate(pkg,'1.0.0');
-  execFileSync('C:/Windows/System32/tar.exe',['-a','-c','-f',zip,'-C',pkg,...fs.readdirSync(pkg)],{windowsHide:true});
+  require(path.join(source,'scripts/zip.cjs')).createZip(pkg,zip);
   const updater=new Updater({installDir:path.join(root,'installed'),version:'1.0.0',tempRoot:path.join(root,'updates')});
   const stage=await updater.stage(zip);assert.equal(stage.to,'1.1.0');fs.unlinkSync(path.join(stage.dir,'resources/app.asar'));
   assert.equal(updater.cleanup(),'');assert.deepEqual(fs.readdirSync(path.join(root,'updates')),[]);

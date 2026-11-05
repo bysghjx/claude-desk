@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const { createHash } = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { createZip } = require('../scripts/zip.cjs');
 const { GitHubUpdates, releaseInfo, CHECK_INTERVAL } = require('../github-updates.cjs');
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const asset = extra => ({ id: 123, name: 'ClaudeDesk-1.0.0-to-1.1.0-update.zip', size: 100, state: 'uploaded', digest: 'sha256:' + 'a'.repeat(64), browser_download_url: 'https://github.com/bysghjx/claude-desk/releases/download/v1.1.0/ClaudeDesk-1.0.0-to-1.1.0-update.zip', ...extra });
@@ -38,7 +38,7 @@ function fixture(t, extra = {}) {
   const pkg = path.join(root, 'pkg'); fs.mkdirSync(pkg);
   fs.writeFileSync(path.join(pkg, 'claude-desk-update.json'), JSON.stringify({ app: 'ClaudeDesk', from: '1.0.0', to: '1.1.0', files: {}, ...extra }));
   const file = path.join(root, 'fixture.zip');
-  execFileSync('C:/Windows/System32/tar.exe', ['-a', '-c', '-f', file, '-C', pkg, 'claude-desk-update.json'], { windowsHide: true });
+  createZip(pkg, file);
   const bytes = fs.readFileSync(file), update = releaseInfo(release({ assets: [asset({ size: bytes.length, digest: 'sha256:' + digest(bytes) })] }), '1.0.0').update;
   let calls = 0;
   const service = new GitHubUpdates({ version: '1.0.0', downloadDir: path.join(root, 'downloads'), fetch: async () => { calls++; return new Response(bytes); } });
