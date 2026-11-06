@@ -89,12 +89,19 @@ test('online UI explains download, failures and full-package fallback', async ()
 });
 
 test('release automation rejects mismatched versions and unsafe base manifests', () => {
-  const { validateVersion, previousRelease, validateManifest } = require('../scripts/github-release.cjs');
+  const { validateVersion, previousRelease, baseReleases, validateManifest } = require('../scripts/github-release.cjs');
   const pkg = { version: '1.1.0' }, lock = { ...pkg, packages: { '': pkg } };
   validateVersion('v1.1.0', pkg, lock);
   for (const tag of ['v1.0.0', 'v1.1.0-beta', '1.1.0', '--help']) assert.throws(() => validateVersion(tag, pkg, lock));
   assert.throws(() => validateVersion('v1.1.0', pkg, { ...lock, version: '1.0.0' }));
   assert.equal(previousRelease([release({ tag_name: 'v1.0.0' }), release({ tag_name: 'v1.0.5' }), release({ tag_name: 'v1.0.9', prerelease: true }), release({ tag_name: 'v1.0.8', draft: true }), release()], '1.1.0').tag_name, 'v1.0.5');
+  // Update bases: the newest earlier stable releases with a manifest, at most count, newest first.
+  const withManifest = tag => release({ tag_name: tag, assets: [{ name: tag.slice(1) + '.json' }] });
+  const all = [withManifest('v1.0.0'), withManifest('v1.0.5'), release({ tag_name: 'v1.0.3', assets: [] }), withManifest('v1.0.4'), withManifest('v1.0.9'), release({ tag_name: 'v1.0.8', draft: true }), withManifest('v1.2.0')];
+  assert.deepEqual(baseReleases(all, '1.1.0').map(r => r.tag_name), ['v1.0.9', 'v1.0.5', 'v1.0.4', 'v1.0.0']);
+  assert.deepEqual(baseReleases(all, '1.1.0', 2).map(r => r.tag_name), ['v1.0.9', 'v1.0.5']);
+  assert.deepEqual(baseReleases([], '1.1.0'), []);
+  assert.throws(() => baseReleases([...all, release({ tag_name: 'v1.0.10', assets: [] })], '1.1.0'), /1.0.10.json/);
   validateManifest({ app: 'ClaudeDesk', version: '1.0.0', files: { 'resources/app.asar': 'a'.repeat(64) } }, '1.0.0');
   assert.throws(() => validateManifest({ app: 'ClaudeDesk', version: '1.0.0', files: { '../evil.exe': 'a'.repeat(64) } }, '1.0.0'));
 });
