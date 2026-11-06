@@ -150,9 +150,9 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .markdown code.file-ref{cursor:pointer;color:#e6c7a6;border-color:#e6c7a633}
 .markdown code.file-ref:hover{background:#e6c7a61a;text-decoration:underline;text-underline-offset:3px}
 /* > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION] */
-.markdown blockquote.callout{--callout:#7fb0ea;border:1px solid color-mix(in srgb,var(--callout) 35%,transparent);border-left:3px solid var(--callout);border-radius:8px;background:color-mix(in srgb,var(--callout) 8%,transparent);padding:8px 14px;margin:14px 0;color:inherit}
-.markdown blockquote.callout p{margin:2px 0}
-.markdown blockquote.callout .callout-title{color:var(--callout);font-weight:650;font-size:13px}
+.markdown blockquote.callout{--callout:#7fb0ea;border:0;border-left:2px solid var(--callout);background:none;padding:0 0 0 14px;margin:12px 0;color:inherit}
+.markdown blockquote.callout p{margin:0}
+.markdown blockquote.callout .callout-title{color:var(--callout);font-weight:600;font-size:12px;line-height:1.6}
 .markdown blockquote.callout-tip{--callout:#5fbf73}.markdown blockquote.callout-important{--callout:#b79cf2}.markdown blockquote.callout-warning{--callout:#e0a23c}.markdown blockquote.callout-caution{--callout:#f07a72}
 .markdown blockquote{border-left:2px solid #7b6855;margin:14px 0;padding:0 15px}
 .markdown table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:15px}

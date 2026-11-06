@@ -8,7 +8,7 @@ const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {markNarration,ACTIVE_AGENT,activeAgents,findAgent,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
 const {WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT:DESK_PROMPT,wrapUpOf,proposalOf}=require('./desk-tools.cjs');
 // How replies are drawn: bold stands out, a file in inline code opens on click, alerts become callouts.
-const FORMAT_PROMPT = '回复里的关键点用 **加粗** 标出；提到文件时写成行内代码的路径，例如 `src/app.js:42`，用户点一下就能打开。必须让用户注意的风险或结论，可以单独一段用 > [!WARNING] 或 > [!IMPORTANT] 开头写成提示块，每条回复最多一两处。';
+const FORMAT_PROMPT = '回复里的关键点用 **加粗** 标出；提到文件时写成行内代码的路径，例如 `src/app.js:42`，用户点一下就能打开。只有真正有风险、用户必须知道的事（例如会丢数据、还没验证、需要用户操作），才单独一段用 > [!WARNING] 开头写成提示块，每条回复最多一处；大多数回复不需要。';
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
 const ACTIVE = new Set(['starting', 'waiting', 'thinking', 'generating', 'tool', 'approval', 'stopping']);
