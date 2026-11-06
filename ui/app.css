@@ -97,11 +97,11 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .welcome-note{display:flex;gap:7px;align-items:center;margin-top:30px;color:#666861;font-size:11px}
 .turn{padding-bottom:36px}
 .user-line{display:flex;justify-content:flex-end;margin:2px 0 30px}
-.user-actions{display:flex;justify-content:flex-end;height:0;overflow:visible;opacity:0;transition:opacity var(--motion-fast) var(--ease-out)}
+.user-actions{display:flex;align-items:flex-start;justify-content:flex-end;height:0;overflow:visible;opacity:0;transition:opacity var(--motion-fast) var(--ease-out)}
 .user-line:hover .user-actions,.user-actions:focus-within{opacity:1}
 .user-actions button{display:flex;align-items:center;margin-top:5px;padding:5px;border-radius:6px;color:#8d8d88}
 .user-actions button:hover{background:#ffffff0d;color:#e4e2dc}
-.user-actions svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.user-actions svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}
 .user-line.editing>.user-message,.user-line.editing>.user-actions{display:none}
 .user-edit{width:88%;padding:10px 12px 10px 16px;border:1px solid #4a4a47;border-radius:18px;background:#333}
 .user-edit textarea{display:block;width:100%;min-height:28px;resize:none;border:0;outline:0;padding:2px 0;background:none;color:#ececec;font:inherit;font-size:15px;line-height:1.8}
