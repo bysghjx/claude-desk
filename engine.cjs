@@ -7,6 +7,8 @@ const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {markNarration,ACTIVE_AGENT,activeAgents,findAgent,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
 const {WRAP_UP,PROPOSE,DESK_TOOLS,PROMPT:DESK_PROMPT,wrapUpOf,proposalOf}=require('./desk-tools.cjs');
+// How replies are drawn: bold stands out, a file in inline code opens on click, alerts become callouts.
+const FORMAT_PROMPT = '回复里的关键点用 **加粗** 标出；提到文件时写成行内代码的路径，例如 `src/app.js:42`，用户点一下就能打开。必须让用户注意的风险或结论，可以单独一段用 > [!WARNING] 或 > [!IMPORTANT] 开头写成提示块，每条回复最多一两处。';
 
 const questionsOf = args => Array.isArray(args?.questions) && args.questions.length;
 const ACTIVE = new Set(['starting', 'waiting', 'thinking', 'generating', 'tool', 'approval', 'stopping']);
@@ -378,7 +380,7 @@ class Engine extends EventEmitter {
       model, thinking: { type: 'adaptive' }, effort,
       permissionMode: mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: mode === 'bypassPermissions',
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + (this.deskServer ? DESK_PROMPT : '') + instructionsPrompt(this.instructionsOf(t)) },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + FORMAT_PROMPT + (this.deskServer ? DESK_PROMPT : '') + instructionsPrompt(this.instructionsOf(t)) },
       // Sub-agents send their text and thinking too, so the 子智能体 step shows what they wrote.
       includePartialMessages: true, forwardSubagentText: true, persistSession: false, abortController: run.abort,
       canUseTool: (name, args, ctx) => this.requestApproval(t, run, name, args, ctx),

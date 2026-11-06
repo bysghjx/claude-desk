@@ -142,8 +142,18 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .markdown h2{font-size:19px}
 .markdown h3{font-size:16px}
 .markdown pre{border:1px solid #30302d;border-radius:9px;padding:16px;overflow:auto;font-size:13px;line-height:1.7}
-.markdown code{font-family:"Cascadia Code",Consolas,monospace;background:#ffffff09;padding:2px 5px;border-radius:4px;font-size:13px}
-.markdown pre code{padding:0;background:none}
+.markdown code{font-family:"Cascadia Code",Consolas,monospace;background:#ffffff10;border:1px solid #ffffff1f;padding:1px 6px;border-radius:5px;font-size:12.5px}
+.markdown pre code{padding:0;background:none;border:0}
+/* Bold reads as the point of a sentence: brighter and heavier than the text around it. */
+.markdown strong{color:#fff;font-weight:650}
+/* A file named in inline code opens in the split view. */
+.markdown code.file-ref{cursor:pointer;color:#e6c7a6;border-color:#e6c7a633}
+.markdown code.file-ref:hover{background:#e6c7a61a;text-decoration:underline;text-underline-offset:3px}
+/* > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION] */
+.markdown blockquote.callout{--callout:#7fb0ea;border:1px solid color-mix(in srgb,var(--callout) 35%,transparent);border-left:3px solid var(--callout);border-radius:8px;background:color-mix(in srgb,var(--callout) 8%,transparent);padding:8px 14px;margin:14px 0;color:inherit}
+.markdown blockquote.callout p{margin:2px 0}
+.markdown blockquote.callout .callout-title{color:var(--callout);font-weight:650;font-size:13px}
+.markdown blockquote.callout-tip{--callout:#5fbf73}.markdown blockquote.callout-important{--callout:#b79cf2}.markdown blockquote.callout-warning{--callout:#e0a23c}.markdown blockquote.callout-caution{--callout:#f07a72}
 .markdown blockquote{border-left:2px solid #7b6855;margin:14px 0;padding:0 15px}
 .markdown table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:15px}
 .markdown td,.markdown th{border:1px solid #363630;padding:8px 10px;text-align:left}
@@ -511,7 +521,7 @@ a{color:#b5c9ee}
 .user-message{background:#333;border:0;border-radius:18px;padding:12px 17px;font-size:15px;color:#ececec}
 .assistant-label{color:#b7b7b7;font-size:12px;font-weight:500}
 .assistant-label .spark{font-size:19px;color:#bdbdbd}
-.markdown{font-size:15px;line-height:1.9;color:#dedede}
+.markdown{font-size:15px;line-height:1.9;color:#d6d4cd}
 .markdown pre{background:#191919;border-color:#373737}
 .markdown blockquote{border-color:#646464;color:#aaa}
 .thinking{color:#999}
@@ -955,6 +965,8 @@ dialog{background:#252525;border-color:#484848}
 .cv-code{white-space:pre;padding-right:16px}
 .cv-gap{padding:4px 12px;background:#252523;color:#8a8882;font-size:11.5px;font-family:system-ui,sans-serif;border-block:1px solid #2e2e2b}
 .cv-empty{padding:30px;color:#8f8d86;text-align:center}
+.cv-num{flex:none;width:52px;padding-right:12px;text-align:right;color:#6a6964;user-select:none}
+.cv-line.marked{background:#e6c7a61f;box-shadow:inset 3px 0 #e6c7a6}
 .agent-dock-resize{position:absolute;left:-4px;top:0;bottom:0;width:7px;cursor:col-resize;z-index:8}
 .agent-dock-resize:hover,.agent-dock-resize.dragging{background:#8a8a8a55}
 .dock-open .home-view .conversation{padding-left:0;padding-right:0}

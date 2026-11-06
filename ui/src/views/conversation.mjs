@@ -131,6 +131,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     const review = target.closest('[data-review-file]');
     // 查看变更 opens the turn's 变更 tab at the top; a file row opens it at that file.
     if (review) return dock.openChanges(store.selected, review.closest('[data-turn]').dataset.turn, review.classList.contains('changes-review') ? '' : review.dataset.reviewFile);
+    const fileRef = target.closest('[data-file-ref]'); if (fileRef) return dock.openFile(store.selected, fileRef.dataset.fileRef, fileRef.dataset.fileLine);
     const image = target.closest('[data-open-image]'); if (image) return showImage(await api('attachment:read', store.selected, image.dataset.imageTurn, image.dataset.openImage), image.title);
     const remove = target.closest('[data-delete-turn]');
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }

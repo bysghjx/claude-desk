@@ -397,6 +397,12 @@ if(primaryInstance)app.whenReady().then(async () => {
     return diff.slice(0,300000) || '文件已删除，或暂时没有可展示的文本改动。';
   });
   handle('project:review-diff', (id, relative) => review.diff(folder(id), relative));
+  // A file named in a reply, for the split view; only files inside the conversation's folder.
+  handle('file:read',(id,file)=>{
+    const cwd=engine.thread(id).cwd,target=within(cwd,file);
+    if(!fs.existsSync(target)||!fs.statSync(target).isFile())throw Error('找不到文件 '+file);
+    return {path:path.relative(cwd,target).replaceAll('\\','/'),text:readProjectFile(target)};
+  });
   handle('project:stage', (id, paths, staged) => review.stage(folder(id), paths, Boolean(staged)));
   handle('project:revert', (id, relative) => review.revert(folder(id), relative));
   handle('project:commit', (id, message, all) => review.commit(folder(id), message, Boolean(all)));

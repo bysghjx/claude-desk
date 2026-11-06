@@ -9,7 +9,24 @@ export function escape(value) {
 
 const MARKDOWN_TAGS = ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr'];
 export function markdown(text) {
-  return globalThis.DOMPurify.sanitize(globalThis.marked.parse(text || '', { breaks: true, gfm: true }), { ALLOWED_TAGS: MARKDOWN_TAGS, ALLOWED_ATTR: ['href', 'title', 'class'], ALLOW_DATA_ATTR: false });
+  return enhance(globalThis.DOMPurify.sanitize(globalThis.marked.parse(text || '', { breaks: true, gfm: true }), { ALLOWED_TAGS: MARKDOWN_TAGS, ALLOWED_ATTR: ['href', 'title', 'class'], ALLOW_DATA_ATTR: false }));
+}
+
+// GitHub-style alerts (> [!WARNING] …) become callouts.
+const CALLOUTS = { NOTE: '说明', TIP: '提示', IMPORTANT: '重点', WARNING: '注意', CAUTION: '警告' };
+// Inline code naming a file, optionally with :line or :line-line, such as `ui/app.css:42`.
+const FILE_REF = /^(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w.@\-一-龥]+[\\/])*[\w@\-一-龥][\w.@\-一-龥]*\.[A-Za-z][A-Za-z0-9]{0,7}(?::(\d+)(?:-\d+)?)?$/;
+const unescape = text => text.replace(/&(lt|gt|quot|#39|amp);/g, (_, c) => ({ lt: '<', gt: '>', quot: '"', '#39': "'", amp: '&' })[c]);
+// Runs on sanitized HTML and only adds attributes it builds itself.
+export function enhance(html) {
+  return html
+    .replace(/<blockquote>\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br>\s*)?/g, (_, kind) => `<blockquote class="callout callout-${kind.toLowerCase()}"><p class="callout-title">${CALLOUTS[kind]}</p><p>`)
+    .replace(/<p><\/p>/g, '')
+    .replace(/<code>([^<]{3,260})<\/code>/g, (whole, inner) => {
+      const text = unescape(inner), match = !text.includes('://') && text.match(FILE_REF); if (!match) return whole;
+      const file = match[1] ? text.slice(0, text.lastIndexOf(':' + match[1])) : text;
+      return `<code class="file-ref" data-file-ref="${escape(file)}"${match[1] ? ` data-file-line="${match[1]}"` : ''} title="打开 ${escape(file)}">${inner}</code>`;
+    });
 }
 
 // Writes innerHTML only when it changed, so untouched nodes keep focus, selection and running transitions.

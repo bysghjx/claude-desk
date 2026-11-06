@@ -3,7 +3,7 @@ import { $, escape } from './dom.mjs';
 
 export function createToast(node = $('#toast')) {
   let timer;
-  return text => { node.textContent = text; node.hidden = false; clearTimeout(timer); timer = setTimeout(() => { node.hidden = true; }, 5500); };
+  return text => { node.textContent = String(text).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''); node.hidden = false; clearTimeout(timer); timer = setTimeout(() => { node.hidden = true; }, 5500); };
 }
 
 // Styled confirmation: Cancel has focus by default; Esc or clicking outside cancels.
