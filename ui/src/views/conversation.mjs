@@ -23,7 +23,7 @@ function welcomeHtml(store) {
 }
 
 export function createConversation({ store, actions, api, composer, toast, dock }) {
-  const box = $('#messages'), views = new Map(), jump = $('#jump-latest');
+  const box = $('#messages'), views = new Map(), jump = $('#jump-latest'), liveFloat = $('#live-float');
   let shownThread = undefined;
   // Long conversations show their latest turns first; earlier ones load from the top
   // (button, or scrolling up to it) a window at a time.
@@ -40,17 +40,20 @@ export function createConversation({ store, actions, api, composer, toast, dock 
   older.addEventListener('click', showOlder);
 
   // 回到最新: appears once you scroll more than about a screen above the latest
-  // message, and gets a dot when something new arrives while you are up there.
+  // message, and gets a dot when something new arrives while you are up there. While a turn is
+  // running the status capsule below takes its place.
   const fromBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight;
+  let farFromLatest = false;
+  const showJump = () => { jump.hidden = !farFromLatest || !liveFloat.hidden; };
   function updateJump(grew = false) {
-    const away = shownThread !== 'home' && fromBottom() > Math.max(240, box.clientHeight * 0.6);
-    if (!away) jump.classList.remove('has-new'); else if (grew) jump.classList.add('has-new');
-    jump.hidden = !away;
+    farFromLatest = shownThread !== 'home' && fromBottom() > Math.max(240, box.clientHeight * 0.6);
+    if (!farFromLatest) jump.classList.remove('has-new'); else if (grew) jump.classList.add('has-new');
+    showJump();
   }
   // The running status of the turn, copied above the input box while the original is out of
   // sight (scrolled off the top, or below while you read further up); it goes back once the
-  // original is in view again. Clicking it scrolls there.
-  const liveFloat = $('#live-float');
+  // original is in view again. Clicking it goes to the latest message, or to the original when
+  // you are already there.
   const liveSummary = () => box.querySelector('.work-group.live>summary');
   function updateLiveFloat() {
     const summary = liveSummary(), at = summary?.getBoundingClientRect(), view = box.getBoundingClientRect();
@@ -61,10 +64,12 @@ export function createConversation({ store, actions, api, composer, toast, dock 
       liveFloat.classList.toggle('approval', label.dataset.status === 'approval');
     }
     if (liveFloat.hidden === away) liveFloat.hidden = !away;
+    showJump();
   }
-  liveFloat.addEventListener('click', () => liveSummary()?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  const toLatest = () => { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); jump.classList.remove('has-new'); };
+  liveFloat.addEventListener('click', () => farFromLatest ? toLatest() : liveSummary()?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
   box.addEventListener('scroll', () => { updateJump(); updateLiveFloat(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
-  jump.addEventListener('click', () => { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); jump.classList.remove('has-new'); });
+  jump.addEventListener('click', toLatest);
 
   function closeProjects(restoreFocus = false) {
     const trigger = $('#home-project'), menu = $('#home-project-menu');
