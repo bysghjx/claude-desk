@@ -10,7 +10,7 @@ function userHtml(turn) {
   const images = turn.images?.length ? `<div class="user-images">${turn.images.map(image => `<button type="button" class="user-image" data-open-image="${escape(image.id)}" data-image-turn="${escape(turn.id)}" title="${escape(image.name)}">${image.thumb ? `<img src="${escape(image.thumb)}" alt="${escape(image.name)}">` : `<span>${escape(image.name)}</span>`}</button>`).join('')}</div>` : '';
   const references = turn.references?.length ? `<div class="turn-references">${turn.references.map(r => `<span>${r.kind === 'file' ? '@' : '@@'} ${escape(r.label || r.path)}</span>`).join('')}</div>` : '';
   const label = `<div class="assistant-label"><span class="spark">✳</span>${turn.source === 'codex' ? 'Codex · 历史导入' : turn.source === 'claude' ? 'Claude Code · 历史导入' : 'Claude'}${turn.contextRestored ? '<span class="restore" title="应用已从本地历史恢复上下文">从本地历史恢复上下文</span>' : ''}</div>`;
-  const rewind = `<div class="user-actions"><button type="button" data-rewind="${escape(turn.id)}" title="删除这一轮及之后的问答，可同时把文件恢复到这一轮开始前；提问放回输入框"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 0 1 0 7H7M3.5 6.5 6 4M3.5 6.5 6 9"/></svg>回退到这里</button></div>`;
+  const rewind = `<div class="user-actions"><button type="button" data-edit-turn="${escape(turn.id)}" title="编辑这条消息并重新发送" aria-label="编辑"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3 13 5.5 6 12.5l-3 .5.5-3Z"/><path d="m9 4.5 2.5 2.5"/></svg></button><button type="button" data-rewind="${escape(turn.id)}" title="回退到这里：删除这一轮及之后的问答，可同时把文件恢复到这一轮开始前；提问放回输入框" aria-label="回退到这里"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6.5h6a3.5 3.5 0 0 1 0 7H7M3.5 6.5 6 4M3.5 6.5 6 9"/></svg></button></div>`;
   const steer = turn.fromSteer ? '<span class="steer-tag" title="运行中插入的消息，上一轮结束后接着处理">插话</span>' : '';
   return `<div class="user-line">${images}${turn.user ? `<div class="user-message">${escape(turn.user)}${steer}</div>` : ''}${rewind}</div>${references}${label}`;
 }
@@ -195,7 +195,7 @@ export function updateTurn(view, turn, { threadActive, latest = false, turns = n
   if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && view.runKey === runKey && turn.rev != null) return false;
   view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest; view.runKey = runKey;
   const live = turn.status === 'running';
-  setHtml(view.head, userHtml(turn));
+  if (!view.head.querySelector('.user-edit')) setHtml(view.head, userHtml(turn));
   const final = updateBody(view, turn, live, run || {});
   if (setHtml(view.final, markdown(final)) && final && !view.hadFinal && view.ready) animateIn(view.final);
   view.hadFinal = Boolean(final);
