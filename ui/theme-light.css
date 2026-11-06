@@ -377,6 +377,9 @@
   .work-detail{color:#8a8a85}
   .jump-latest{background:#fff;border-color:#d0d0d0;color:#333;box-shadow:0 4px 14px #0000001f}
   .jump-latest:hover{background:#f2f2f2}
+  .live-float{background:#fff;border-color:#d0d0d0;color:#3e3c35;box-shadow:0 4px 14px #0000001f}
+  .live-float:hover{background:#f2f2f2}
+  .live-float .work-detail{color:#77766f}
   .jump-latest.has-new::after{border-color:#fff}
   .agent-history>summary{color:#666}
   .agent-history>summary:hover{color:#222;background:#0000000a}

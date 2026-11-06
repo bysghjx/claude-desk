@@ -76,6 +76,15 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .older-turns:hover{background:#ffffff0a;color:#e6e6e6}
 .jump-latest:not([hidden]){animation:rise-in var(--motion) var(--ease-out)}
 .jump-latest:hover{background:#333}
+/* The running status, pinned above the input box while the turn's own status is scrolled away. */
+.live-float{position:absolute;left:50%;bottom:12px;translate:-50% 0;display:flex;align-items:center;gap:10px;max-width:min(560px,80%);padding:7px 16px 7px 13px;border-radius:999px;border:1px solid #474747;background:#262626;color:#c9c7c0;font-size:14px;box-shadow:0 4px 14px #0000004d;white-space:nowrap}
+.live-float[hidden]{display:none}
+.live-float:not([hidden]){animation:rise-in var(--motion) var(--ease-out)}
+.live-float:hover{background:#2e2e2e}
+.live-float::before{content:'';flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);animation:live-pulse 1.4s ease-in-out infinite}
+.live-float .work-label{flex:none}
+.live-float .work-detail{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;color:#8f8d86}
+.jump-latest:not([hidden])~.live-float{bottom:56px}
 .jump-latest svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .jump-latest.has-new::after{content:"";position:absolute;top:1px;right:1px;width:8px;height:8px;border-radius:50%;background:var(--accent,#d7d7d7);border:2px solid #262626}
 .messages{flex:1;overflow:auto;padding:45px max(26px,calc((100% - 790px)/2)) 20px;scroll-behavior:auto}

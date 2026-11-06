@@ -1,5 +1,5 @@
 // The message list. Turns are keyed by id; only turns whose revision changed are updated.
-import { $, escape, setHtml } from '../core/dom.mjs';
+import { $, escape, setHtml, setText } from '../core/dom.mjs';
 import { elapsed, isActive } from '../core/format.mjs';
 import { guarded, showImage } from '../core/ui.mjs';
 import { createTurn, updateTurn, animateIn, liveLabel } from './turn.mjs';
@@ -47,7 +47,17 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     if (!away) jump.classList.remove('has-new'); else if (grew) jump.classList.add('has-new');
     jump.hidden = !away;
   }
-  box.addEventListener('scroll', () => { updateJump(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
+  // The running status of the turn, copied above the input box while the original is scrolled
+  // off the top; it goes back once the original is in view again. Clicking it scrolls there.
+  const liveFloat = $('#live-float');
+  const liveSummary = () => box.querySelector('.work-group.live>summary');
+  function updateLiveFloat() {
+    const summary = liveSummary(), above = Boolean(summary) && summary.getBoundingClientRect().bottom < box.getBoundingClientRect().top + 4;
+    if (above) { setText(liveFloat.querySelector('.work-label'), summary.querySelector('.work-label').textContent); setText(liveFloat.querySelector('.work-detail'), summary.querySelector('.work-detail').textContent); }
+    if (liveFloat.hidden === above) liveFloat.hidden = !above;
+  }
+  liveFloat.addEventListener('click', () => liveSummary()?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  box.addEventListener('scroll', () => { updateJump(); updateLiveFloat(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
   jump.addEventListener('click', () => { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); jump.classList.remove('has-new'); });
 
   function closeProjects(restoreFocus = false) {
@@ -99,7 +109,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
       previous = view.root;
     }
     if (switched || nearBottom) box.scrollTop = box.scrollHeight;
-    updateJump(!switched && box.scrollHeight > height);
+    updateJump(!switched && box.scrollHeight > height); updateLiveFloat();
   }
 
   // Live "正在处理 · 1m 2s" labels advance once a second without re-rendering turns.
@@ -108,6 +118,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
       const now = liveLabel(label.dataset.status, Number(label.dataset.since), Number(label.dataset.lastEvent) || 0, label.dataset.detail);
       label.textContent = now.label; label.parentNode.querySelector('.work-detail').textContent = now.detail;
     }
+    updateLiveFloat();
   }
 
   box.addEventListener('click', guarded(toast, async event => {
