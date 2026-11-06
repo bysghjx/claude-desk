@@ -307,10 +307,11 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('queue:take',(id,queueId)=>{const item=engine.dequeue(id,queueId);return item&&{text:item.text,options:{references:item.options.references||[],images:item.options.images||[]}};});
   handle('queue:remove',(id,queueId)=>{const item=engine.dequeue(id,queueId);if(item)engine.removeImages([item.options]);return Boolean(item);});
   handle('thread:meta',(id,value)=>threadOut(engine.setMeta(id,value||{})));
-  handle('attachment:open',(id,turnId,imageId)=>{
-    const image=engine.thread(id).turns.find(t=>t.id===turnId)?.images?.find(x=>x.id===imageId);if(!image)throw Error('图片不存在');
+  // A sent image as a data URL, for the in-app viewer.
+  handle('attachment:read',(id,turnId,imageId)=>{
+    const turn=engine.thread(id).turns.find(t=>t.id===turnId),image=[...turn?.images||[],...(turn?.steers||[]).flatMap(s=>s.images||[])].find(x=>x.id===imageId);if(!image)throw Error('图片不存在');
     const rel=path.relative(attachmentRoot,image.path);if(rel.startsWith('..')||path.isAbsolute(rel)||!fs.existsSync(image.path))throw Error('图片文件已被删除');
-    return shell.openPath(image.path);
+    return `data:${image.mediaType||'image/png'};base64,${fs.readFileSync(image.path).toString('base64')}`;
   });
   handle('thread:stop', id => engine.stop(id));
   handle('thread:delete',async id=>{const {worktree:wt,cwd}=engine.thread(id);const result=await engine.deleteThread(id);

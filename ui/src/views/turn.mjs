@@ -42,13 +42,15 @@ const itemKey = (item, index) => item.type === 'tool' || item.type === 'steer' ?
 // 插话 reads like one of your messages, in the place Claude read it. Until then it waits at the
 // end of the turn, saying what it waits for, with a way to stop the step and send it at once.
 function steerHtml(steer, turn) {
-  const images = steer.images?.length ? `<span class="turn-steer-images">${steer.images.length} 张图片</span>` : '';
+  const images = steer.images?.length ? `<div class="user-images">${steer.images.map(image => `<button type="button" class="user-image" data-open-image="${escape(image.id)}" data-image-turn="${escape(turn.id)}" title="${escape(image.name)}">${image.thumb ? `<img src="${escape(image.thumb)}" alt="${escape(image.name)}">` : `<span>${escape(image.name)}</span>`}</button>`).join('')}</div>` : '';
   const running = steer.status === 'pending' && (turn.tools || []).findLast(t => t.status === 'running');
   const wait = running ? `等「${escape(running.input?.description || toolView(running).target.split('\n')[0].slice(0, 60) || running.name)}」完成后交给 Claude` : '这一步结束后交给 Claude';
   const meta = steer.status === 'pending' ? `<span class="turn-steer-state">${wait}</span><button type="button" data-steer-now="${escape(steer.id)}" title="停止当前步骤，马上把这条消息发给 Claude">打断并立即发送</button>` : '<span class="turn-steer-state">插话 · Claude 已读到</span>';
-  return `<div class="turn-steer-text">${escape(steer.text || '（图片）')}${images}</div><div class="turn-steer-meta">${meta}</div>`;
+  return `${images}${steer.text || !images ? `<div class="turn-steer-text">${escape(steer.text || '（图片）')}</div>` : ''}<div class="turn-steer-meta">${meta}</div>`;
 }
 
+// Thinking is not shown; Claude's notes between steps (narration) are.
+const shown = work => work.filter(item => item.type !== 'thinking');
 // `ctx` is { cwd, turn, ready }: the turn holds the sub-agents an Agent step opens up.
 const isAgentStep = tool => toolView(tool).kind === 'agent';
 // An Agent step shows what its sub-agent did: the task, every step it took (drawn like the
@@ -61,7 +63,7 @@ function updateAgent(node, tool, ctx) {
   const [head, prompt, steps, empty, final] = node.lastChild.children;
   setHtml(head, parts.head);
   prompt.hidden = !parts.prompt; setHtml(prompt.lastChild, escape(parts.prompt));
-  renderSteps(steps, node.agentSteps ||= new Map(), parts.work, ctx);
+  renderSteps(steps, node.agentSteps ||= new Map(), shown(parts.work), ctx);
   empty.hidden = !parts.empty; setHtml(empty, escape(parts.empty));
   final.hidden = !parts.final; setHtml(final.lastChild, markdown(parts.final));
 }
@@ -125,6 +127,7 @@ export function liveLabel(status, since, lastEventAt, detail, now = Date.now()) 
 }
 // `part` holds one folded group and its step nodes; a turn has one per stretch between 插话.
 function updateWork(view, part, turn, work, live, run, span) {
+  work = shown(work);
   if (!work.length && !live) { part.work?.remove(); part.work = null; part.items.clear(); return null; }
   if (!part.work) {
     const node = part.work = element('details', 'work-group');
@@ -140,7 +143,7 @@ function updateWork(view, part, turn, work, live, run, span) {
   if (live) Object.assign(label.dataset, { since: turn.startedAt, status: run.status || '', lastEvent: run.lastEventAt || '', detail: run.detail || '' });
   else for (const key of ['since', 'status', 'lastEvent', 'detail']) delete label.dataset[key];
   const now = live ? liveLabel(run.status, turn.startedAt, run.lastEventAt, run.detail) : null;
-  label.textContent = live ? now.label : steps ? `已处理 ${elapsed(span.since, span.until)}` : '已思考';
+  label.textContent = live ? now.label : `已处理 ${elapsed(span.since, span.until)}`;
   detail.textContent = live ? now.detail : '';
   group.querySelector('.work-count').textContent = steps ? `${steps} 个步骤` : '';
   // Runs of one kind of step sit in a folded row; the steps keep their own nodes.

@@ -21,7 +21,7 @@ export function createPalette({ store, api, actions, composer, toast }) {
   let tab = 'all', items = [], index = 0, files = [], filesFor = null;
   const click = selector => () => document.querySelector(selector)?.click();
   const ACTIONS = [
-    { id: 'new-chat', label: '新聊天', shortcut: 'Ctrl+N', icon: 'newChat', keywords: '新对话 新任务 new chat', run: () => actions.showHome() },
+    { id: 'new-chat', label: '新聊天', shortcut: 'Ctrl+N', icon: 'newChat', keywords: '新对话 新任务 new chat', run: () => actions.newTask() },
     { id: 'open-folder', label: '打开文件夹', shortcut: 'Ctrl+O', icon: 'folder', keywords: '添加项目 open folder project', run: () => actions.addProject() },
     { id: 'terminal', label: '打开或隐藏终端', shortcut: 'Ctrl+`', icon: 'terminal', keywords: 'terminal shell powershell', run: click('#toggle-terminal') },
     { id: 'settings', label: '设置', icon: 'settings', keywords: 'settings 主题 外观 通知 强调色', run: click('#settings') },

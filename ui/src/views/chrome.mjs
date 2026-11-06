@@ -102,7 +102,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
     } catch (e) { setText($('#data-summary'), '读取会话统计失败：' + e.message); }
   }
 
-  $('#new-thread').addEventListener('click', actions.showHome);
+  $('#new-thread').addEventListener('click', actions.newTask);
   $('#rail-home').addEventListener('click', () => { actions.showHome(); rail('rail-home'); });
   for (const [page, id] of Object.entries(RAIL_TABS)) $('#' + id).addEventListener('click', () => { manager.open(page); rail(id); });
   document.addEventListener('click', event => { const tab = event.target.closest?.('[data-manager-tab]'); if (tab) rail(RAIL_TABS[tab.dataset.managerTab] || RAIL_OF_TAB[tab.dataset.managerTab] || ''); });
@@ -141,7 +141,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
     const button = $('[data-window="max"]'), label = maximized ? '向下还原' : '最大化'; button.title = label; button.setAttribute('aria-label', label);
   });
   document.addEventListener('keydown', event => {
-    if (event.ctrlKey && event.key.toLowerCase() === 'n') { event.preventDefault(); actions.showHome(); }
+    if (event.ctrlKey && event.key.toLowerCase() === 'n') { event.preventDefault(); actions.newTask(); }
     if (event.key === 'Escape' && $('#settings-dialog').open) $('#settings-dialog').close();
   });
 

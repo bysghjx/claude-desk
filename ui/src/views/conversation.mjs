@@ -1,7 +1,7 @@
 // The message list. Turns are keyed by id; only turns whose revision changed are updated.
 import { $, escape, setHtml } from '../core/dom.mjs';
 import { elapsed, isActive } from '../core/format.mjs';
-import { guarded } from '../core/ui.mjs';
+import { guarded, showImage } from '../core/ui.mjs';
 import { createTurn, updateTurn, animateIn, liveLabel } from './turn.mjs';
 
 const SUGGESTIONS = [
@@ -14,14 +14,15 @@ const SUGGESTIONS = [
 function welcomeHtml(store) {
   const p = store.currentProject(), { projects, threads } = store.state;
   const options = [{ id: '', name: '不选项目 · 直接对话' }, ...projects];
-  const selection = `<div class="home-project-selection"><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><div class="home-project-picker"><button id="home-project" type="button" aria-label="选择工作项目" aria-haspopup="listbox" aria-expanded="false" aria-controls="home-project-menu"><span>${escape(p?.name || options[0].name)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="home-project-menu" class="home-project-menu" role="listbox" aria-label="工作项目" hidden>${options.map(x => `<button type="button" role="option" tabindex="-1" data-home-project="${escape(x.id)}" aria-selected="${x.id === (p?.id || '')}"${x.path ? ` title="${escape(x.path)}"` : ''}><span>${escape(x.name)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-6"/></svg></button>`).join('')}</div></div><span class="home-project-divider" aria-hidden="true"></span><button class="home-add-project" type="button" data-action="add-project" title="添加项目文件夹">＋ 添加文件夹</button></div>`;
+  // Where a new conversation edits files: right in the project, or on a new branch in its own folder (git worktree).
   const location = store.state.settings?.location === 'worktree' ? 'worktree' : 'local', wt = store.current()?.worktree;
-  const where = !store.current() && p ? `<div class="home-location" role="radiogroup" aria-label="新对话在哪里运行"><button type="button" role="radio" data-location="local" aria-checked="${location === 'local'}">本地项目目录</button><button type="button" role="radio" data-location="worktree" aria-checked="${location === 'worktree'}"><svg class="branch-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-2 3-5.5 4"/></svg>独立工作树</button></div><div class="home-location-note">${location === 'worktree' ? '从当前提交新建分支和文件夹，Claude 的改动不影响主目录；完成后在右侧「改动」里合并。需要 Git 仓库。' : '直接在项目目录里修改文件。'}</div>` : '';
+  const where = !store.current() && p ? `<span class="home-project-divider" aria-hidden="true"></span><div class="home-location" role="radiogroup" aria-label="新对话在哪里改文件"><button type="button" role="radio" data-location="local" aria-checked="${location === 'local'}" title="Claude 直接修改项目目录里的文件">项目目录</button><button type="button" role="radio" data-location="worktree" aria-checked="${location === 'worktree'}" title="新建一个分支和文件夹（Git 工作树）给 Claude 改，项目目录不受影响；完成后在右侧「改动」里合并。需要 Git 仓库。"><svg class="branch-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-2 3-5.5 4"/></svg>新分支</button></div>` : '';
+  const selection = `<div class="home-project-selection"><span class="folder"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><div class="home-project-picker"><button id="home-project" type="button" aria-label="选择工作项目" aria-haspopup="listbox" aria-expanded="false" aria-controls="home-project-menu"><span>${escape(p?.name || options[0].name)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="home-project-menu" class="home-project-menu" role="listbox" aria-label="工作项目" hidden>${options.map(x => `<button type="button" role="option" tabindex="-1" data-home-project="${escape(x.id)}" aria-selected="${x.id === (p?.id || '')}"${x.path ? ` title="${escape(x.path)}"` : ''}><span>${escape(x.name)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-6"/></svg></button>`).join('')}</div></div><span class="home-project-divider" aria-hidden="true"></span><button class="home-add-project" type="button" data-action="add-project" title="添加项目文件夹">＋ 添加文件夹</button>${where}</div>`;
   const suggestions = SUGGESTIONS.map(([icon, title, sub, prompt]) => `<button class="suggestion" data-suggestion="${escape(prompt)}"><span class="suggest-icon">${icon}</span><strong>${title}</strong><small>${sub}</small></button>`).join('');
-  return `<div class="welcome"><div class="welcome-icon">✳</div><span class="eyebrow">CLAUDE DESK / 本地工作空间</span><h1>你想构建什么？</h1><p class="intro">选择一个项目开始任务，<br>也可以不选项目，直接提问开始一段对话。</p>${selection}${where}${p ? `<div class="welcome-path">${wt && !wt.removed ? `独立工作树 ${escape(wt.branch)} · ${escape(store.current().cwd)}` : escape(p.path)}</div>` : ''}<div class="suggestions">${suggestions}</div><div class="welcome-note"><span class="dot"></span>${projects.length} 个项目 · ${threads.length} 个已有会话，保留在左侧列表</div></div>`;
+  return `<div class="welcome"><div class="welcome-icon">✳</div><span class="eyebrow">CLAUDE DESK / 本地工作空间</span><h1>你想构建什么？</h1><p class="intro">选择一个项目开始任务，<br>也可以不选项目，直接提问开始一段对话。</p>${selection}${p ? `<div class="welcome-path">${wt && !wt.removed ? `独立工作树 ${escape(wt.branch)} · ${escape(store.current().cwd)}` : escape(p.path)}</div>` : ''}<div class="suggestions">${suggestions}</div><div class="welcome-note"><span class="dot"></span>${projects.length} 个项目 · ${threads.length} 个已有会话，保留在左侧列表</div></div>`;
 }
 
-export function createConversation({ store, actions, api, composer, toast, reviewPanel }) {
+export function createConversation({ store, actions, api, composer, toast, dock }) {
   const box = $('#messages'), views = new Map(), jump = $('#jump-latest');
   let shownThread = undefined;
   // Long conversations show their latest turns first; earlier ones load from the top
@@ -116,8 +117,10 @@ export function createConversation({ store, actions, api, composer, toast, revie
     const suggestion = target.closest('[data-suggestion]'); if (suggestion) { composer.setText(suggestion.dataset.suggestion); composer.focus(); composer.save(); return; }
     if (target.closest('[data-action="add-project"]')) return actions.addProject();
     const location = target.closest('[data-location]'); if (location) return actions.setLocation(location.dataset.location);
-    const review = target.closest('[data-review-file]'); if (review) return reviewPanel.open(review.dataset.reviewFile);
-    const image = target.closest('[data-open-image]'); if (image) return api('attachment:open', store.selected, image.dataset.imageTurn, image.dataset.openImage);
+    const review = target.closest('[data-review-file]');
+    // 查看变更 opens the turn's 变更 tab at the top; a file row opens it at that file.
+    if (review) return dock.openChanges(store.selected, review.closest('[data-turn]').dataset.turn, review.classList.contains('changes-review') ? '' : review.dataset.reviewFile);
+    const image = target.closest('[data-open-image]'); if (image) return showImage(await api('attachment:read', store.selected, image.dataset.imageTurn, image.dataset.openImage), image.title);
     const remove = target.closest('[data-delete-turn]');
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }
     const steerNow = target.closest('[data-steer-now]'); if (steerNow) { steerNow.disabled = true; try { await actions.steerNow(steerNow.dataset.steerNow); } finally { steerNow.disabled = false; } return; }

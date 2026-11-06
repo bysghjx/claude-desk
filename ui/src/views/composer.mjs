@@ -1,7 +1,7 @@
 // The input box: text, references, images, model / effort / permission pickers,
 // slash commands and @ mentions. Sending goes through actions.
 import { $, escape } from '../core/dom.mjs';
-import { guarded } from '../core/ui.mjs';
+import { guarded, showImage } from '../core/ui.mjs';
 
 export const levels=['low','medium','high','xhigh','max'];
 export const levelNames=['低','中','高','很高','最高'];
@@ -30,7 +30,7 @@ export function modeListHtml(current){
 export function createComposer({ store, api, toast, actions }) {
   let references=[],images=[],saveTimer,ready=false,menuItems=[],menuIndex=0,menuToken=null,menuGeneration=0,historyIndex=-1,historyDraft=null,filesCache=null,modelsLoading=false;
   const commands=[
-    {name:'new',description:'返回主页，选择项目开始新任务',action:()=>actions().showHome()},
+    {name:'new',description:'在当前项目里开始新任务',action:()=>actions().newTask()},
     {name:'model',description:'选择本次任务使用的 Claude 模型',action:()=>openPicker('model')},
     {name:'effort',description:'用滑块调整思考强度',action:()=>openPicker('effort')},
     {name:'plan',description:'切换到仅做计划模式',action:()=>{$('#mode').value='plan';optionChanged();toast('已切换为仅做计划');}},
@@ -284,7 +284,7 @@ export function createComposer({ store, api, toast, actions }) {
   const IMAGE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
   function renderImages(){
     $('#image-chips').hidden=!images.length;
-    $('#image-chips').innerHTML=images.map((image,i)=>`<span class="image-chip${image.ready&&!image.thumb?' loading':''}" title="${escape(image.name)}"><img src="${escape(image.thumb||image.preview||'')}" alt="${escape(image.name)}"><button type="button" data-remove-image="${i}" aria-label="移除图片 ${escape(image.name)}">×</button></span>`).join('');
+    $('#image-chips').innerHTML=images.map((image,i)=>`<span class="image-chip${image.ready&&!image.thumb?' loading':''}" data-view-image="${i}" title="${escape(image.name)} · 点击查看大图"><img src="${escape(image.thumb||image.preview||'')}" alt="${escape(image.name)}"><button type="button" data-remove-image="${i}" aria-label="移除图片 ${escape(image.name)}">×</button></span>`).join('');
   }
   function dropImage(image){const at=images.indexOf(image);if(at>=0)images.splice(at,1);if(image.preview)URL.revokeObjectURL(image.preview);}
   function readAsDataUrl(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('无法读取图片'));reader.readAsDataURL(file);});}
@@ -308,7 +308,10 @@ export function createComposer({ store, api, toast, actions }) {
   }
   // Sending waits for images still being read.
   const imagesReady=()=>Promise.all(images.map(image=>image.ready));
-  $('#image-chips').onclick=event=>{const b=event.target.closest('[data-remove-image]');if(b){dropImage(images[Number(b.dataset.removeImage)]);renderImages();store.emit('composer');}};
+  $('#image-chips').onclick=event=>{
+    const b=event.target.closest('[data-remove-image]');if(b){dropImage(images[Number(b.dataset.removeImage)]);renderImages();store.emit('composer');return;}
+    const chip=event.target.closest('[data-view-image]'),image=chip&&images[Number(chip.dataset.viewImage)];if(image)showImage(image.data?`data:${image.mediaType};base64,${image.data}`:image.thumb,image.name);
+  };
   $('#image-input').onchange=()=>{addImages($('#image-input').files);$('#image-input').value='';};
   $('#prompt').addEventListener('paste',event=>{const files=[...(event.clipboardData?.items||[])].filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addImages(files);}});
   $('#composer').addEventListener('dragover',event=>{if([...(event.dataTransfer?.items||[])].some(item=>item.kind==='file')){event.preventDefault();$('#composer').classList.add('dropping');}});

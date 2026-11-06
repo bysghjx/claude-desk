@@ -101,6 +101,33 @@ export function fileChanges(turn,cwd){
   }
   return[...map.values()];
 }
+// What a turn did to one file, from its own edit steps: diff lines with three lines of
+// context; a gap {type:'…', count} stands for unchanged lines, one without count separates edits.
+export function turnFileDiff(turn,file,cwd){
+  const lines=[];
+  for(const tool of turn?.tools||[]){
+    if(tool.status==='error')continue;
+    for(const f of toolView(tool).files)if(f.path&&relativePath(f.path,cwd).toLowerCase()===String(file).toLowerCase()){
+      if(lines.length)lines.push({type:'…'});
+      const diff=f.lines||[],keep=new Set();
+      diff.forEach((l,i)=>{if(l.type!==' ')for(let k=i-3;k<=i+3;k++)keep.add(k);});
+      diff.forEach((l,i)=>{if(keep.has(i))lines.push(l);else if(lines.at(-1)?.count)lines.at(-1).count++;else lines.push({type:'…',count:1});});
+    }
+  }
+  return lines;
+}
+// The 变更 tab of the split view: every file the turn edited, each with its diff.
+export function changesViewHtml(turn,cwd,escape,limit=3000){
+  const files=fileChanges(turn,cwd);
+  if(!files.length)return'<p class="cv-empty">这一轮没有修改文件。</p>';
+  const added=files.reduce((n,f)=>n+f.added,0),removed=files.reduce((n,f)=>n+f.removed,0);
+  const line=l=>l.type==='…'?`<div class="cv-gap">${l.count?`${l.count} 行未改动`:'⋯'}</div>`:l.type==='@'?'<div class="cv-gap">⋯</div>':`<div class="cv-line${l.type==='+'?' add':l.type==='-'?' del':''}"><span class="cv-sign">${l.type==='+'?'+':l.type==='-'?'−':''}</span><span class="cv-code">${escape(l.text)}</span></div>`;
+  const file=f=>{
+    const lines=turnFileDiff(turn,f.path,cwd),dir=f.path.includes('/')?f.path.slice(0,f.path.lastIndexOf('/')+1):'';
+    return `<section class="cv-file" data-cv-file="${escape(f.path)}"><header class="cv-file-head" title="${escape(f.path)}"><span class="cv-path"><span class="change-dir">${escape(dir)}</span><span class="change-name">${escape(baseName(f.path))}</span></span>${deltaHtml(f.added,f.removed)}</header><div class="cv-diff">${lines.slice(0,limit).map(line).join('')||'<div class="cv-gap">没有记录到具体改动</div>'}${lines.length>limit?`<div class="cv-gap">另有 ${lines.length-limit} 行未显示</div>`:''}</div></section>`;
+  };
+  return `<div class="cv-head"><strong>${turn.undone?'已撤销的改动':'这一轮的改动'}</strong><span>${files.length} 个文件</span>${deltaHtml(added,removed)}</div>${files.map(file).join('')}`;
+}
 // Claude Desk's own tools draw cards under the turn, not step rows.
 export const WRAP_UP='mcp__desk__wrap_up',PROPOSE='mcp__desk__propose_session';
 const CARD_TOOLS=new Set([WRAP_UP,PROPOSE]);

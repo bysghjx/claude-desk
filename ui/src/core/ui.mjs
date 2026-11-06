@@ -1,5 +1,5 @@
-// Toasts and the shared confirmation dialog.
-import { $ } from './dom.mjs';
+// Toasts, the shared confirmation dialog and the image viewer.
+import { $, escape } from './dom.mjs';
 
 export function createToast(node = $('#toast')) {
   let timer;
@@ -31,3 +31,13 @@ export function createConfirm(get = $) {
 
 // Wraps an async handler so failures surface as a toast instead of being lost.
 export const guarded = (toast, action) => (...args) => Promise.resolve().then(() => action(...args)).catch(e => toast(e?.message || String(e)));
+
+// Shows an image full size over the window; a click or Esc closes it.
+export function showImage(src, name = '') {
+  if (!src) return;
+  const box = document.createElement('div'); box.className = 'image-viewer'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', name || '图片');
+  box.innerHTML = `<img src="${escape(src)}" alt="${escape(name)}">${name ? `<span class="image-viewer-name">${escape(name)}</span>` : ''}`;
+  const close = () => { box.remove(); document.removeEventListener('keydown', key, true); };
+  const key = event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } };
+  box.onclick = close; document.addEventListener('keydown', key, true); document.body.append(box);
+}

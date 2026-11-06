@@ -1,36 +1,35 @@
-import { $, escape } from '../core/dom.mjs';
+import { $, escape, setHtml } from '../core/dom.mjs';
 
 // Codex-style review of uncommitted changes: per-file +/- counts, staging,
 // discarding a file's changes and committing with a message.
 export function createReview({ store, api, toast, confirm, inspector }) {
-  let project=null,model=null,signature='',message='',pendingOpen='',busy=false;
+  let project=null,model=null,signature='',message='',busy=false;
   const baseName=p=>p.split('/').pop();
   const dirName=p=>p.includes('/')?p.slice(0,p.lastIndexOf('/')):'';
   const kind=f=>f.untracked||f.index==='A'?['新','added']:f.index==='D'||f.worktree==='D'?['删','deleted']:f.index==='R'?['移','renamed']:['改','modified'];
   const delta=f=>f.binary?'<span class="step-delta"><span class="muted">二进制</span></span>':`<span class="step-delta"><span class="plus">+${f.added}</span><span class="minus">−${f.removed}</span></span>`;
   function render(p,changes){
-    const sig=JSON.stringify([p.id,changes]),list=$('#file-list');if(sig===signature&&project?.id===p.id&&list.dataset.view==='review')return finishOpen();
+    const sig=JSON.stringify([p.id,changes]),list=$('#file-list');if(sig===signature&&project?.id===p.id&&list.dataset.view==='review')return;
     project=p;model=changes;signature=sig;list.dataset.view='review';
-    if(!changes.isGit){list.innerHTML='<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>这是一个本地文件夹</strong>不是 Git 仓库，无法审查和提交改动。<br>切换到「文件」浏览项目内容。</div>';return;}
-    if(!changes.files.length){list.innerHTML=`<div class="empty-files"><span class="empty-icon">✓</span><strong>工作区很干净</strong>Claude 产生的文件改动会显示在这里，可以逐个审查、撤销或提交。</div>`;$('#diff-view').hidden=true;return finishOpen();}
+    if(!changes.isGit){setHtml(list,'<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>这是一个本地文件夹</strong>不是 Git 仓库，无法审查和提交改动。<br>切换到「文件」浏览项目内容。</div>');return;}
+    if(!changes.files.length){setHtml(list,`<div class="empty-files"><span class="empty-icon">✓</span><strong>工作区很干净</strong>Claude 产生的文件改动会显示在这里，可以逐个审查、撤销或提交。</div>`);$('#diff-view').hidden=true;return;}
     const staged=changes.files.filter(f=>f.staged&&f.worktree===' ').length,anyStaged=changes.files.some(f=>f.staged);
     const added=changes.files.reduce((n,f)=>n+(f.added||0),0),removed=changes.files.reduce((n,f)=>n+(f.removed||0),0);
-    list.innerHTML=`<div class="review-head"><strong>${changes.files.length} 个文件已更改</strong>${delta({added,removed})}<label class="review-all" title="暂存全部文件"><input type="checkbox" data-stage-all ${staged===changes.files.length?'checked':''} ${anyStaged&&staged<changes.files.length?'data-partial':''}>全部暂存</label></div>
+    setHtml(list,`<div class="review-head"><strong>${changes.files.length} 个文件已更改</strong>${delta({added,removed})}<label class="review-all" title="暂存全部文件"><input type="checkbox" data-stage-all ${staged===changes.files.length?'checked':''} ${anyStaged&&staged<changes.files.length?'data-partial':''}>全部暂存</label></div>
       <div class="review-files">${changes.files.map(f=>{const [label,cls]=kind(f),full=f.staged&&f.worktree===' ';return `<div class="review-row" data-row="${escape(f.path)}"><input type="checkbox" data-stage="${escape(f.path)}" ${full?'checked':''} ${f.staged&&!full?'data-partial':''} title="${full?'取消暂存':'暂存'}" aria-label="暂存 ${escape(f.path)}"><button type="button" class="review-open" data-review-row="${escape(f.path)}" title="${escape(f.from?f.from+' → '+f.path:f.path)}"><span class="review-status ${cls}">${label}</span><span class="review-name">${escape(baseName(f.path))}</span><span class="review-dir">${escape(dirName(f.path))}</span>${delta(f)}</button><button type="button" class="review-revert" data-revert="${escape(f.path)}" title="撤销这个文件的改动" aria-label="撤销 ${escape(f.path)} 的改动">↶</button></div>`;}).join('')}</div>
-      <form class="review-commit"><textarea id="review-message" rows="2" maxlength="5000" placeholder="提交说明（必填）" aria-label="提交说明">${escape(message)}</textarea><div class="review-commit-actions"><span>${anyStaged?`提交已暂存的文件`:'未暂存文件时将提交全部改动'}</span><button type="submit" class="review-commit-button">提交</button></div></form>`;
+      <form class="review-commit"><textarea id="review-message" rows="2" maxlength="5000" placeholder="提交说明（必填）" aria-label="提交说明">${escape(message)}</textarea><div class="review-commit-actions"><span>${anyStaged?`提交已暂存的文件`:'未暂存文件时将提交全部改动'}</span><button type="submit" class="review-commit-button">提交</button></div></form>`);
     list.querySelectorAll('[data-partial]').forEach(box=>{box.indeterminate=true;});
-    finishOpen();
-  }
-  function finishOpen(){
-    if(!pendingOpen||!model)return;const target=model.prefix?model.prefix+'/'+pendingOpen:pendingOpen;pendingOpen='';
-    if(model.files?.some(f=>f.path===target))openDiff(target).catch(e=>toast(e.message));else toast('这个文件现在没有未提交的改动');
   }
   async function openDiff(file){
     const text=await api('project:review-diff',project.id,file);
     document.querySelectorAll('.review-row.selected').forEach(row=>row.classList.remove('selected'));
     [...document.querySelectorAll('.review-row')].find(row=>row.dataset.row===file)?.classList.add('selected');
-    $('#diff-title').textContent=file;
-    $('#diff-content').innerHTML=text.split('\n').filter(line=>!/^(diff --git|index |similarity |rename (from|to) |new file mode|deleted file mode)/.test(line)).map(line=>`<span class="${line.startsWith('+++')||line.startsWith('---')?'diff-file':line.startsWith('+')?'diff-add':line.startsWith('-')?'diff-remove':line.startsWith('@@')?'diff-hunk':''}">${escape(line)}\n</span>`).join('');
+    showLines(file,text.split('\n').filter(line=>!/^(diff --git|index |similarity |rename (from|to) |new file mode|deleted file mode)/.test(line)).map(line=>({type:line.startsWith('+++')||line.startsWith('---')?'file':line.startsWith('@@')?'@':line[0],text:line})));
+  }
+  const LINE_CLASS={file:'diff-file','+':'diff-add','-':'diff-remove','@':'diff-hunk','…':'diff-gap'};
+  function showLines(title,lines){
+    $('#diff-title').textContent=title;
+    $('#diff-content').innerHTML=lines.map(l=>`<span class="${LINE_CLASS[l.type]||''}">${escape(l.text)}\n</span>`).join('');
     $('#diff-view').hidden=false;
   }
   async function act(work){if(busy)return;busy=true;try{await work();}catch(e){toast(e.message);}finally{busy=false;signature='';await inspector().refreshFiles();}}
@@ -57,13 +56,5 @@ export function createReview({ store, api, toast, confirm, inspector }) {
     act(async()=>{const result=await api('project:commit',project.id,message,all);message='';toast(`已提交 ${result.hash} · ${result.subject}`);});
   });
   $('#file-list').addEventListener('keydown',event=>{if(event.target.id==='review-message'&&event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();event.target.form.requestSubmit();}});
-  return {
-    render,
-    // Opens a file from a turn's change summary; paths there are relative to the project folder.
-    open(file){
-      const p=store.currentProject();if(!p)return;
-      pendingOpen=file;signature='';
-      inspector().selectTab('changes');
-    }
-  };
+  return {render};
 }

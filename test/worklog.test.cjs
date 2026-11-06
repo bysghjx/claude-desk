@@ -134,3 +134,20 @@ test('a running sub-agent shows live progress, and a background one concludes wi
   const old=worklog.agentWork({status:'done',answer:'旧结论',tools:[{id:'y',name:'Read',input:{file_path:'a'},status:'done'}]},{status:'done',output:''});
   assert.deepEqual(old.work.map(i=>i.type),['tool']);assert.equal(old.final,'旧结论');
 });
+
+test('the 变更 view lists each edited file with its diff, folding long unchanged runs',async()=>{
+  const worklog=await load();
+  const before=Array.from({length:20},(_,i)=>'line'+i).join('\n'),after=before.replace('line10','LINE10');
+  const turn={tools:[
+    {id:'a',name:'Edit',status:'done',input:{file_path:'C:/repo/src/a.js',old_string:before,new_string:after}},
+    {id:'b',name:'Edit',status:'done',input:{file_path:'C:/repo/src/a.js',old_string:'x',new_string:'<y>'}},
+    {id:'c',name:'Write',status:'error',input:{file_path:'C:/repo/skip.js',content:'no'}}
+  ]};
+  const lines=worklog.turnFileDiff(turn,'src/a.js','C:/repo');
+  assert.deepEqual(lines.filter(l=>l.type==='…').map(l=>l.count??0),[7,6,0]);
+  assert.deepEqual(lines.filter(l=>l.type!=='…'&&l.type!==' ').map(l=>l.type+l.text),['-line10','+LINE10','-x','+<y>']);
+  const html=worklog.changesViewHtml(turn,'C:/repo',escape);
+  assert.equal((html.match(/class="cv-file"/g)||[]).length,1);
+  assert.match(html,/7 行未改动/);assert.match(html,/&lt;y&gt;/);assert.doesNotMatch(html,/skip\.js/);
+  assert.match(worklog.changesViewHtml({tools:[]},'C:/repo',escape),/没有修改文件/);
+});

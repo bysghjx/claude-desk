@@ -29,6 +29,8 @@ export function createActions({ store, api, composer, toast, confirm }) {
   // Opening a conversation (or watching it finish) clears its "new" dot.
   function markSeen(id) { api('thread:meta', id, { seenAt: Date.now() }).then(apply).catch(() => {}); }
   function showHome() { store.projectId = null; selectThread(null); composer.focus(); }
+  // 新任务 starts in the project you are in; a chat or the home page starts without one.
+  function newTask() { store.projectId = store.currentProject()?.id || null; selectThread(null); composer.focus(); }
   function selectProject(projectId) { store.projectId = projectId || null; selectThread(null); composer.focus(); }
 
   async function addProject() {
@@ -134,5 +136,5 @@ export function createActions({ store, api, composer, toast, confirm }) {
   async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
-  return { apply, fetchFull, markSeen, selectThread, showHome, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, steerQueued, steerNow, removeQueued, editQueued, retry, copyAnswer };
+  return { apply, fetchFull, markSeen, selectThread, showHome, newTask, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, steerQueued, steerNow, removeQueued, editQueued, retry, copyAnswer };
 }
