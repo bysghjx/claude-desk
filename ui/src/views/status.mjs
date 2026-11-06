@@ -1,8 +1,8 @@
-// Run status around the composer: activity bar, send/stop button, queued
+// Run status around the composer: hints, send/stop button, queued
 // messages and the approval card for the selected conversation.
 import { $, escape, markdown, setHtml, setText } from '../core/dom.mjs';
 import { approvalHtml, collectAnswers, isPlan, pickChoice, questionPage, questionsOf, showQuestion } from './approval.mjs';
-import { STATUS_LABELS, elapsed, isActive } from '../core/format.mjs';
+import { isActive } from '../core/format.mjs';
 import { guarded } from '../core/ui.mjs';
 
 export function pendingApproval(thread) {
@@ -36,24 +36,11 @@ export function createStatus({ store, actions, api, composer, toast }) {
     $('#approval').innerHTML = approvalHtml(request, source, markdown);
   }
 
-  // The running turn shows its own state; this bar only stands in for it while you
-  // read further up and the turn is out of sight.
-  function liveTurnVisible() {
-    const box = $('#messages'), turn = [...box.querySelectorAll('article.turn')].at(-1); if (!turn) return false;
-    const a = turn.getBoundingClientRect(), b = box.getBoundingClientRect();
-    return a.bottom > b.top + 24 && a.top < b.bottom - 24;
-  }
+  // The running state itself shows in the turn, or pinned above the input box (conversation.mjs).
   function activity() {
     const thread = store.current(), active = isActive(thread);
-    $('#activity').hidden = !active || liveTurnVisible();
     $('#prompt').placeholder = active ? '运行中可以插话：Enter 交给 Claude（不停止任务），Tab 加入队列…' : '发送消息到 Claude Code… 输入 / 唤起命令，@ 引用文件，@@ 引用会话，可粘贴图片';
     if (!active) { setText($('#context-hint'), thread?.status === 'error' ? '运行失败，可查看具体错误并重试' : '沿用本机 Claude CLI 配置 · 无需额外账号'); return; }
-    $('#activity').classList.toggle('approval-state', thread.status === 'approval');
-    setText($('#activity-label'), STATUS_LABELS[thread.status] || thread.status);
-    setText($('#elapsed'), elapsed(thread.startedAt));
-    const since = Math.floor((Date.now() - (thread.lastEventAt || thread.startedAt)) / 1000);
-    setText($('#last-event'), `${since}s 前收到事件`);
-    setText($('#activity-detail'), since > 25 && thread.status !== 'approval' ? `进程仍在运行，${since}s 未收到新事件；可能正在等待服务商。` : thread.detail || '等待 Claude 的下一个事件');
     setText($('#context-hint'), thread.status === 'approval' ? '需要你批准后才能继续，不会自动放行' : '运行中 · 可以切换其他会话，当前任务会继续');
   }
 
@@ -107,7 +94,6 @@ export function createStatus({ store, actions, api, composer, toast }) {
     }
   });
 
-  $('#messages').addEventListener('scroll', () => { if (isActive(store.current())) $('#activity').hidden = liveTurnVisible(); }, { passive: true });
   store.on('select', render);
   store.on('composer', sendButton);
   store.on('thread', thread => { if (thread.id === store.selected) render(); });

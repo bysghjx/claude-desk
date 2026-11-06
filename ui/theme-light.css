@@ -49,8 +49,6 @@
   .tool-card .tool-status{color:#4e5f4c}
   .tool-card pre{border-top:1px solid #f2f2f0}
   .error-card{border:1px solid #bc8d86;background:#f2eaea;color:#bb4b3c}
-  .activity-symbol{border:1.5px solid #b09682}
-  .activity.approval-state{border-color:#b8a77e;background:#f5f4f1}
   .composer-options select{color:#4d4a40}
   .inspector{border-left:1px solid #f1f1f0}
   .inspector-head{border-bottom:1px solid #f2f2f0}
@@ -223,11 +221,6 @@
   .tool-card pre{background:#f8f8f8;border-color:#ebebeb;color:#4e4e4e}
   .turn-footer{color:#6d6d6d}
   .turn-footer button{color:#5c5c5c}
-  .activity-main strong{color:#353535}
-  .activity-main>span#elapsed{color:#5c5c5c}
-  .activity-symbol{border-color:#949494;border-top-color:#292929}
-  .activity-sub{color:#636363}
-  .activity-sub #last-event{color:#707070}
   .inspector{border-color:#e8e8e8}
   .inspector-head,.project-caption,.inspector-foot{border-color:#ebebeb;color:#646464}
   .tab.selected{border-bottom-color:#4e4e4e;color:#292929}

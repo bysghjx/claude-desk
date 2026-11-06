@@ -47,14 +47,20 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     if (!away) jump.classList.remove('has-new'); else if (grew) jump.classList.add('has-new');
     jump.hidden = !away;
   }
-  // The running status of the turn, copied above the input box while the original is scrolled
-  // off the top; it goes back once the original is in view again. Clicking it scrolls there.
+  // The running status of the turn, copied above the input box while the original is out of
+  // sight (scrolled off the top, or below while you read further up); it goes back once the
+  // original is in view again. Clicking it scrolls there.
   const liveFloat = $('#live-float');
   const liveSummary = () => box.querySelector('.work-group.live>summary');
   function updateLiveFloat() {
-    const summary = liveSummary(), above = Boolean(summary) && summary.getBoundingClientRect().bottom < box.getBoundingClientRect().top + 4;
-    if (above) { setText(liveFloat.querySelector('.work-label'), summary.querySelector('.work-label').textContent); setText(liveFloat.querySelector('.work-detail'), summary.querySelector('.work-detail').textContent); }
-    if (liveFloat.hidden === above) liveFloat.hidden = !above;
+    const summary = liveSummary(), at = summary?.getBoundingClientRect(), view = box.getBoundingClientRect();
+    const away = Boolean(summary) && (at.bottom < view.top + 4 || at.top > view.bottom - 4);
+    if (away) {
+      const label = summary.querySelector('.work-label');
+      setText(liveFloat.querySelector('.work-label'), label.textContent); setText(liveFloat.querySelector('.work-detail'), summary.querySelector('.work-detail').textContent);
+      liveFloat.classList.toggle('approval', label.dataset.status === 'approval');
+    }
+    if (liveFloat.hidden === away) liveFloat.hidden = !away;
   }
   liveFloat.addEventListener('click', () => liveSummary()?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
   box.addEventListener('scroll', () => { updateJump(); updateLiveFloat(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
