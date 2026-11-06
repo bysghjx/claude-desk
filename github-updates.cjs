@@ -5,18 +5,21 @@ const { createHash } = require('node:crypto');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { newer, readZipEntry, UPDATE_FILE } = require('./updates.cjs');
+const { normalizeUpdateNetwork } = require('./update-network.cjs');
+const { VERSION_SOURCE, validVersion, prereleaseVersion } = require('./update-version.cjs');
 
 const REPOSITORY = 'https://github.com/bysghjx/claude-desk';
 const RELEASES = REPOSITORY + '/releases';
 const API = 'https://api.github.com/repos/bysghjx/claude-desk/releases/latest';
 const CHECK_INTERVAL = 60 * 60 * 1000;
-const VERSION = /^v?(\d+\.\d+\.\d+)$/;
-const PACKAGE = /^ClaudeDesk-(\d+\.\d+\.\d+)-to-(\d+\.\d+\.\d+)-update\.zip$/;
+const VERSION = new RegExp('^v?(' + VERSION_SOURCE + ')$(?![\\s\\S])');
+const PACKAGE = new RegExp('^ClaudeDesk-(' + VERSION_SOURCE + ')-to-(' + VERSION_SOURCE + ')-update[.]zip$(?![\\s\\S])');
 const DIGEST = /^sha256:([a-f0-9]{64})$/i;
 
-function releaseInfo(release, version) {
+function releaseInfo(release, version, includePrerelease = false) {
   const to = VERSION.exec(release.tag_name)?.[1];
-  if (release.draft || release.prerelease || !to) throw Error('GitHub 返回的不是受支持的正式版本');
+  const prerelease = Boolean(release.prerelease || prereleaseVersion(to));
+  if (release.draft || !to || (prerelease && !includePrerelease)) throw Error('GitHub 返回的不是受支持的正式版本或所选更新通道的版本');
   const releaseUrl = RELEASES + '/tag/' + encodeURIComponent(release.tag_name);
   if (!newer(to, version)) return { status: 'current', version: to, releaseUrl };
   for (const asset of release.assets || []) {
@@ -25,15 +28,24 @@ function releaseInfo(release, version) {
     let url;try { url = new URL(asset.browser_download_url); } catch { continue; }
     if (url.origin !== 'https://github.com' || url.username || url.password || !url.pathname.startsWith('/bysghjx/claude-desk/releases/download/')) continue;
     if (!Number.isSafeInteger(asset.id) || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 2 ** 31 || !DIGEST.test(asset.digest || '')) continue;
-    return { status: 'available', version: to, releaseUrl, update: { file: 'github:' + asset.id, source: 'github', name: asset.name, from: version, to, size: asset.size, url: url.href, sha256: DIGEST.exec(asset.digest)[1].toLowerCase() } };
+    return { status: 'available', version: to, prerelease, releaseUrl, update: { file: 'github:' + asset.id, source: 'github', prerelease, name: asset.name, from: version, to, size: asset.size, url: url.href, sha256: DIGEST.exec(asset.digest)[1].toLowerCase() } };
   }
-  return { status: 'manual', version: to, releaseUrl };
+  return { status: 'manual', version: to, prerelease, releaseUrl };
 }
 
 class GitHubUpdates {
-  constructor({ version, downloadDir, fetch = globalThis.fetch, now = Date.now }) {
+  constructor({ version, downloadDir, fetch = globalThis.fetch, now = Date.now, network = {} }) {
     Object.assign(this, { version, downloadDir, fetch, now });
+    this.network = normalizeUpdateNetwork(network);
     this.checkedAt = 0; this.result = null; this.checking = null; this.downloading = null;
+  }
+  async configure(network) {
+    const next = normalizeUpdateNetwork(network);
+    if (this.downloading) throw Error('请等待更新包下载完成后再修改更新设置');
+    if (this.checking) await this.checking;
+    if (this.downloading) throw Error('请等待更新包下载完成后再修改更新设置');
+    this.network = next; this.result = null; this.checkedAt = 0;
+    return next;
   }
   async check(force = false) {
     if (this.checking) return this.checking;
@@ -41,11 +53,32 @@ class GitHubUpdates {
     if (!force && this.result && this.now() - this.checkedAt < interval) return this.result;
     this.checking = (async () => {
       try {
-        const response = await this.fetch(API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ClaudeDesk/' + this.version, 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(15000) });
-        if (response.status === 404) return { status: 'empty', releaseUrl: RELEASES };
-        if ([403, 429].includes(response.status)) throw Error('GitHub 暂时限制了检查频率，请稍后重试');
-        if (!response.ok) throw Error('GitHub 检查失败（HTTP ' + response.status + '）');
-        return releaseInfo(await response.json(), this.version);
+        const options = { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ClaudeDesk/' + this.version, 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(15000) };
+        const request = async url => {
+          const response = await this.fetch(url, options, this.network.updateProxy);
+          if ([403, 429].includes(response.status)) throw Error('GitHub 暂时限制了检查频率，请稍后重试');
+          if (!response.ok && response.status !== 404) throw Error('GitHub 检查失败（HTTP ' + response.status + '）');
+          return response;
+        };
+        if (!this.network.updatePrerelease) {
+          const response = await request(API);
+          return response.status === 404 ? { status: 'empty', releaseUrl: RELEASES } : releaseInfo(await response.json(), this.version);
+        }
+        // GitHub's /latest endpoint excludes prereleases. Compare published versions across the list.
+        let latest, page = 1;
+        while (true) {
+          const response = await request(API.replace('/latest', '?per_page=100&page=' + page));
+          if (response.status === 404) break;
+          const releases = await response.json();
+          if (!Array.isArray(releases)) throw Error('GitHub 版本列表格式无效');
+          for (const item of releases) {
+            const version = VERSION.exec(item.tag_name)?.[1];
+            if (!item.draft && validVersion(version) && (!latest || newer(version, VERSION.exec(latest.tag_name)[1]))) latest = item;
+          }
+          if (!/rel="next"/.test(response.headers.get('link') || '')) break;
+          page++;
+        }
+        return latest ? releaseInfo(latest, this.version, true) : { status: 'empty', releaseUrl: RELEASES };
       } catch (e) {
         return { status: 'error', message: '无法检查 GitHub 更新：' + e.message, releaseUrl: RELEASES };
       }
@@ -67,26 +100,57 @@ class GitHubUpdates {
         fs.rmSync(output);
       }
       partial = output + '.part';
-      const response = await this.fetch(update.url, { signal: AbortSignal.timeout(10 * 60 * 1000) });
+      const urls = [update.url];
+      if (this.network.updateMirror) urls.push(this.network.updateMirror + update.url);
+      let firstError;
+      for (let i = 0; i < urls.length; i++) {
+        const route = i ? 'mirror' : this.network.updateProxy ? 'proxy' : 'direct';
+        try {
+          progress({ file: update.file, received: 0, total: update.size, route });
+          await this.downloadFile(urls[i], update, partial, event => progress({ ...event, route }));
+          fs.renameSync(partial, output);
+          return output;
+        } catch (e) {
+          fs.rmSync(partial, { force: true });
+          // A different server cannot fix a local disk failure.
+          if (['ENOSPC', 'EACCES', 'EPERM', 'EIO', 'EROFS'].includes(e.code)) throw e;
+          if (i === urls.length - 1) throw firstError ? Error('GitHub 下载失败：' + firstError.message + '；加速下载也失败：' + e.message) : e;
+          firstError = e;
+        }
+      }
+    } finally {
+      try { if (partial) fs.rmSync(partial, { force: true }); }
+      finally { this.downloading = false; }
+    }
+  }
+  async downloadFile(url, update, partial, progress) {
+    const controller = new AbortController();
+    let timer;
+    const timeout = (ms, message) => { clearTimeout(timer); timer = setTimeout(() => controller.abort(Error(message)), ms); timer.unref?.(); };
+    timeout(15000, '连接下载地址超时');
+    try {
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60 * 1000)]);
+      const response = await this.fetch(url, { signal }, this.network.updateProxy);
       if (!response.ok || !response.body) throw Error('下载失败（HTTP ' + response.status + '）');
+      timeout(30000, '更新包下载连续 30 秒没有收到数据');
       let received = 0, notifiedAt = 0;
       const hash = createHash('sha256');
       const counter = new Transform({ transform: (chunk, encoding, done) => {
+        timeout(30000, '更新包下载连续 30 秒没有收到数据');
         received += chunk.length;
         if (received > update.size) return done(Error('更新包大小与 GitHub 记录不一致'));
         hash.update(chunk);
         if (this.now() - notifiedAt >= 250 || received === update.size) { progress({ file: update.file, received, total: update.size }); notifiedAt = this.now(); }
         done(null, chunk);
       } });
-      await pipeline(Readable.fromWeb(response.body), counter, fs.createWriteStream(partial));
+      await pipeline(Readable.fromWeb(response.body), counter, fs.createWriteStream(partial), { signal });
       if (received !== update.size || hash.digest('hex') !== update.sha256) throw Error('更新包下载不完整或 SHA-256 校验失败，请重试');
       const info = JSON.parse(readZipEntry(partial, UPDATE_FILE)?.toString('utf8') || '{}');
       if (info.app !== 'ClaudeDesk' || info.from !== this.version || info.to !== update.to) throw Error('GitHub 更新包内容与发布版本不一致');
-      fs.renameSync(partial, output);
-      return output;
+    } catch (e) {
+      throw controller.signal.aborted ? controller.signal.reason : e;
     } finally {
-      try { if (partial) fs.rmSync(partial, { force: true }); }
-      finally { this.downloading = false; }
+      clearTimeout(timer); controller.abort();
     }
   }
 }

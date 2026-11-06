@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents, Tray, Menu, safeStorage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, protocol, nativeTheme, Notification, powerSaveBlocker, webContents, Tray, Menu, safeStorage, session } = require('electron');
 const fs = require('node:fs');
 const diskFs=require('./disk-fs.cjs');
 const {within,listProjectFiles,readProjectFile}=require('./project-files.cjs');
@@ -22,6 +22,8 @@ const {Terminals}=require('./terminal.cjs');
 const {DeskTray}=require('./tray.cjs');
 const {Providers}=require('./providers.cjs');
 const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
+const {createUpdateFetch}=require('./update-network.cjs');
+const {prereleaseVersion}=require('./update-version.cjs');
 const {newer}=require('./updates.cjs');
 const {attachContextMenu}=require('./context-menu.cjs');
 const {randomUUID}=require('node:crypto');
@@ -162,7 +164,6 @@ if(primaryInstance)app.whenReady().then(async () => {
   nativeTheme.on('updated',()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed()){if(w===win)applyMaterial(w);else w.setBackgroundColor(windowBackground());}});
   const { query, startup, createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   const updater=new Updater({installDir:path.dirname(process.execPath),version:app.getVersion(),tempRoot:path.join(dataRoot,'updates')});
-  const githubUpdates=new GitHubUpdates({version:app.getVersion(),downloadDir:path.join(dataRoot,'update-downloads'),fetch:(...args)=>net.fetch(...args)});
   const updateFailure=updater.cleanup();
   // Update packages are looked for where people usually leave a download: Downloads, the desktop,
   // and the folder Claude Desk runs from or the one holding it.
@@ -176,6 +177,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   const shadowRoot=path.join(os.homedir(),'AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Roaming');
   const legacy=[path.join(dataRoot,'bootstrap.json'),path.join(appData,'ClaudeDesk/data/workspace.json'),path.join(shadowRoot,'ClaudeDesk/data/workspace.json'),path.join(appData,'Claude Desk/data/workspace.json'),path.join(appData,'claude-desk/data/workspace.json'),path.join(projectRoot,'work/claude-desk-ui/workspace.json'),path.join(projectRoot,'work/claude-desk-v2-qa/workspace.json')];
   engine = new Engine({ query, startup, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z, preview }) });
+  const githubUpdates=new GitHubUpdates({version:app.getVersion(),downloadDir:path.join(dataRoot,'update-downloads'),fetch:createUpdateFetch(session),network:engine.store.state.settings});
   providers=new Providers({store:engine.store,safeStorage});
   engine.providerOptions=()=>providers.options();
   const keepAwake=new KeepAwake(powerSaveBlocker);
@@ -404,8 +406,14 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('update:pick', async () => { if (!app.isPackaged) throw Error('开发版不能安装更新包'); const r = await dialog.showOpenDialog(win, { title: '选择 Claude Desk 更新包', filters: [{ name: '更新包', extensions: ['zip'] }], properties: ['openFile'] }); return r.canceled ? null : updater.stage(r.filePaths[0]); });
   // Only packages found by updateDirs (above) can be installed by path.
   let foundUpdates=new Map();
+  handle('update:settings',async value=>{
+    const settings=await githubUpdates.configure(value);
+    Object.assign(engine.store.state.settings,settings);engine.store.save();
+    foundUpdates.clear();return settings;
+  });
   handle('update:scan', async force => {
     const dirs=updateDirs(),result=findUpdates(dirs.map(d=>d.path),app.getVersion()),online=await githubUpdates.check(force===true);
+    if(!githubUpdates.network.updatePrerelease)result.ready=result.ready.filter(u=>!prereleaseVersion(u.to));
     if(online.update&&!result.ready.some(u=>u.to===online.update.to))result.ready.push(online.update);
     result.ready.sort((a,b)=>newer(b.to,a.to)?1:newer(a.to,b.to)?-1:0);
     foundUpdates=new Map(result.ready.map(u=>[u.file,u]));

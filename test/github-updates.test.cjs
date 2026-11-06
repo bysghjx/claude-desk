@@ -32,6 +32,32 @@ test('online checks cache, deduplicate, allow a forced retry and handle missing 
   assert.match((await service.check(true)).message, /offline/);
 });
 
+test('preview channel compares versions, paginates, excludes drafts and never downgrades on stable', async () => {
+  const calls = [];
+  const service = new GitHubUpdates({ version: '1.0.0', network: { updatePrerelease: true, updateProxy: 'http://127.0.0.1:7890', updateMirror: 'https://mirror.example/' }, fetch: async (url, options, proxy) => {
+    calls.push({ url, proxy });
+    if (url.endsWith('/latest')) return Response.json(release());
+    if (url.endsWith('page=1')) return Response.json([release({ tag_name: 'v9.0.0', draft: true }), release({ tag_name: 'v1.1.0-rc.1', prerelease: true }), release({ tag_name: 'v1.1.0-beta.10', prerelease: true })], { headers: { link: '<https://api.github.com/example?page=2>; rel="next"' } });
+    return Response.json([release({ tag_name: 'v1.1.0' }), release({ tag_name: 'unsupported' })]);
+  } });
+  assert.equal((await service.check()).version, '1.1.0');
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(c => c.url.startsWith('https://api.github.com/') && c.proxy === 'http://127.0.0.1:7890'));
+  await service.configure({});
+  assert.equal((await service.check()).version, '1.1.0'); assert.ok(calls.at(-1).url.endsWith('/latest'));
+  service.version = '1.2.0-beta.1';
+  assert.equal((await service.check(true)).status, 'current');
+  await service.configure({ updatePrerelease: true });
+  service.version = '1.0.0';
+  service.fetch = async () => Response.json([release({ tag_name: 'v1.2.0-beta.2', prerelease: true, assets: [asset({ name: 'ClaudeDesk-1.0.0-to-1.2.0-beta.2-update.zip' })] }), release()]);
+  const preview = await service.check();
+  assert.equal(preview.version, '1.2.0-beta.2'); assert.equal(preview.update.prerelease, true);
+  assert.throws(() => releaseInfo(release({ tag_name: 'v1.2.0-beta.2' }), '1.0.0'));
+  assert.equal(releaseInfo(release({ prerelease: true }), '1.0.0', true).update.prerelease, true);
+  service.fetch = async () => Response.json([]);
+  assert.equal((await service.check(true)).status, 'empty');
+});
+
 function fixture(t, extra = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-github-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -74,7 +100,55 @@ test('a second download cannot replace an in-progress download', { skip: process
   f.service.fetch = () => new Promise(r => { resolve = r; });
   const pending = f.service.download(f.update);
   await assert.rejects(() => f.service.download(f.update), /正在下载/);
+  await assert.rejects(() => f.service.configure({ updatePrerelease: true }), /下载完成/);
   resolve(new Response(f.bytes)); await pending;
+});
+
+test('official download succeeds without using the mirror; failed attempts restart and verify the mirror', { skip: process.platform !== 'win32' }, async t => {
+  for (const failure of ['none', 'network', 'http', 'interrupted', 'digest']) {
+    const f = fixture(t), calls = [], events = [];
+    await f.service.configure({ updateMirror: 'https://mirror.example/prefix/', updateProxy: 'http://127.0.0.1:7890' });
+    f.service.fetch = async (url, options, proxy) => {
+      calls.push({ url, proxy });
+      if (calls.length === 1) {
+        if (failure === 'network') throw Error('offline');
+        if (failure === 'http') return new Response('unavailable', { status: 503 });
+        if (failure === 'interrupted') return new Response(new ReadableStream({ start(controller) { controller.enqueue(f.bytes.subarray(0, 10)); controller.error(Error('stream interrupted')); } }));
+        if (failure === 'digest') return new Response(Buffer.alloc(f.bytes.length));
+      }
+      return new Response(f.bytes);
+    };
+    const file = await f.service.download(f.update, event => events.push(event));
+    assert.deepEqual(fs.readFileSync(file), f.bytes);
+    assert.equal(calls.length, failure === 'none' ? 1 : 2);
+    assert.equal(calls[0].url, f.update.url);
+    assert.equal(events[0].route, 'proxy');
+    if (failure !== 'none') {
+      assert.equal(calls[1].url, 'https://mirror.example/prefix/' + f.update.url);
+      const mirror = events.filter(e => e.route === 'mirror'); assert.equal(mirror[0].received, 0); assert.equal(mirror.at(-1).received, f.bytes.length);
+    }
+    assert.ok(calls.every(c => c.proxy === 'http://127.0.0.1:7890'));
+    assert.deepEqual(fs.readdirSync(f.service.downloadDir), [path.basename(file)]);
+  }
+});
+
+test('a corrupt mirror is rejected and both failure reasons survive without partial files', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t); await f.service.configure({ updateMirror: 'https://mirror.example/' });
+  let calls = 0;
+  f.service.fetch = async () => { if (!calls++) throw Error('official offline'); return new Response(Buffer.alloc(f.bytes.length)); };
+  await assert.rejects(() => f.service.download(f.update), /official offline.*加速下载也失败.*校验失败/);
+  assert.equal(calls, 2); assert.deepEqual(fs.readdirSync(f.service.downloadDir), []); assert.equal(f.service.downloading, false);
+});
+
+test('preview release automation accepts suffixes and keeps delta bases for both channels', () => {
+  const { validateVersion, baseReleases } = require('../scripts/github-release.cjs');
+  const pkg = { version: '1.2.0-beta.2' }; validateVersion('v' + pkg.version, pkg, { ...pkg, packages: { '': pkg } });
+  const item = version => release({ tag_name: 'v' + version, prerelease: version.includes('-'), assets: [{ name: version + '.json' }] });
+  const all = ['1.0.0', '1.1.0', '1.2.0-beta.1', '1.2.0-beta.2', '1.2.0-rc.1'].map(item);
+  assert.deepEqual(baseReleases(all, '1.2.0-beta.2').map(r => r.tag_name), ['v1.1.0', 'v1.0.0', 'v1.2.0-beta.1']);
+  assert.deepEqual(baseReleases(all, '1.2.0', 1).map(r => r.tag_name), ['v1.1.0', 'v1.2.0-rc.1']);
+  const previewBase = asset({ name: 'ClaudeDesk-1.2.0-beta.2-to-1.2.0-update.zip' });
+  assert.equal(releaseInfo(release({ tag_name: 'v1.2.0', assets: [previewBase] }), '1.2.0-beta.2').status, 'available');
 });
 
 test('online UI explains download, failures and full-package fallback', async () => {

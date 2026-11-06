@@ -101,7 +101,7 @@ function packagesFor(dirs, from, to) {
   }
   return found;
 }
-const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+const { newer } = require('./update-version.cjs');
 // Looks through a few folders (not their subfolders) for update packages newer than the running
 // version. Only zips named like Claude Desk's are opened, and only their description is read.
 function findUpdates(dirs, version) {

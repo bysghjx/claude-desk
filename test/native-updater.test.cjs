@@ -3,20 +3,29 @@ const {Updater,manifestOf,diff,hashFile,UPDATE_FILE}=require('../updates.cjs');c
 const windows=process.platform==='win32',scratch=path.resolve(__dirname,'../../../work/native-updater-tests');fs.mkdirSync(scratch,{recursive:true});
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const write=(root,relative,text)=>{const file=path.join(root,relative);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text);};
-async function fixture(){
+async function fixture(from='1.0.0',to='1.1.0'){
   const root=fs.mkdtempSync(path.join(scratch,'更新 空格-')),old=path.join(root,'old'),next=path.join(root,'next'),temp=path.join(root,'temp'),stage=path.join(temp,'claude-desk-update-native');
-  for(const [dir,version]of [[old,'1.0.0'],[next,'1.1.0']]){write(dir,'ClaudeDesk.exe','exe');write(dir,'claude-desk-version.json',JSON.stringify({app:'ClaudeDesk',version}));write(dir,'resources/app.asar',version);write(dir,'resources/blocked.dll',version);fs.copyFileSync(buildUpdater(),path.join(dir,UPDATER_EXE));}
+  for(const [dir,version]of [[old,from],[next,to]]){write(dir,'ClaudeDesk.exe','exe');write(dir,'claude-desk-version.json',JSON.stringify({app:'ClaudeDesk',version}));write(dir,'resources/app.asar',version);write(dir,'resources/blocked.dll',version);fs.copyFileSync(buildUpdater(),path.join(dir,UPDATER_EXE));}
   write(old,'resources/obsolete.dll','old');write(next,'resources/aa-added.dll','new');
-  const before=await manifestOf(old,'1.0.0'),after=await manifestOf(next,'1.1.0'),changes=diff(before,after);
+  const before=await manifestOf(old,from),after=await manifestOf(next,to),changes=diff(before,after);
   for(const rel of changes.changed)write(stage,rel,fs.readFileSync(path.join(next,rel)));
-  const info={app:'ClaudeDesk',from:'1.0.0',to:'1.1.0',files:Object.fromEntries(changes.changed.map(rel=>[rel,after.files[rel]])),removed:changes.removed};write(stage,UPDATE_FILE,JSON.stringify(info));
-  const updater=new Updater({installDir:old,version:'1.0.0',tempRoot:temp});updater.staged={dir:stage,from:'1.0.0',to:'1.1.0'};
+  const info={app:'ClaudeDesk',from,to,files:Object.fromEntries(changes.changed.map(rel=>[rel,after.files[rel]])),removed:changes.removed};write(stage,UPDATE_FILE,JSON.stringify(info));
+  const updater=new Updater({installDir:old,version:from,tempRoot:temp});updater.staged={dir:stage,from,to};
   return{root,old,next,temp,stage,info,before,after,updater};
 }
 async function finished(f,child){for(let i=0;i<200;i++){try{const result=JSON.parse(fs.readFileSync(path.join(f.stage,'install-result.json'),'utf8'));if(!child||child.exitCode!==null)return result;}catch{}await pause(50);}throw Error('Updater did not finish');}
 const apply=(f,extra={})=>f.updater.apply({pid:0,exe:path.join(f.old,'ClaudeDesk.exe'),restart:false,retryMs:200,...extra});
 test('native updater installs and removes files, and keeps the application version consistent',{skip:!windows},async()=>{
   const f=await fixture(),child=await apply(f);assert.equal((await finished(f,child)).status,'ok');assert.deepEqual((await manifestOf(f.old,'x')).files,f.after.files);assert.equal(f.updater.cleanup(),'');assert.equal(fs.existsSync(f.stage),false);
+});
+
+test('native installer upgrades stable to preview, preview to preview, and preview to stable',{skip:!windows},async()=>{
+  for(const [from,to] of [['0.29.5','0.30.0-beta.1'],['0.30.0-beta.2','0.30.0-beta.10'],['0.30.0-beta.10','0.30.0-rc.1'],['0.30.0-rc.1','0.30.0']]){
+    const f=await fixture(from,to),child=await apply(f);assert.equal((await finished(f,child)).status,'ok',from+' -> '+to);assert.deepEqual((await manifestOf(f.old,'x')).files,f.after.files);f.updater.cleanup();
+  }
+  for(const [from,to] of [['0.30.0','0.30.0-rc.1'],['0.30.0-beta.10','0.30.0-beta.2'],['0.30.0-beta.2','0.30.0-beta.2'],['0.30.0-beta.2','0.30.0-beta.01']]){
+    const f=await fixture(from,to);await assert.rejects(()=>apply(f),/newer|Invalid update version/);assert.deepEqual((await manifestOf(f.old,'x')).files,f.before.files);f.updater.cleanup();
+  }
 });
 test('the installed updater can be replaced because a separate copy is executing',{skip:!windows},async()=>{
   const f=await fixture(),replacement=Buffer.concat([fs.readFileSync(buildUpdater()),Buffer.from('self-update-fixture')]);write(f.stage,UPDATER_EXE,replacement);f.info.files[UPDATER_EXE]=await hashFile(path.join(f.stage,UPDATER_EXE));write(f.stage,UPDATE_FILE,JSON.stringify(f.info));

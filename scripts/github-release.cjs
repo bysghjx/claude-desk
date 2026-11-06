@@ -5,17 +5,18 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { safe, newer, hashFile } = require('../updates.cjs');
 const { releaseInfo } = require('../github-updates.cjs');
+const { VERSION_SOURCE, prereleaseVersion } = require('../update-version.cjs');
 const source = path.resolve(__dirname, '..'), releasesDir = path.resolve(source, '../releases');
 const version = require('../package.json').version;
-const tagPattern = /^v(\d+\.\d+\.\d+)$/;
+const tagPattern = new RegExp('^v(' + VERSION_SOURCE + ')$(?![\\s\\S])');
 const UPDATE_BASES = 5;
 const gh = args => execFileSync('gh', args, { cwd: source, encoding: 'utf8', windowsHide: true });
 
 function validateVersion(tag, pkg, lock) {
-  if (!tagPattern.test(tag) || tag !== 'v' + pkg.version || lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version) throw Error('版本标签、package.json 与 package-lock.json 必须一致（vX.Y.Z）');
+  if (!tagPattern.test(tag) || tag !== 'v' + pkg.version || lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version) throw Error('版本标签、package.json 与 package-lock.json 必须一致（vX.Y.Z 或 vX.Y.Z-beta.1 等预览版本）');
 }
 function earlierReleases(releases, current) {
-  return releases.filter(r => !r.draft && !r.prerelease && tagPattern.test(r.tag_name) && newer(current, r.tag_name.slice(1)))
+  return releases.filter(r => !r.draft && !r.prerelease && !prereleaseVersion(r.tag_name.slice(1)) && tagPattern.test(r.tag_name) && newer(current, r.tag_name.slice(1)))
     .sort((a, b) => newer(a.tag_name.slice(1), b.tag_name.slice(1)) ? -1 : 1);
 }
 const previousRelease = (releases, current) => earlierReleases(releases, current)[0];
@@ -23,7 +24,10 @@ const previousRelease = (releases, current) => earlierReleases(releases, current
 function baseReleases(releases, current, count = UPDATE_BASES) {
   const earlier = earlierReleases(releases, current), hasManifest = r => r.assets.some(a => a.name === r.tag_name.slice(1) + '.json');
   if (earlier.length && !hasManifest(earlier[0])) throw Error('上一正式版缺少文件清单 ' + earlier[0].tag_name.slice(1) + '.json，请补齐后重试');
-  return earlier.filter(hasManifest).slice(0, count);
+  // Keep the stable bases so preview users never displace clients on the stable channel.
+  const previews = releases.filter(r => !r.draft && tagPattern.test(r.tag_name) && (r.prerelease || prereleaseVersion(r.tag_name.slice(1))) && newer(current, r.tag_name.slice(1)) && hasManifest(r))
+    .sort((a,b) => newer(a.tag_name.slice(1),b.tag_name.slice(1)) ? -1 : 1).slice(0,count);
+  return [...earlier.filter(hasManifest).slice(0, count), ...previews];
 }
 function validateManifest(manifest, expected) {
   if (manifest.app !== 'ClaudeDesk' || manifest.version !== expected || !manifest.files || typeof manifest.files !== 'object' || Array.isArray(manifest.files) || !Object.keys(manifest.files).length) throw Error('上一版本的文件清单无效');
@@ -31,6 +35,7 @@ function validateManifest(manifest, expected) {
 }
 
 async function run(mode) {
+  const prerelease = prereleaseVersion(version);
   const tag = process.env.RELEASE_TAG, repo = process.env.GITHUB_REPOSITORY;
   validateVersion(tag, require('../package.json'), require('../package-lock.json'));
   if (repo !== 'bysghjx/claude-desk') throw Error('发布目标必须是 bysghjx/claude-desk');
@@ -63,7 +68,7 @@ async function run(mode) {
   for (const file of assets) if (!fs.statSync(file).size) throw Error('发布文件为空：' + file);
   const notes = path.join(releasesDir, 'release-notes.md');
   fs.writeFileSync(notes, '# Claude Desk ' + version + '\n\n- 完整包：解压后运行 ClaudeDesk.exe。\n' + (updates.length ? '- 增量包：从 ' + updates.join('、') + ' 升级到 ' + version + '，每个旧版本各一个；支持 GitHub 在线更新的客户端会自动检测。\n' : '- 首次发布仅提供完整包；安装后可接收后续在线更新。\n') + '- 较旧版本没有匹配的增量包时，请下载完整包。\n- JSON 文件是下次构建增量包使用的文件清单，无需手动安装。\n');
-  if (!existing) gh(['release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', '--title', 'Claude Desk ' + version, '--notes-file', notes]);
+  if (!existing) gh(['release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', ...(prerelease ? ['--prerelease'] : []), '--title', 'Claude Desk ' + version, '--notes-file', notes]);
   gh(['release', 'upload', tag, ...assets, '--repo', repo, '--clobber']);
   // Expose the release only after GitHub has processed every asset, including its digest.
   // The tag endpoint only finds published releases; drafts are returned by the authenticated list.
@@ -73,8 +78,8 @@ async function run(mode) {
     const asset = uploaded.assets.find(a => a.name === path.basename(file));
     if (!asset || asset.state !== 'uploaded' || asset.size !== fs.statSync(file).size || asset.digest !== 'sha256:' + await hashFile(file)) throw Error('GitHub 文件尚未准备好或校验不符，Release 保持草稿，请重试：' + file);
   }
-  if (updates.some(from => releaseInfo({ ...uploaded, draft: false }, from).status !== 'available')) throw Error('发布的更新包无法被客户端识别，Release 保持草稿');
-  gh(['release', 'edit', tag, '--repo', repo, '--draft=false', '--latest', '--title', 'Claude Desk ' + version, '--notes-file', notes]);
+  if (updates.some(from => releaseInfo({ ...uploaded, draft: false, prerelease }, from, true).status !== 'available')) throw Error('发布的更新包无法被客户端识别，Release 保持草稿');
+  gh(['release', 'edit', tag, '--repo', repo, '--draft=false', '--prerelease=' + prerelease, prerelease ? '--latest=false' : '--latest', '--title', 'Claude Desk ' + version, '--notes-file', notes]);
   console.log('Published ' + tag);
 }
 if (require.main === module) run(process.argv[2]).catch(e => { console.error(e.message); process.exitCode = 1; });

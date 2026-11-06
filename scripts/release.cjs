@@ -2,7 +2,7 @@
 //   outputs/releases/ClaudeDesk-<version>-win-x64.zip            the full app
 //   outputs/releases/ClaudeDesk-<from>-to-<version>-update.zip   only the files that changed since <from>
 // Every release's file list is kept in outputs/releases/manifests/<version>.json. One update package
-// is built from each of the newest UPDATE_BASES earlier versions, so a client several versions
+// is built from each of the newest UPDATE_BASES earlier versions per channel, so a client several versions
 // behind still updates in one step; --from names the bases instead.
 // Usage: node scripts/release.cjs [--from 0.24.1,0.24.0]
 const fs = require('node:fs');
@@ -17,7 +17,7 @@ const build = process.env.DESK_BUILD_DIR && path.resolve(process.env.DESK_BUILD_
 const appDir = build ? path.join(build, 'ClaudeDesk-win32-x64') : path.resolve(source, '../ClaudeDesk-Windows/ClaudeDesk-win32-x64');
 const releases = path.resolve(source, '../releases'), manifests = path.join(releases, 'manifests');
 const work = build ? path.join(build, 'release') : path.resolve(source, '../../work/release');
-const compare = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+const { compareVersions: compare, validVersion, prereleaseVersion } = require('../update-version.cjs');
 const mb = n => (n / 2 ** 20).toFixed(1) + ' MB';
 const { UPDATE_BASES } = require('./github-release.cjs');
 
@@ -40,7 +40,8 @@ const { UPDATE_BASES } = require('./github-release.cjs');
   console.log('完整包', path.basename(fullZip), mb(createZip(path.dirname(full), fullZip)));
 
   const flag = process.argv.indexOf('--from');
-  const bases = flag > 0 ? process.argv[flag + 1].split(',') : fs.readdirSync(manifests).map(f => f.replace(/\.json$/, '')).filter(v => compare(v, version) < 0).sort(compare).slice(-UPDATE_BASES).reverse();
+  const earlier = fs.readdirSync(manifests).map(f => f.replace(/\.json$/, '')).filter(v => validVersion(v) && compare(v, version) < 0).sort(compare).reverse();
+  const bases = flag > 0 ? process.argv[flag + 1].split(',') : [...earlier.filter(v => !prereleaseVersion(v)).slice(0,UPDATE_BASES), ...earlier.filter(prereleaseVersion).slice(0,UPDATE_BASES)];
   if (!bases.length) return console.log('没有更早的版本清单，这次只有完整包');
   for (const from of bases) {
     const base = JSON.parse(fs.readFileSync(path.join(manifests, from + '.json'), 'utf8'));

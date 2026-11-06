@@ -47,6 +47,26 @@ internal static class Updater {
     static void Retry(Action action) {
         var timer=Stopwatch.StartNew();while(true)try{action();return;}catch(IOException){if(timer.ElapsedMilliseconds>=retries)throw;Thread.Sleep(100);}catch(UnauthorizedAccessException){if(timer.ElapsedMilliseconds>=retries)throw;Thread.Sleep(100);}
     }
+    // Match the client's release ordering, including beta.2 < beta.10 < rc.1 < stable.
+    static int Numeric(string a,string b) { return a.Length!=b.Length?a.Length.CompareTo(b.Length):String.CompareOrdinal(a,b); }
+    static string[] ReleaseVersion(string value) {
+        const string n="(?:0|[1-9][0-9]*)",id="(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
+        if(value==null||!Regex.IsMatch(value,"^"+n+"[.]"+n+"[.]"+n+"(?:-"+id+"(?:[.]"+id+")*)?\\z"))throw new Exception("Invalid update version");
+        return value.Split(new[]{'-'},2);
+    }
+    static int CompareVersions(string a,string b) {
+        var av=ReleaseVersion(a);var bv=ReleaseVersion(b);var ac=av[0].Split('.');var bc=bv[0].Split('.');
+        for(int i=0;i<3;i++){int c=Numeric(ac[i],bc[i]);if(c!=0)return c;}
+        if(av.Length==1||bv.Length==1)return av.Length==bv.Length?0:av.Length==1?1:-1;
+        var ap=av[1].Split('.');var bp=bv[1].Split('.');
+        for(int i=0;i<Math.Max(ap.Length,bp.Length);i++){
+            if(i>=ap.Length||i>=bp.Length)return i>=ap.Length?-1:1;
+            if(ap[i]==bp[i])continue;
+            bool an=Regex.IsMatch(ap[i],"^[0-9]+$"),bn=Regex.IsMatch(bp[i],"^[0-9]+$");
+            return an&&bn?Numeric(ap[i],bp[i]):an!=bn?(an?-1:1):String.CompareOrdinal(ap[i],bp[i]);
+        }
+        return 0;
+    }
     static string InstalledVersion() {
         var marker=Safe(target,VersionName);
         if(File.Exists(marker)){var data=ObjectOf(Json.DeserializeObject(File.ReadAllText(marker,Utf8)));if(Text(data,"app")!="ClaudeDesk")throw new Exception("Invalid installation marker");return Text(data,"version");}
@@ -64,7 +84,7 @@ internal static class Updater {
     static List<Entry> Plan() {
         var info=ObjectOf(Json.DeserializeObject(File.ReadAllText(Path.Combine(stage,ManifestName),Utf8)));
         if(Text(info,"app")!="ClaudeDesk"||Text(info,"from")!=from||String.IsNullOrEmpty(Text(info,"to")))throw new Exception("Update package/version mismatch");
-        to=Text(info,"to");Version previous,next;if(!Version.TryParse(from,out previous)||!Version.TryParse(to,out next)||next<=previous)throw new Exception("Update version must be newer");
+        to=Text(info,"to");if(CompareVersions(to,from)<=0)throw new Exception("Update version must be newer");
         var entries=new List<Entry>();var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var reserved=new HashSet<string>(new[]{".runner","backup","backup-index.json","install.log","install.lock","install-result.json","runner.ready",".claude-desk-update.lock"},StringComparer.OrdinalIgnoreCase);
         foreach(var pair in ObjectOf(info["files"])) {
