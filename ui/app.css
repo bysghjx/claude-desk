@@ -152,6 +152,8 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .turn-footer{display:flex;align-items:center;gap:12px;margin-top:16px;font-size:11px}
 .turn-footer button{font-size:11px;padding:4px 6px}
 .turn-footer .usage{margin-left:auto;font-family:Consolas,monospace;font-size:11px}
+.turn-footer .icon-action{display:flex;align-items:center;padding:4px;border-radius:6px}
+.turn-footer .icon-action svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .error-card{border:1px solid #613b36;background:#382422;color:#dfa9a2;border-radius:9px;padding:13px 15px;line-height:1.7;font-size:13px;margin-top:15px;white-space:pre-wrap}
 .activity{margin:0 max(26px,calc((100% - 790px)/2)) 12px;border-radius:10px;flex-shrink:0}
 .activity-main{display:flex;gap:9px;align-items:center;font-size:12px}
