@@ -18,6 +18,13 @@ test('a file in a reply is found relative to the conversation folder, by absolut
   assert.equal(resolveRef(project,path.join(outside,'notes.md')),path.join(outside,'notes.md'));
   assert.equal(resolveRef(project,require('node:url').pathToFileURL(path.join(outside,'notes.md')).href),path.join(outside,'notes.md'));
   assert.throws(()=>resolveRef(project,'missing.txt'),/找不到文件/);
+  // Only a name, or the end of the path: the shallowest match in the folder.
+  fs.mkdirSync(path.join(project,'outputs','releases'),{recursive:true});fs.mkdirSync(path.join(project,'work','a','releases'),{recursive:true});
+  fs.writeFileSync(path.join(project,'outputs','releases','App-1.0.zip'),'x');fs.writeFileSync(path.join(project,'work','a','releases','App-1.0.zip'),'y');
+  assert.equal(resolveRef(project,'App-1.0.zip'),path.join(project,'outputs','releases','App-1.0.zip'));
+  assert.equal(resolveRef(project,'a/releases/App-1.0.zip'),path.join(project,'work','a','releases','App-1.0.zip'));
+  assert.equal(resolveRef(project,'app.js'),path.join(project,'src','app.js'));
+  assert.throws(()=>resolveRef(project,'../outside/notes.md/x'),/找不到文件/);
 });
 
 test('a click views project text in the split view and opens pages, binaries and outside files in their own app; programs are only shown',()=>{

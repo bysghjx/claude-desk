@@ -16,8 +16,33 @@ function resolveRef(cwd,ref){
   if(!text||text.length>2000||text.includes('\0'))throw Error('文件路径无效');
   if(/^file:/i.test(text)){try{text=require('node:url').fileURLToPath(text);}catch{throw Error('文件路径无效');}}
   const target=path.resolve(cwd||'.',text);
-  if(!fs.existsSync(target))throw Error('找不到文件 '+text);
-  return target;
+  if(fs.existsSync(target))return target;
+  // Replies often give only a file's name or the end of its path (ClaudeDesk-0.29.7-win-x64.zip
+  // for outputs/releases/…); look for it in the conversation's folder.
+  const found=!path.isAbsolute(text)&&cwd&&findInFolder(cwd,text);
+  if(found)return found;
+  throw Error('找不到文件 '+text);
+}
+const SKIP=new Set(['node_modules','__pycache__','bower_components']);
+// Breadth first, so the shallowest match wins; stops after `limit` folders.
+function findInFolder(root,ref,limit=3000){
+  const tail=ref.replace(/^\.[\\/]/,'').split(/[\\/]+/).filter(Boolean),name=tail.at(-1)?.toLowerCase(),wanted=tail.join('/').toLowerCase();
+  if(!name||tail.includes('..'))return'';
+  let level=[root],seen=0;
+  while(level.length&&seen<limit){
+    const next=[];
+    for(const dir of level){
+      if(++seen>limit)break;
+      let entries;try{entries=fs.readdirSync(dir,{withFileTypes:true});}catch{continue;}
+      for(const entry of entries){
+        const full=path.join(dir,entry.name);
+        if(entry.name.toLowerCase()===name&&('/'+path.relative(root,full).replaceAll('\\','/').toLowerCase()).endsWith('/'+wanted))return full;
+        if(entry.isDirectory()&&!entry.name.startsWith('.')&&!SKIP.has(entry.name))next.push(full);
+      }
+    }
+    level=next;
+  }
+  return'';
 }
 function inside(cwd,target){try{within(cwd,path.relative(cwd,target)||'.');return true;}catch{return false;}}
 // What a click does: 'view' (split view), 'open' (its own app) or 'reveal' (file manager).
@@ -41,4 +66,4 @@ async function openRef({shell,clipboard},cwd,ref,how='click'){
   if(action==='copy'){clipboard.writeText(target);return{copied:true};}
   throw Error('不支持的操作');
 }
-module.exports={resolveRef,clickAction,openRef,RUNNABLE};
+module.exports={resolveRef,findInFolder,clickAction,openRef,RUNNABLE};
