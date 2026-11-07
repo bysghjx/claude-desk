@@ -8,8 +8,10 @@ export function escape(value) {
 }
 
 const MARKDOWN_TAGS = ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr'];
+// Links keep web addresses and file paths (F:/out/report.html, file:///…, relative); clicks are handled by the app.
+export const LINK_URI = /^(?:(?:https?|mailto|file):|[a-z]:[\\/]|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
 export function markdown(text) {
-  return enhance(globalThis.DOMPurify.sanitize(globalThis.marked.parse(text || '', { breaks: true, gfm: true }), { ALLOWED_TAGS: MARKDOWN_TAGS, ALLOWED_ATTR: ['href', 'title', 'class'], ALLOW_DATA_ATTR: false }));
+  return enhance(globalThis.DOMPurify.sanitize(globalThis.marked.parse(text || '', { breaks: true, gfm: true }), { ALLOWED_TAGS: MARKDOWN_TAGS, ALLOWED_ATTR: ['href', 'title', 'class'], ALLOW_DATA_ATTR: false, ALLOWED_URI_REGEXP: LINK_URI }));
 }
 
 // GitHub-style alerts (> [!WARNING] …) become callouts.

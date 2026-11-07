@@ -67,7 +67,11 @@ export function createConversation({ store, actions, api, composer, toast, dock 
   }
   const toLatest = () => { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); jump.classList.remove('has-new'); };
   liveFloat.addEventListener('click', toLatest);
-  box.addEventListener('scroll', () => { updateJump(); updateLiveFloat(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
+  // Reading at the latest message stays there when the list changes size: a split view opening
+  // narrows it and the text grows taller, the input box grows, the window is resized.
+  let atLatest = true;
+  box.addEventListener('scroll', () => { atLatest = fromBottom() < 110; updateJump(); updateLiveFloat(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
+  new ResizeObserver(() => { if (atLatest && fromBottom() > 1) box.scrollTop = box.scrollHeight; }).observe(box);
   jump.addEventListener('click', toLatest);
 
   function closeProjects(restoreFocus = false) {
@@ -131,6 +135,31 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     updateLiveFloat();
   }
 
+  // Files and links in replies. A click shows text from the conversation's folder in the split
+  // view and opens anything else in its own app (web links in the browser); right-click offers each way.
+  function linkOf(target) {
+    const a = target.closest('a[href]'); if (!a || !box.contains(a)) return null;
+    const href = a.getAttribute('href'); if (!href || href.startsWith('#')) return null;
+    if (/^(https?|mailto):/i.test(href)) return { web: true, href };
+    let file = href; try { file = decodeURI(href); } catch {}
+    return { web: false, href: file.replace(/#.*$/, '') };
+  }
+  async function openFile(ref, line) {
+    const result = await api('file:open', store.selected, ref, 'click');
+    if (result?.view) dock.openFile(store.selected, result.view.path, line, result.view);
+  }
+  async function fileMenu(ref, line) {
+    const result = await api('file:menu', store.selected, ref);
+    if (result?.error) toast(result.error);
+    else if (result?.view) dock.openFile(store.selected, result.view.path, line, result.view);
+    else if (result?.copied) toast('已复制路径');
+  }
+  box.addEventListener('contextmenu', event => {
+    const fileRef = event.target.closest('[data-file-ref]'), link = !fileRef && linkOf(event.target);
+    if (!fileRef && (!link || link.web)) return;
+    event.preventDefault();
+    fileMenu(fileRef ? fileRef.dataset.fileRef : link.href, fileRef?.dataset.fileLine).catch(e => toast(e.message));
+  });
   box.addEventListener('click', guarded(toast, async event => {
     const target = event.target;
     if (target.closest('#home-project')) { if ($('#home-project-menu').hidden) openProjects(); else closeProjects(true); return; }
@@ -141,7 +170,8 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     const review = target.closest('[data-review-file]');
     // 查看变更 opens the turn's 变更 tab at the top; a file row opens it at that file.
     if (review) return dock.openChanges(store.selected, review.closest('[data-turn]').dataset.turn, review.classList.contains('changes-review') ? '' : review.dataset.reviewFile);
-    const fileRef = target.closest('[data-file-ref]'); if (fileRef) return dock.openFile(store.selected, fileRef.dataset.fileRef, fileRef.dataset.fileLine);
+    const fileRef = target.closest('[data-file-ref]'); if (fileRef) return openFile(fileRef.dataset.fileRef, fileRef.dataset.fileLine);
+    const link = linkOf(target); if (link) { event.preventDefault(); return link.web ? api('link:open', link.href) : openFile(link.href); }
     const image = target.closest('[data-open-image]'); if (image) return showImage(await api('attachment:read', store.selected, image.dataset.imageTurn, image.dataset.openImage), image.title);
     const remove = target.closest('[data-delete-turn]');
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }

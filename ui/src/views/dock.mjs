@@ -14,9 +14,9 @@ export function createDock({ $, store, api, toast, onSelectThread, escape = esca
   function open(threadId,agentId){const key=encodeURIComponent(JSON.stringify([threadId,agentId]));if(!items.has(key)){const frame=document.createElement('iframe');frame.src='agent.html?embedded=1';frame.title='子智能体详情';views.append(frame);const item={threadId,agentId,frame};items.set(key,item);frame.onload=()=>send(item);}active=key;render();}
   // One 变更 tab per conversation; opening it again shows the new turn and scrolls to `file`.
   function openChanges(threadId,turnId,file){const key='changes:'+threadId;let item=items.get(key);if(!item){const frame=document.createElement('div');frame.className='changes-view';views.append(frame);item={threadId,turnId,frame};items.set(key,item);}item.turnId=turnId;active=key;showChanges(item);render();const target=file&&[...item.frame.querySelectorAll('[data-cv-file]')].find(n=>n.dataset.cvFile===file);if(target)target.scrollIntoView({block:'start'});else item.frame.scrollTop=0;}
-  // A file Claude named in a reply, with line numbers; `line` is marked and scrolled to.
-  async function openFile(threadId,file,line){
-    const {path,text}=await api('file:read',threadId,file),key='file:'+threadId+':'+path;let item=items.get(key);
+  // A file Claude named in a reply, with line numbers; `line` is marked and scrolled to. `read` is the file when already read.
+  async function openFile(threadId,file,line,read){
+    const {path,text}=read||await api('file:read',threadId,file),key='file:'+threadId+':'+path;let item=items.get(key);
     if(!item){const frame=document.createElement('div');frame.className='changes-view file-view';views.append(frame);item={threadId,file:path,frame};items.set(key,item);}
     const at=Number(line)||0,rows=text.split('\n');
     item.frame.innerHTML=`<div class="cv-head"><strong>${escape(path)}</strong><span>${rows.length} 行</span></div><div class="cv-file"><div class="cv-diff">${rows.map((row,i)=>`<div class="cv-line${i+1===at?' marked':''}"><span class="cv-num">${i+1}</span><span class="cv-code">${escape(row)}</span></div>`).join('')}</div></div>`;

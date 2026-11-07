@@ -63,7 +63,7 @@ export function createComposer({ store, api, toast, actions }) {
   function optionChanged(){store.state.settings={...store.state.settings,...options()};syncPickers();save();api('settings',store.state.settings).catch(e=>toast(e.message));}
   function renderReferences(){
     $('#reference-chips').hidden=!references.length;
-    $('#reference-chips').innerHTML=references.map((r,i)=>`<span class="reference-chip"><span class="reference-symbol">${r.kind==='file'?'@':'@@'}</span><span title="${escape(r.label||r.path)}">${escape(r.label||r.path)}</span><button type="button" data-remove-reference="${i}" aria-label="移除引用 ${escape(r.label||r.path)}">×</button></span>`).join('');
+    $('#reference-chips').innerHTML=references.map((r,i)=>`<span class="reference-chip"><span class="reference-symbol">${r.kind==='file'?'@':r.kind==='upload'?'📎':'@@'}</span><span title="${escape(r.kind==='upload'?r.path:r.label||r.path)}">${escape(r.label||r.path)}</span><button type="button" data-remove-reference="${i}" aria-label="移除引用 ${escape(r.label||r.path)}">×</button></span>`).join('');
   }
   // The ＋ menu, like Codex's: attach or reference something, switch plan mode, run a skill.
   let addSkills=null,addIndex=0;
@@ -73,6 +73,7 @@ export function createComposer({ store, api, toast, actions }) {
     return[
       {section:'添加'},
       {key:'image',icon:'image',label:'图片',hint:'从电脑选择，也可以直接粘贴或拖入'},
+      {key:'upload',icon:'file',label:'文件',hint:'任意文件或文件夹，也可以拖入或粘贴；Claude 用文件工具读取'},
       {key:'file',icon:'file',label:'项目文件',hint:'用 @ 引用当前项目里的文件'},
       {key:'thread',icon:'thread',label:'其他会话',hint:'用 @@ 把另一个会话作为上下文'},
       {key:'plan',icon:'plan',label:'计划模式',hint:plan?'已开启 · 只读探索并给出计划':'只读探索并给出计划，确认后再执行',on:plan},
@@ -97,6 +98,7 @@ export function createComposer({ store, api, toast, actions }) {
   function chooseAdd(button){
     const key=button.dataset.add;closePickers();
     if(key==='image')return $('#image-input').click();
+    if(key==='upload')return api('files:pick').then(paths=>{for(const path of paths)addUpload(path);$('#prompt').focus();}).catch(e=>toast(e.message));
     if(key==='file')return insertToken('@');
     if(key==='thread')return insertToken('@@');
     if(key==='plan'){const plan=$('#mode').value==='plan';if(!plan)modeBeforePlan=$('#mode').value;$('#mode').value=plan?modeBeforePlan:'plan';optionChanged();toast(plan?'已关闭计划模式':'已开启计划模式，Claude 会先给出计划');return $('#prompt').focus();}
@@ -258,7 +260,7 @@ export function createComposer({ store, api, toast, actions }) {
   // Restores a draft; `defaults` supplies model, effort and mode when the draft has none.
   function restore(draft,defaults){$('#prompt').value=typeof draft==='string'?draft:draft?.text||'';const chosen=draft?.options?.model?draft.options:defaults;if(chosen){ensureModel(chosen.model);$('#effort').value=chosen.effort||'high';$('#mode').value=chosen.mode||'default';}
     references=structuredClone(draft?.references||[]);renderReferences();images=Array.isArray(draft?.images)?draft.images.slice():[];renderImages();syncPickers();closeAll();historyIndex=-1;historyDraft=null;autosize();}
-  function addReference(reference){if(references.length>=8)return toast('一条消息最多引用 8 项');const key=r=>r.kind==='file'?'file:'+r.path:'thread:'+r.id;if(!references.some(r=>key(r)===key(reference)))references.push(reference);renderReferences();save();}
+  function addReference(reference){if(references.length>=8)return toast('一条消息最多引用 8 项');const key=r=>r.kind+':'+(r.path||r.id);if(!references.some(r=>key(r)===key(reference)))references.push(reference);renderReferences();save();}
   function clear(){$('#prompt').value='';references=[];renderReferences();images=[];renderImages();closeAll();historyIndex=-1;historyDraft=null;$('#prompt').style.height='auto';}
   $('#model-toggle').onclick=()=>openPicker('model');$('#mode-toggle').onclick=()=>openPicker('mode');
   $('#model-list-toggle').onclick=openModelList;
@@ -309,6 +311,12 @@ export function createComposer({ store, api, toast, actions }) {
     try{const bitmap=await createImageBitmap(file),scale=Math.min(1,240/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return canvas.toDataURL('image/jpeg',0.82);}
     catch{return'';}
   }
+  // 上传文件: images go in the message itself; any other file (or folder) goes by its path on disk.
+  function addUpload(path){if(path)addReference({kind:'upload',path,label:path.split(/[\\/]/).filter(Boolean).at(-1)||path});}
+  function addFiles(files){
+    const list=[...files],pictures=list.filter(file=>IMAGE_TYPES.includes(file.type));if(pictures.length)addImages(pictures);
+    for(const file of list.filter(file=>!IMAGE_TYPES.includes(file.type))){const path=globalThis.desk?.pathForFile?.(file);if(path)addUpload(path);else toast(`读不到「${file.name}」在磁盘上的位置`);}
+  }
   function addImages(files){
     for(const file of [...files]){
       if(!IMAGE_TYPES.includes(file.type)){toast('只支持 PNG、JPEG、GIF、WebP 图片');continue;}
@@ -330,10 +338,10 @@ export function createComposer({ store, api, toast, actions }) {
     const chip=event.target.closest('[data-view-image]'),image=chip&&images[Number(chip.dataset.viewImage)];if(image)showImage(image.data?`data:${image.mediaType};base64,${image.data}`:image.thumb,image.name);
   };
   $('#image-input').onchange=()=>{addImages($('#image-input').files);$('#image-input').value='';};
-  $('#prompt').addEventListener('paste',event=>{const files=[...(event.clipboardData?.items||[])].filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addImages(files);}});
+  $('#prompt').addEventListener('paste',event=>{const files=[...(event.clipboardData?.items||[])].filter(item=>item.kind==='file').map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addFiles(files);}});
   $('#composer').addEventListener('dragover',event=>{if([...(event.dataTransfer?.items||[])].some(item=>item.kind==='file')){event.preventDefault();$('#composer').classList.add('dropping');}});
   $('#composer').addEventListener('dragleave',()=>$('#composer').classList.remove('dropping'));
-  $('#composer').addEventListener('drop',event=>{$('#composer').classList.remove('dropping');const files=[...(event.dataTransfer?.files||[])];if(files.length){event.preventDefault();addImages(files);}});
+  $('#composer').addEventListener('drop',event=>{$('#composer').classList.remove('dropping');const files=[...(event.dataTransfer?.files||[])];if(files.length){event.preventDefault();addFiles(files);}});
   // Models a fetch added (a provider's own list), and dropping them when that provider is left.
   const fetchedModels=()=>[...$('#model').options].filter(o=>o.dataset.fetched).map(o=>o.value);
   function dropModels(ids){for(const o of [...$('#model').options])if(ids.includes(o.value))o.remove();syncPickers();}
