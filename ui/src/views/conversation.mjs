@@ -52,8 +52,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
   }
   // The running status of the turn, copied above the input box while the original is out of
   // sight (scrolled off the top, or below while you read further up); it goes back once the
-  // original is in view again. Clicking it goes to the latest message, or to the original when
-  // you are already there.
+  // original is in view again. It stands in for 回到最新, so clicking it does the same.
   const liveSummary = () => box.querySelector('.work-group.live>summary');
   function updateLiveFloat() {
     const summary = liveSummary(), at = summary?.getBoundingClientRect(), view = box.getBoundingClientRect();
@@ -67,7 +66,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     showJump();
   }
   const toLatest = () => { box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); jump.classList.remove('has-new'); };
-  liveFloat.addEventListener('click', () => farFromLatest ? toLatest() : liveSummary()?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  liveFloat.addEventListener('click', toLatest);
   box.addEventListener('scroll', () => { updateJump(); updateLiveFloat(); if (box.scrollTop < 80 && older.isConnected) showOlder(); }, { passive: true });
   jump.addEventListener('click', toLatest);
 
