@@ -229,14 +229,31 @@ export function createComposer({ store, api, toast, actions }) {
       if(event.key==='Escape'){event.preventDefault();hidePromptMenu();return true;}
     }
     if(!['ArrowUp','ArrowDown'].includes(event.key)||event.shiftKey||event.ctrlKey||event.altKey)return false;
-    const prompt=$('#prompt'),cursor=prompt.selectionStart;if(prompt.selectionStart!==prompt.selectionEnd)return false;
-    const atTop=!prompt.value.slice(0,cursor).includes('\n'),atBottom=!prompt.value.slice(cursor).includes('\n');
-    if((event.key==='ArrowUp'&&!atTop)||(event.key==='ArrowDown'&&!atBottom))return false;
+    const prompt=$('#prompt');if(prompt.selectionStart!==prompt.selectionEnd)return false;
+    // Earlier messages come back only into an empty box or while already going through them
+    // (typing ends that), so a draft is never swapped out by moving the caret.
+    if(historyIndex===-1&&(event.key==='ArrowDown'||prompt.value.trim()))return false;
+    const edges=caretEdges(prompt);if((event.key==='ArrowUp'&&!edges.top)||(event.key==='ArrowDown'&&!edges.bottom))return false;
     const history=store.current()?.turns||[];if(!history.length)return false;
     if(event.key==='ArrowUp'){
-      if(historyIndex===-1)historyDraft=capture();historyIndex=Math.min(history.length-1,historyIndex+1);
-    }else{if(historyIndex===-1)return false;historyIndex--;}
-    event.preventDefault();const turn=history[history.length-1-historyIndex];const draft=historyIndex===-1?historyDraft:{text:turn.user,references:turn.references||[],options:options()};prompt.value=draft?.text||'';references=structuredClone(draft?.references||[]);renderReferences();prompt.selectionStart=prompt.selectionEnd=prompt.value.length;save();return true;
+      if(historyIndex===history.length-1)return false;if(historyIndex===-1)historyDraft=capture();historyIndex++;
+    }else historyIndex--;
+    event.preventDefault();const turn=history[history.length-1-historyIndex];const draft=historyIndex===-1?historyDraft:{text:turn.user,references:turn.references||[],options:options()};prompt.value=draft?.text||'';references=structuredClone(draft?.references||[]);renderReferences();autosize();
+    // Going back puts the caret on the first line of a long message, so the next ↑ goes on back; otherwise at the end.
+    prompt.selectionStart=prompt.selectionEnd=prompt.value.length;if(event.key==='ArrowUp'&&!caretEdges(prompt).top)prompt.selectionStart=prompt.selectionEnd=0;
+    save();return true;
+  }
+  // Whether the caret is on the first / last line as shown, wrapped lines counted: a hidden
+  // copy of the box, same width and font, with markers at the start, the caret and the end.
+  function caretEdges(prompt){
+    const style=getComputedStyle(prompt),copy=document.createElement('div'),at=prompt.selectionStart;
+    for(const name of ['fontFamily','fontSize','fontWeight','fontStyle','letterSpacing','wordSpacing','lineHeight','tabSize','textIndent','textTransform','whiteSpace','wordBreak','overflowWrap','paddingLeft','paddingRight'])copy.style[name]=style[name];
+    Object.assign(copy.style,{position:'fixed',left:'-10000px',top:'0',visibility:'hidden',boxSizing:'content-box',border:'0',width:Math.max(0,prompt.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight))+'px'});
+    const mark=text=>{const span=document.createElement('span');span.textContent=text;return span;};
+    const start=mark('​'),caret=mark(prompt.value.slice(at)||'​'),end=mark('​');
+    copy.append(start,prompt.value.slice(0,at),caret,end);document.body.append(copy);
+    const result={top:caret.offsetTop===start.offsetTop,bottom:caret.offsetTop===end.offsetTop};
+    copy.remove();return result;
   }
   // Restores a draft; `defaults` supplies model, effort and mode when the draft has none.
   function restore(draft,defaults){$('#prompt').value=typeof draft==='string'?draft:draft?.text||'';const chosen=draft?.options?.model?draft.options:defaults;if(chosen){ensureModel(chosen.model);$('#effort').value=chosen.effort||'high';$('#mode').value=chosen.mode||'default';}
@@ -321,7 +338,7 @@ export function createComposer({ store, api, toast, actions }) {
   const fetchedModels=()=>[...$('#model').options].filter(o=>o.dataset.fetched).map(o=>o.value);
   function dropModels(ids){for(const o of [...$('#model').options])if(ids.includes(o.value))o.remove();syncPickers();}
   function ensureModel(model){if(!model)return;if(![...$('#model').options].some(x=>x.value===model))$('#model').add(new Option(model,model));$('#model').value=model;syncPickers();}
-  // Grows with the text; an empty box keeps its default height (placeholder text does not count).
+  // Grows with the text (CSS keeps it to a quarter of the window); an empty box keeps its default height (placeholder text does not count).
   function autosize(){const prompt=$('#prompt');prompt.style.height='auto';prompt.style.height=prompt.value?Math.min(200,Math.max(52,prompt.scrollHeight))+'px':'';}
   function setText(text){$('#prompt').value=text;autosize();store.emit('composer');}
   // 引用到输入框 from the right-click menu: the selection as a Markdown quote.
@@ -334,6 +351,8 @@ export function createComposer({ store, api, toast, actions }) {
     // While a task runs, Tab queues the message instead of 插话.
     else if(event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.altKey&&store.running()&&!isEmpty()){event.preventDefault();await actions().sendMessage(undefined,{queue:true});}}));
   $('#prompt').addEventListener('input',()=>{autosize();input();store.emit('composer');});
+  // A narrower window or an opened side panel wraps the text onto more lines.
+  let promptWidth=0;new ResizeObserver(([entry])=>{const width=Math.round(entry.contentRect.width);if(width!==promptWidth){promptWidth=width;if($('#prompt').value)autosize();}}).observe($('#prompt'));
   function setMode(mode){if(modes.some(m=>m.id===mode)&&$('#mode').value!==mode){$('#mode').value=mode;optionChanged();}}
   return{capture,imagesReady,quote,restore,clear,save,syncPickers,renderUsage,refreshModels,fetchedModels,dropModels,options,ensureModel,setText,isEmpty,setMode,addReference,
     focus:()=>$('#prompt').focus(),focusProject:()=>$('#home-project')?.focus(),

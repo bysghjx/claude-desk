@@ -183,7 +183,7 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 .turn-footer .icon-action svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .error-card{border:1px solid #613b36;background:#382422;color:#dfa9a2;border-radius:9px;padding:13px 15px;line-height:1.7;font-size:13px;margin-top:15px;white-space:pre-wrap}
 .composer-wrap{padding:0 max(26px,calc((100% - 790px)/2)) 17px;flex-shrink:0}
-.composer textarea{resize:none;width:100%;max-height:200px;padding:0 1px;display:block;outline:none}
+.composer textarea{resize:none;width:100%;max-height:min(200px,25vh);padding:0 1px;display:block;outline:none}
 .composer-bottom{display:flex;justify-content:space-between;align-items:center;gap:7px}
 .composer-options{display:flex;align-items:center;min-width:0}
 .composer-options select{font-size:11px;color:#bbb8ad;padding:4px 3px;max-width:174px}

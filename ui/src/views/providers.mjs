@@ -32,7 +32,7 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
     $('#provider-auth').value = provider?.authType || 'token'; $('#provider-key').value = '';
     $('#provider-key').placeholder = provider?.hasKey ? '已保存，留空表示不修改' : '粘贴密钥';
     $('#provider-models').value = (provider?.models || []).join('\n'); $('#provider-fast').value = provider?.fastModel || '';
-    setText($('#provider-test-result'), ''); $('#provider-name').focus();
+    setText($('#provider-test-result'), ''); $('#provider-use-models').hidden = true; filled = ''; offered = []; $('#provider-name').focus();
   }
   function closeForm() { form.hidden = true; $('#provider-add').hidden = false; editing = null; }
   const values = () => ({ id: editing, name: $('#provider-name').value, baseUrl: $('#provider-url').value, authType: $('#provider-auth').value, key: $('#provider-key').value, models: $('#provider-models').value, fastModel: $('#provider-fast').value });
@@ -69,9 +69,21 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
   }));
   $('#provider-add').addEventListener('click', () => openForm());
   $('#provider-cancel').addEventListener('click', closeForm);
+  // Each test shows what the provider offers now. The model box takes the new list when it is
+  // empty or still holds what the last test put there; a list typed by hand is replaced only on request.
+  let filled = '', offered = [];
+  const modelText = () => $('#provider-models').value.trim();
+  const fill = () => { $('#provider-models').value = filled = offered.slice(0, 50).join('\n'); $('#provider-use-models').hidden = true; };
+  $('#provider-use-models').addEventListener('click', () => { fill(); setText($('#provider-test-result'), `已填入 ${Math.min(50, offered.length)} 个模型，第一个作为默认`); });
   $('#provider-test').addEventListener('click', guarded(toast, async () => {
-    setText($('#provider-test-result'), '正在连接…'); $('#provider-test').disabled = true;
-    try { const models = await api('providers:test', values()); setText($('#provider-test-result'), `连接成功${models.length ? `，服务商提供 ${models.length} 个模型` : ''}`); if (models.length && !$('#provider-models').value.trim()) $('#provider-models').value = models.slice(0, 20).join('\n'); }
+    setText($('#provider-test-result'), '正在连接…'); $('#provider-test').disabled = true; $('#provider-use-models').hidden = true;
+    try {
+      offered = await api('providers:test', values());
+      const replace = offered.length && (!modelText() || modelText() === filled), same = offered.slice(0, 50).join('\n') === modelText();
+      if (replace) fill();
+      $('#provider-use-models').hidden = !offered.length || replace || same;
+      setText($('#provider-test-result'), `连接成功${offered.length ? `，服务商提供 ${offered.length} 个模型${replace ? '，已填入模型栏' : ''}` : ''}`);
+    }
     catch (e) { setText($('#provider-test-result'), e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); }
     finally { $('#provider-test').disabled = false; }
   }));
@@ -79,6 +91,8 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
   form.addEventListener('submit', event => event.preventDefault());
   form.addEventListener('submit', guarded(toast, async () => {
     const first = !state().providers.length, result = await api('providers:save', values()); apply(result); closeForm();
+    // The provider in use takes its edited list in the model picker right away.
+    if (result.id === result.active) { store.state.availableModels = []; composer.refreshModels().catch(() => {}); }
     toast('服务商已保存' + (result.id === result.active ? '，从每个会话的下一条消息开始生效' : first ? '，点它即可切换' : ''));
   }));
   $('#settings-dialog').addEventListener('close', closeForm);
