@@ -45,7 +45,8 @@ if(require.main===module)(async()=>{
   const cli=packCli(source);console.log(cli.note);
   const updater=buildUpdater();
   // node-pty's native files have to sit outside app.asar to load; the CLI goes in resources/claude-code instead of the asar.
-  const results=await packager({dir:source,name:'ClaudeDesk',platform:'win32',arch:'x64',out:staging,overwrite:true,icon:path.join(source,'ui/icon.ico'),asar:{unpack:'**/node_modules/node-pty/**'},extraResource:[cli.dir],ignore:/^\/(?:test|scripts|node_modules\/@anthropic-ai\/claude-agent-sdk-win32-x64)(?:\/|$)/});
+  // Checked against the checksums shipped in the electron package, so a cached Electron zip needs no download from GitHub.
+  const results=await packager({download:{checksums:require('electron/checksums.json')},dir:source,name:'ClaudeDesk',platform:'win32',arch:'x64',out:staging,overwrite:true,icon:path.join(source,'ui/icon.ico'),asar:{unpack:'**/node_modules/node-pty/**'},extraResource:[cli.dir],ignore:/^\/(?:test|scripts|node_modules\/@anthropic-ai\/claude-agent-sdk-win32-x64)(?:\/|$)/});
   await fixExe(results[0]);
   fs.copyFileSync(updater,path.join(results[0],UPDATER_EXE));
   fs.writeFileSync(path.join(results[0],'claude-desk-version.json'),JSON.stringify({app:'ClaudeDesk',version:require('../package.json').version}));
