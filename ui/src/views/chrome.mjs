@@ -108,6 +108,12 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   document.addEventListener('click', event => { const tab = event.target.closest?.('[data-manager-tab]'); if (tab) rail(RAIL_TABS[tab.dataset.managerTab] || RAIL_OF_TAB[tab.dataset.managerTab] || ''); });
   for (const id of ['#manager-dialog', '#settings-dialog']) $(id).addEventListener('close', () => rail(store.current() ? '' : 'rail-home'));
   $('#thread-title').addEventListener('dblclick', () => { if (store.current()) sidebar.startRename(store.current().id); });
+  // Narrow windows fold the 会话信息 panel away; this button shows it over the conversation.
+  const contextToggle = $('#toggle-context'), inspector = $('#inspector');
+  const showContext = on => { inspector.classList.toggle('shown', on); contextToggle.classList.toggle('active', on); contextToggle.setAttribute('aria-expanded', String(on)); };
+  contextToggle.addEventListener('click', () => showContext(!inspector.classList.contains('shown')));
+  document.addEventListener('mousedown', event => { if (inspector.classList.contains('shown') && !event.target.closest('#inspector, #toggle-context')) showContext(false); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && inspector.classList.contains('shown')) showContext(false); });
   $('#export').addEventListener('click', guarded(toast, async () => { if (store.selected && await api('export', store.selected)) toast('对话已导出'); }));
   $('#settings').addEventListener('click', guarded(toast, () => openSettings()));
   for (const tab of $$('[data-settings-tab]')) tab.addEventListener('click', () => showSettingsPage(tab.dataset.settingsTab));

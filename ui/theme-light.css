@@ -472,7 +472,7 @@
   .work-group>summary{color:#666661}
   .work-group>summary::after{color:#7d7d77}
   .work-group>summary:hover{color:#3e3c35}
-  .work-group.live .work-label{background:linear-gradient(90deg,#666661 0%,#30271a 45%,#666661 90%)}
+  .work-group.live .work-label{background-image:linear-gradient(90deg,#666661 0%,#30271a 45%,#666661 90%)}
   .work-count{color:#8c8c85}
   .work-note{color:#55534d}
   .changes-view{background:#fafaf9}
@@ -825,4 +825,5 @@ dialog::backdrop{background:#0000002e}
 .palette-item.active{background:#0000000a;color:#1d1d1b}
 .palette-tabs button.selected{background:#0000000d;color:#1d1d1b}
 .project-block.drop-before::before,.project-block.drop-after::after{background:#55554f}
+@media(max-width:1100px){#inspector.context-panel{box-shadow:0 12px 40px #00000024}}
 }
