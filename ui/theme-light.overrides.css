@@ -1,3 +1,81 @@
+/* Parts whose mapped colors read poorly on white: questions, 插话, providers, the add menu,
+   step groups, sub-agents, usage, the floating buttons and the changes view. */
+.question-tab{border-color:#d4ccbf;color:#736957}
+.question-tab[aria-current="true"]{background:#fbefd9;border-color:#c98a2a;color:#3a2a10}
+.question-tab.answered .question-tab-mark{background:#c98a2a;border-color:#c98a2a}
+.turn-steer-state,.steer-tag{color:#2f63a6}
+.steer-tag{background:#2f63a612;border-color:#2f63a633}
+.turn-steer.pending .turn-steer-text{background:transparent;border-color:#2f63a655}
+.turn-steer-meta button{color:#555;border-color:#0000001f}
+.turn-steer-meta button:hover{border-color:#00000040}
+.provider-row{border-color:#dcdcdc;background:#fafafa}
+.provider-row.selected{border-color:#a9a9a9;background:#f0f0f0}
+.provider-row.selected .provider-radio{box-shadow:inset 0 0 0 3px #f0f0f0}
+.provider-copy strong{color:#222}
+.provider-copy small,.provider-test-result{color:#666}
+.provider-action{color:#555}
+.provider-action:hover{background:#0000000a;color:#111}
+.provider-form{border-color:#dcdcdc;background:#fafafa}
+.provider-form>strong{color:#222}
+.provider-grid label{color:#555}
+.provider-grid input,.provider-grid select,.provider-grid textarea{border-color:#cfcfcf;background:#fff;color:#222}
+.older-turns{border-color:#d4d4d4;color:#555}
+.older-turns:hover{background:#0000000a;color:#111}
+.add-menu-section{color:#777}
+.add-menu-line{background:#dedede}
+.add-menu-item{color:#222}
+.add-menu-item:hover,.add-menu-item.active,.add-menu-item:focus-visible{background:#ebebeb}
+.add-menu-item svg{color:#555}
+.add-menu-item span{color:#777}
+.add-menu-switch{background:#cfcfcf}
+.add-menu-switch::after{background:#fff}
+.add-menu-switch.on{background:var(--accent,#333)}
+.add-menu-switch.on::after{background:#fff}
+.step-group>summary:hover{background:#0000000a}
+.step-group-items{border-left-color:#dcdcd8}
+.agent-steps{border-left-color:#dcdcd8}
+.agent-steps .work-note{color:#3a3934}
+.step-target,.agent-step-meta,.agent-step-prompt>summary,.agent-step-final-label{color:#77766f}
+.agent-step-final .markdown{color:#2f2e2a}
+.usage-breakdown{border-top-color:#dcdcdc}
+.usage-bar{background:#e4e4e4}
+.usage-part{color:#555}
+.usage-part strong{color:#222}
+.usage-sub>div{color:#555}
+.work-detail{color:#8a8a85}
+.jump-latest{background:#fff;border-color:#d0d0d0;color:#333;box-shadow:0 4px 14px #0000001f}
+.jump-latest:hover{background:#f2f2f2}
+.live-float{background:#fff;border-color:#d0d0d0;box-shadow:0 4px 14px #0000001f}
+.live-float:hover{background:#f2f2f2}
+.live-float .work-detail{color:#77766f}
+.jump-latest.has-new::after{border-color:#fff}
+.agent-history>summary{color:#666}
+.agent-history>summary:hover{color:#222;background:#0000000a}
+.agent-row{color:#444}
+.agent-row:hover{background:#0000000c;color:#111}
+.agent-row-time{color:#777}
+.work-note{color:#55534d}
+.changes-view{background:#fafaf9}
+.cv-head{color:#686761}
+.cv-head strong,.cv-path .change-name{color:#1d1d1b}
+.cv-file{border-color:#e1e1de;background:#fff}
+.cv-file-head{background:#f4f4f2;border-color:#e1e1de}
+.cv-path .change-dir{color:#8a8983}
+.cv-line{color:#2b2a26}
+.cv-line.add{background:#2ea04318}
+.cv-line.del{background:#f8514918}
+.cv-gap{background:#f4f4f2;color:#77766f;border-color:#ececea}
+.work-items{border-left-color:#e1e1de}
+.work-group.live>summary{border-color:#e1e1de;background:#00000005}
+.changes-icon{background:#ebebea;color:#3a3a3a}
+.changes-title strong{color:#232323}
+.changes-undo:hover:not(:disabled){background:#0000000a}
+.turn-changes.undone .changes-title strong{color:#6b6a65}
+.turn-change-row{border-top-color:#ececeb}
+.turn-change-row .change-dir{color:#85837c}
+.turn-change-row .change-name{color:#232323}
+.changes-more>summary{border-top-color:#ececeb;background:#f1f1f0}
+.changes-more>summary:hover{background:#eaeae8}
 /* Surfaces follow light-theme elevation: white workspace, slightly grey sidebar and rail. */
 :root{--bg:#ffffff;--sidebar:#f6f6f5;--panel:#fafaf9;--raised:#f0f0ee;--line:#e4e4e1;--text:#1d1d1b;--muted:#6f6f6a;--faint:#a3a39e;--accent:#b4643d}
 body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
@@ -24,7 +102,12 @@ body,.workspace,.main-area,.conversation,.messages{background:#ffffff}
 .diff-add{background:#e3f3e6;color:#1f6b33}
 .diff-remove{background:#fbe5e3;color:#9c2b22}
 .markdown pre{background:#f5f5f3}
-.markdown code{background:#00000009}
+.markdown code{background:#0000000a;border-color:#0000001a}
+.markdown strong{color:#000}
+.markdown code.file-ref{color:#9a5a1e;border-color:#9a5a1e33}
+.markdown code.file-ref:hover{background:#9a5a1e14}
+.markdown blockquote.callout{--callout:#2f6db5}
+.markdown blockquote.callout-tip{--callout:#2e8a46}.markdown blockquote.callout-important{--callout:#7b52c9}.markdown blockquote.callout-warning{--callout:#a86a00}.markdown blockquote.callout-caution{--callout:#c2413a}
 .toast{background:#1f1f1e;color:#f4f4f2;border-color:#1f1f1e}
 dialog::backdrop{background:#0000002e}
 .theme-options{background:#efefec;border-color:#e1e1de}

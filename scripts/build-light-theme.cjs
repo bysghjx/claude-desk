@@ -50,13 +50,18 @@ function mapValue(prop,value){
     .replace(/(^|[\s,(])white\b(?!-)/g,(m,p)=>p+hex(mapColor({r:255,g:255,b:255,a:1},{shadow})))
     .replace(/(^|[\s,(])black\b(?!-)/g,(m,p)=>p+hex(mapColor({r:0,g:0,b:0,a:1},{shadow})));
 }
-// The outline shorthand is repeated as outline-color only. The whole shorthand would also
-// bring back width and style, undoing a later rule such as .composer textarea{outline:none}.
-const SHORTHAND=/^outline$/;
+// Outline and border shorthands are repeated as their -color longhand only. The whole
+// shorthand would also bring back width and style, undoing a later rule such as
+// .composer textarea{outline:none} or .topbar{border:0}.
+const SHORTHAND=/^(outline|border(-(top|right|bottom|left|block|inline))?)$/;
+const WIDTH_OR_STYLE=/^(\d*\.?\d+(px|em|rem)?|thin|medium|thick|none|hidden|auto|dotted|dashed|solid|double|groove|ridge|inset|outset)$/;
 function colorOnly(prop,value){
   if(!SHORTHAND.test(prop))return null;
-  const colors=value.match(new RegExp(HEX.source+'|(?:^|\s)(?:white|black)\b','g'))||[];
-  return colors.length===1?{prop:`${prop}-color`,value:colors[0].trim()}:null;
+  const parts=[];let cur='',paren=0;
+  for(const c of value){if(c==='(')paren++;if(c===')')paren--;if(/\s/.test(c)&&!paren){if(cur)parts.push(cur);cur='';}else cur+=c;}
+  if(cur)parts.push(cur);
+  const colors=parts.filter(p=>!WIDTH_OR_STYLE.test(p));
+  return colors.length===1?{prop:`${prop}-color`,value:colors[0]}:null;
 }
 const hasColor=(prop,value)=>prop==='color-scheme'||HEX.test(value)||/(^|[\s,(])(white|black)\b(?!-)/.test(value);
 
@@ -75,6 +80,6 @@ for(const node of tokenize(fs.readFileSync(input,'utf8'))){
   if(media&&!/prefers-/.test(media[1])){emit(top.splice(0),'');emit(tokenize(node.body),media[1].trim());}
 }
 emit(top,'');
-if(extra)out+=`\n/* Hand-tuned light theme details */\n@media (prefers-color-scheme:light){\n${fs.readFileSync(extra,'utf8').trim()}\n}\n`;
+if(extra)out+=`\n/* Hand-tuned light theme details */\n@media (prefers-color-scheme:light){\n${fs.readFileSync(extra,'utf8').replace(/\r\n/g,'\n').trim()}\n}\n`;
 fs.writeFileSync(output,out);
 console.log(`${output}: ${out.length} bytes`);

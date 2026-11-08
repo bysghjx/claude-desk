@@ -3,32 +3,32 @@
 @media (prefers-color-scheme:light){
   :root{color-scheme:light;color:#292929;background:#f5f5f5}
   button:hover{background:#dcdcdc}
-  button:focus-visible{outline:1px solid #4e4e4e}
+  button:focus-visible{outline-color:#4e4e4e}
   .titlebar{background:#f8f8f8}
   .titlebar-label{color:#5c5c5c}
   .window-controls button:last-child:hover{background:#6b2424}
-  .agent-header{border-bottom:1px solid #e5e5e5}
+  .agent-header{border-bottom-color:#e5e5e5}
   #status{background:#ececec;color:#4e4e4e}
   #status.active{color:#659267;background:#ebefec}
   #meta{color:#666666}
-  .agent-toolbar button{border:1px solid #afafaf}
+  .agent-toolbar button{border-color:#afafaf}
   .agent-toolbar label{color:#5c5c5c}
   input{accent-color:#404040}
   main{scrollbar-color:#9a9a9a transparent}
   h2{color:#606060}
-  .task-card{border:1px solid #d6d6d6;background:#f2f2f2}
+  .task-card{border-color:#d6d6d6;background:#f2f2f2}
   .task-card small{color:#707070}
   .progress{color:#4e4e4e}
-  .approval{border:1px solid #b7a379;background:#f3f0ea;color:#9a7b37}
-  details{border:1px solid #d9d9d9;background:#f2f2f2}
+  .approval{border-color:#b7a379;background:#f3f0ea;color:#9a7b37}
+  details{border-color:#d9d9d9;background:#f2f2f2}
   summary{color:#4e4e4e}
   pre{color:#404040}
   .markdown pre{background:#f9f9f9}
-  .markdown td,.markdown th{border:1px solid #b8b8b8}
+  .markdown td,.markdown th{border-color:#b8b8b8}
   .markdown a{color:#4473a3}
   .tool-state{color:#666666}
   .error{color:#b94637}
   #unavailable{color:#4e4e4e}
-  footer{border-top:1px solid #e5e5e5;color:#707070}
+  footer{border-top-color:#e5e5e5;color:#707070}
   #live-indicator.live{color:#3f513e}
 }
