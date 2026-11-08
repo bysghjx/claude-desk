@@ -3,7 +3,7 @@
 @media (prefers-color-scheme:light){
   :root{color-scheme:light;--green:#4c805f;--red:#c5372c;--yellow:#96772f}
   button:hover{background:#0f0f0f0c}
-  button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid #6c4b36}
+  button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline-color:#6c4b36}
   option{background:#f2f2f2}
   .search-wrap{color:#63635f}
   .search-wrap input::placeholder{color:#83837e}

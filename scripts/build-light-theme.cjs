@@ -50,12 +50,20 @@ function mapValue(prop,value){
     .replace(/(^|[\s,(])white\b(?!-)/g,(m,p)=>p+hex(mapColor({r:255,g:255,b:255,a:1},{shadow})))
     .replace(/(^|[\s,(])black\b(?!-)/g,(m,p)=>p+hex(mapColor({r:0,g:0,b:0,a:1},{shadow})));
 }
+// The outline shorthand is repeated as outline-color only. The whole shorthand would also
+// bring back width and style, undoing a later rule such as .composer textarea{outline:none}.
+const SHORTHAND=/^outline$/;
+function colorOnly(prop,value){
+  if(!SHORTHAND.test(prop))return null;
+  const colors=value.match(new RegExp(HEX.source+'|(?:^|\s)(?:white|black)\b','g'))||[];
+  return colors.length===1?{prop:`${prop}-color`,value:colors[0].trim()}:null;
+}
 const hasColor=(prop,value)=>prop==='color-scheme'||HEX.test(value)||/(^|[\s,(])(white|black)\b(?!-)/.test(value);
 
 let out=`/* Light theme ("月之亮面"), generated from ${input.split(/[\\/]/).pop()} by scripts/build-light-theme.cjs — do not edit by hand.\n   Active when the app theme is light, or follows a light system theme. */\n`;
 function emit(rules,media){
   const body=rules.map(({prelude,body})=>{
-    const decls=declarations(body).filter(d=>{HEX.lastIndex=0;return hasColor(d.prop,d.value);}).map(d=>{HEX.lastIndex=0;return `${d.prop}:${mapValue(d.prop,d.value)}`;});
+    const decls=declarations(body).filter(d=>{HEX.lastIndex=0;return hasColor(d.prop,d.value);}).map(d=>colorOnly(d.prop,d.value)||d).map(d=>{HEX.lastIndex=0;return `${d.prop}:${mapValue(d.prop,d.value)}`;});
     return decls.length?`  ${prelude.replace(/\s+/g,' ')}{${decls.join(';')}}`:'';
   }).filter(Boolean);
   if(body.length)out+=`@media (prefers-color-scheme:light)${media?` and ${media}`:''}{\n${body.join('\n')}\n}\n`;
