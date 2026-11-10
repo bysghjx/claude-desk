@@ -3,7 +3,7 @@
 // and any running transition survive streaming updates.
 import { escape, markdown, setHtml, element } from '../core/dom.mjs';
 import { elapsed, STATUS_LABELS } from '../core/format.mjs';
-import { turnParts, toolView, stepParts, agentOf, agentParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml } from '../lib/worklog.mjs';
+import { turnParts, toolView, stepParts, agentOf, agentParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml, hasUnexecutedToolText } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
 function userHtml(turn) {
@@ -15,10 +15,20 @@ function userHtml(turn) {
   return `<div class="user-line">${images}${turn.user ? `<div class="user-message">${escape(turn.user)}${steer}</div>` : ''}${rewind}</div>${references}${label}`;
 }
 
+export function replyHtml(text, unexecuted = false) {
+  if (!unexecuted) return markdown(text);
+  return `<div class="error-card" role="status">回复中出现了工具调用文本，但本轮没有对应的工具执行记录，无法确认其中声称的操作和结果。以下保留返回原文，请检查模型或服务商的工具调用支持。</div><pre><code>${escape(text)}</code></pre>`;
+}
+
+export function completionLabel(turn) {
+  if (turn.toolProtocolAborted) return '! 工具调用异常，已中止';
+  return turn.status === 'done' ? hasUnexecutedToolText(turn) ? '! 工具调用异常' : '✓ 已完成' : turn.status === 'stopped' ? '■ 已停止' : '! 未完成';
+}
+
 function footerHtml(turn, threadActive) {
   if (turn.status === 'running') return '';
   const speed = replySpeed(turn);
-  return `<div class="turn-footer"><span>${turn.status === 'done' ? '✓ 已完成' : turn.status === 'stopped' ? '■ 已停止' : '! 未完成'}</span><span>${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}</span><button class="icon-action" data-copy="${escape(turn.id)}" title="复制回复" aria-label="复制回复"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"/></svg></button><button class="icon-action delete-turn" data-delete-turn="${escape(turn.id)}" ${threadActive ? 'disabled' : ''} title="删除这一轮提问、回复与工具记录" aria-label="删除这轮"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1M6.7 7v4M9.3 7v4"/></svg></button>${['error', 'stopped', 'interrupted'].includes(turn.status) ? `<button data-retry="${escape(turn.id)}">↻ 重试</button>` : ''}${speed != null ? `<span class="reply-speed" title="全程平均：CLI 输出 tokens ÷ 本轮总耗时，包含等待、思考、工具执行与审批时间；不是纯解码速度。">${speed.toFixed(1)} tok/s · 全程平均</span>` : ''}${turn.usage ? `<span class="usage">${turn.usage.output.toLocaleString()} 输出 tokens · $${turn.usage.cost.toFixed(4)}</span>` : ''}</div>`;
+  return `<div class="turn-footer"><span>${completionLabel(turn)}</span><span>${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}</span><button class="icon-action" data-copy="${escape(turn.id)}" title="复制回复" aria-label="复制回复"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"/></svg></button><button class="icon-action delete-turn" data-delete-turn="${escape(turn.id)}" ${threadActive ? 'disabled' : ''} title="删除这一轮提问、回复与工具记录" aria-label="删除这轮"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1M6.7 7v4M9.3 7v4"/></svg></button>${['error', 'stopped', 'interrupted'].includes(turn.status) ? `<button data-retry="${escape(turn.id)}">↻ 重试</button>` : ''}${speed != null ? `<span class="reply-speed" title="全程平均：CLI 输出 tokens ÷ 本轮总耗时，包含等待、思考、工具执行与审批时间；不是纯解码速度。">${speed.toFixed(1)} tok/s · 全程平均</span>` : ''}${turn.usage ? `<span class="usage">${turn.usage.output.toLocaleString()} 输出 tokens · $${turn.usage.cost.toFixed(4)}</span>` : ''}</div>`;
 }
 
 // Plays a one-off entrance animation; the class is removed afterwards so later
@@ -200,7 +210,7 @@ export function updateTurn(view, turn, { threadActive, latest = false, turns = n
   const live = turn.status === 'running';
   if (!view.head.querySelector('.user-edit')) setHtml(view.head, userHtml(turn));
   const final = updateBody(view, turn, live, run || {});
-  if (setHtml(view.final, markdown(final)) && final && !view.hadFinal && view.ready) animateIn(view.final);
+  if (setHtml(view.final, replyHtml(final, hasUnexecutedToolText(turn))) && final && !view.hadFinal && view.ready) animateIn(view.final);
   view.hadFinal = Boolean(final);
   if (view.ready && view.live && !live) animateIn(view.root, 'just-finished');
   view.live = live;

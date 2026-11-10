@@ -22,6 +22,7 @@ const {Worktrees}=require('./worktree.cjs');
 const {Terminals}=require('./terminal.cjs');
 const {DeskTray}=require('./tray.cjs');
 const {Providers}=require('./providers.cjs');
+const {CursorCompatProxy}=require('./cursor-compat.cjs');
 const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
 const {createUpdateFetch}=require('./update-network.cjs');
 const {prereleaseVersion}=require('./update-version.cjs');
@@ -29,7 +30,7 @@ const {newer}=require('./updates.cjs');
 const {attachContextMenu}=require('./context-menu.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
-let win, engine, extensions, agentWindows, terminals, tray, providers, quitting = false;
+let win, engine, extensions, agentWindows, terminals, tray, providers, cursorProxy, quitting = false;
 app.setName('Claude Desk');
 // Windows shows toasts only for an app id that a Start menu shortcut carries.
 const APP_ID='com.claudedesk.app';
@@ -183,7 +184,9 @@ if(primaryInstance)app.whenReady().then(async () => {
   const legacy=[path.join(dataRoot,'bootstrap.json'),path.join(appData,'ClaudeDesk/data/workspace.json'),path.join(shadowRoot,'ClaudeDesk/data/workspace.json'),path.join(appData,'Claude Desk/data/workspace.json'),path.join(appData,'claude-desk/data/workspace.json'),path.join(projectRoot,'work/claude-desk-ui/workspace.json'),path.join(projectRoot,'work/claude-desk-v2-qa/workspace.json')];
   engine = new Engine({ query, startup, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z, preview }) });
   const githubUpdates=new GitHubUpdates({version:app.getVersion(),downloadDir:path.join(dataRoot,'update-downloads'),fetch:createUpdateFetch(session),network:engine.store.state.settings});
-  providers=new Providers({store:engine.store,safeStorage});
+  cursorProxy=new CursorCompatProxy();
+  if(engine.store.state.settings.providers?.some(p=>p.cursorCompat))await cursorProxy.start();
+  providers=new Providers({store:engine.store,safeStorage,cursorProxy});
   engine.providerOptions=()=>providers.options();
   const keepAwake=new KeepAwake(powerSaveBlocker);
   const updateAwake=()=>keepAwake.update(engine.store.state.settings.keepAwake!==false&&engine.store.state.threads.some(x=>ACTIVE.has(x.status)));
@@ -375,7 +378,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('notify:test',()=>showNotice({title:'Claude Desk 通知已开启',body:'任务完成、需要你批准或回答问题时，会在这里提醒你。'},{force:true}));
   // 服务商: saved encrypted; the window only ever sees names, addresses and models.
   const providerResult=()=>({...providers.list(),provider:providerInfo()});
-  handle('providers:save',input=>{const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
+  handle('providers:save',async input=>{if(input?.cursorCompat===true)await cursorProxy.start();const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
   handle('providers:remove',id=>{providers.remove(String(id));return providerResult();});
   handle('providers:activate',id=>{providers.setActive(id?String(id):'');return providerResult();});
   handle('providers:test',input=>providers.models(input&&typeof input==='object'?input:{}));
@@ -465,6 +468,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     return { ...result, ...(custom ? { login: { ok: true, how: `服务商「${custom.name}」（在 Claude Desk 里配置）` } } : {}), provider: providerInfo() };
   });
   handle('cli:extract', async () => { const result = await cli.extract(); useCli(); return result; });
+  handle('cli:version',async()=>{const result=await cli.checkVersion();useCli();return result;});
   // Opens a console window running an official install command, so its progress and questions stay visible.
   handle('cli:install', id => {
     const entry = INSTALL_COMMANDS.find(c => c.id === id); if (!entry) throw Error('未知的安装方式');
@@ -513,5 +517,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());

@@ -2,7 +2,7 @@
 // official installer or the copy inside Claude Desk, then checks again until it is found.
 import { $, setHtml, setText } from '../core/dom.mjs';
 import { guarded } from '../core/ui.mjs';
-import { commandsHtml, bundleState, checksHtml } from '../lib/env.mjs';
+import { commandsHtml, bundleState, checksHtml, versionCheckText } from '../lib/env.mjs';
 
 const POLL = 4000;
 
@@ -64,6 +64,14 @@ export function createEnv({ store, api, toast }) {
     if (event.target.closest('[data-env-login]')) { await api('cli:open'); status('已打开 Claude Code。输入 /login 按提示登录，完成后点「重新检测」。'); }
   }));
   $('#env-recheck').addEventListener('click', guarded(toast, async () => { const button = $('#env-recheck'); button.disabled = true; status('正在检测…'); try { await check(); status('已重新检测。'); } finally { button.disabled = false; } }));
+  async function checkVersion(){
+    const button=$('#env-version-check');button.disabled=true;setText($('#env-version-result'),'正在检查 Claude Code 版本…');
+    try{const value=await api('cli:version');setText($('#env-version-result'),versionCheckText(value));}
+    catch(e){setText($('#env-version-result'),'版本检查失败：'+e.message);}
+    finally{button.disabled=false;}
+  }
+  $('#env-version-check').addEventListener('click',guarded(toast,checkVersion));
+  $('#check-cli-version').addEventListener('click',guarded(toast,async()=>{$('#settings-dialog').close();await open();await checkVersion();}));
   for (const id of ['#close-env', '#env-done']) $(id).addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => clearTimeout(timer));
   window.addEventListener('focus', () => { if (dialog.open) check().catch(() => {}); });

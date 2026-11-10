@@ -131,6 +131,7 @@ export function changesViewHtml(turn,cwd,escape,limit=3000){
 // Claude Desk's own tools draw cards under the turn, not step rows.
 export const WRAP_UP='mcp__desk__wrap_up',PROPOSE='mcp__desk__propose_session';
 const CARD_TOOLS=new Set([WRAP_UP,PROPOSE]);
+export {hasUnexecutedToolText} from './tool-protocol.mjs';
 // A turn cut where Claude read 插话: each part is the work up to the next 插话, which shows in the
 // conversation like a message of its own, followed by what Claude wrote back before its next step
 // (reply); the last part ends with the final answer. 插话 not read yet comes back separately.

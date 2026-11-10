@@ -41,3 +41,15 @@ test('testing a provider reads its models with the right header',async()=>{
   const denied=setup({fetch:async()=>({ok:false,status:401})}).providers;
   await assert.rejects(()=>denied.models({baseUrl:'https://a.example.com',key:'x'}),/密钥被拒绝/);
 });
+
+test('Cursor compatibility is opt-in, survives editing, and changing it invalidates live CLI settings',()=>{
+  const routes=[];const {providers}=setup({cursorProxy:{urlFor:(url,key)=>{routes.push([url,key]);return'http://127.0.0.1:32100/test-token';}}});
+  const value={name:'Relay',baseUrl:'https://relay.example.com',authType:'key',key:'test-secret'};
+  const id=providers.save(value);providers.setActive(id);const native=providers.options();
+  assert.equal(providers.list().providers[0].cursorCompat,false);assert.equal(routes.length,0);
+  providers.save({...value,id,key:'',cursorCompat:true});const compat=providers.options();
+  assert.equal(compat.env.ANTHROPIC_BASE_URL,'http://127.0.0.1:32100/test-token');assert.equal(compat.settings.env,compat.env);
+  assert.equal(compat.env.ANTHROPIC_API_KEY,'test-secret');assert.match(compat.env.NO_PROXY,/127\.0\.0\.1/);assert.notEqual(compat.key,native.key);
+  assert.equal(routes[0][0],value.baseUrl);assert.equal(providers.list().providers[0].cursorCompat,true);
+  providers.save({...value,id,key:'',cursorCompat:false});assert.equal(providers.options().env.ANTHROPIC_BASE_URL,value.baseUrl);
+});

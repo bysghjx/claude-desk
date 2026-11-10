@@ -67,6 +67,18 @@ test('the check reports Claude Code with its version, login, Git and GitHub CLI;
   cli.runner=async()=>null;assert.equal((await cli.check()).cli.broken,true);
   assert.equal(INSTALL_COMMANDS.find(c=>c.id==='powershell').command,'irm https://claude.ai/install.ps1 | iex');
 });
+
+test('version checks compare the actual selected CLI with the official public version and report network failures',async()=>{
+  const {cli,home,calls}=setup();write(path.join(home,'.local/bin/claude.exe'),'n');let online='2.1.401';
+  cli.fetch=async(url,options)=>{assert.equal(url,'https://registry.npmjs.org/@anthropic-ai%2Fclaude-code/latest');assert.ok(options.signal);return{ok:true,json:async()=>({version:online})};};
+  let result=await cli.checkVersion();assert.equal(result.cli.version,'2.1.400');assert.equal(result.cli.file,cli.find().file);assert.equal(result.status,'available');
+  online='2.1.400';assert.equal((await cli.checkVersion()).status,'current');
+  online='2.1.399';assert.equal((await cli.checkVersion()).status,'ahead');
+  cli.fetch=async()=>{throw Error('offline');};result=await cli.checkVersion();assert.equal(result.status,'unknown');assert.equal(result.latest,'');assert.match(result.error,/无法读取/);assert.equal(result.cli.version,'2.1.400');
+  assert.ok(calls.every(c=>c[0]==='reg.exe'||c[1]==='--version'));
+  const {versionCheckText}=await import('../ui/src/lib/env.mjs');assert.match(versionCheckText(result),/2\.1\.400.*无法读取/);
+  const missing=setup({packed:false}).cli;missing.fetch=async()=>({ok:true,json:async()=>({version:'2.1.401'})});assert.equal((await missing.checkVersion()).cli,null);
+});
 test('the environment window lists install commands, the built-in option and each check',async()=>{
   const {commandsHtml,bundleState,checksHtml}=await import('../ui/src/lib/env.mjs');
   const html=commandsHtml(INSTALL_COMMANDS);assert.match(html,/irm https:\/\/claude\.ai\/install\.ps1 \| iex/);assert.match(html,/class="primary" data-env-run="powershell"/);assert.match(html,/data-env-copy="winget"/);assert.match(html,/&amp;&amp; install\.cmd/);

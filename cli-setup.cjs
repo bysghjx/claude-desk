@@ -7,6 +7,7 @@ const zlib = require('node:zlib');
 const { createHash } = require('node:crypto');
 const { pipeline } = require('node:stream/promises');
 const { execFile } = require('node:child_process');
+const {validVersion,compareVersions}=require('./update-version.cjs');
 
 const BUNDLE = 'claude.exe.zst', BUNDLE_INFO = 'claude-code.json';
 // The official installers, written out for the setup window.
@@ -24,8 +25,8 @@ const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')
 class ClaudeCli {
   // home: the user's folder; root: ~/.claude-desk; bundleDir: where the compressed copy ships;
   // devExe: an uncompressed copy to use instead while developing (never deleted).
-  constructor({ home, root, bundleDir = '', devExe = '', env = process.env, runner = run }) {
-    Object.assign(this, { home, root, bundleDir, devExe, env, runner });
+  constructor({ home, root, bundleDir = '', devExe = '', env = process.env, runner = run, fetch = globalThis.fetch }) {
+    Object.assign(this, { home, root, bundleDir, devExe, env, runner, fetch });
     this.extraDirs = [];
   }
   get ownDir() { return path.join(this.root, 'cli'); }
@@ -98,6 +99,20 @@ class ClaudeCli {
     if (LOGIN_KEYS.some(k => this.env[k] || env[k]) || settings.apiKeyHelper) return { ok: true, how: 'API Key 或第三方服务商' };
     if (fs.existsSync(path.join(this.home, '.claude/.credentials.json'))) return { ok: true, how: 'Claude 账号' };
     return { ok: false, how: '' };
+  }
+  async checkVersion(){
+    await this.refreshPath();const found=this.find();
+    const output=found&&await this.runner(found.file,['--version']);
+    const version=output?output.replace(/\s*\(Claude Code\)\s*$/,'').trim():'';
+    const result={cli:found?{...found,version,broken:!version}:null,latest:'',status:'unknown',checkedAt:Date.now(),error:''};
+    try{
+      const response=await this.fetch('https://registry.npmjs.org/@anthropic-ai%2Fclaude-code/latest',{signal:AbortSignal.timeout(15000),redirect:'error'});
+      if(!response.ok)throw Error('HTTP '+response.status);
+      const data=await response.json();if(!validVersion(data.version))throw Error('官方版本信息无效');
+      result.latest=data.version;
+      if(validVersion(version)){const order=compareVersions(version,data.version);result.status=order<0?'available':order===0?'current':'ahead';}
+    }catch{result.error='无法读取官方公开版本，请检查网络后重试';}
+    return result;
   }
   // Everything the setup window shows. quick skips running programs, for polling while it is open.
   async check({ quick = false } = {}) {

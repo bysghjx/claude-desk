@@ -3,6 +3,7 @@ const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const fs = require('./disk-fs.cjs');
 const {historyTail}=require('./json-stream.cjs');
+const {hasUnexecutedToolText}=require('./ui/src/lib/tool-protocol.mjs');
 const path = require('node:path');
 const {atomicWrite,loadRecoverable,mergeLegacy}=require('./storage.cjs');
 const {markNarration,ACTIVE_AGENT,activeAgents,findAgent,dropToolAgents,ensureAgent,agentFromTool,finishAgentTool,settleAgents,handleAgentMessage}=require('./subagents.cjs');
@@ -449,6 +450,15 @@ class Engine extends EventEmitter {
     if (turn) { turn.status = 'error'; turn.error = message; turn.finishedAt = Date.now(); for (const tool of turn.tools) if (['running', 'approval'].includes(tool.status)) tool.status = 'error'; }
     this.setStatus(t, 'error', message);
   }
+  stopUnexecutedToolText(t, turn) {
+    if (!hasUnexecutedToolText(turn)) return false;
+    turn.toolProtocolAborted = true;
+    // closeRun aborts and detaches the CLI synchronously before waiting for exit.
+    this.closeRun(t.id).catch(e => this.emit('diagnostic', { threadId: t.id, message: this.redact(e.message) }));
+    this.fail(t, '工具调用异常，已中止：回复中出现了工具调用文本，但没有对应的工具执行记录。请检查模型或服务商的工具调用支持。');
+    this.store.save();
+    return true;
+  }
   // The breakdown the CLI computes for /context (by category, against the window it
   // compacts at). Needs the conversation's live CLI; null without one. A known window
   // also fills in the context meter when the result did not report one.
@@ -478,6 +488,7 @@ class Engine extends EventEmitter {
     t.contextUsage={usedTokens:fields.reduce((sum,key)=>sum+(usage[key]||0),0),contextWindow:previous?.model===run.contextModel?previous.contextWindow:null,model:run.contextModel,updatedAt:Date.now()};
   }
   process(t, run, msg) {
+    if (run.stopping) return;
     t.lastEventAt = Date.now();
     if(handleAgentMessage(t,run,msg,text=>this.redact(text))){this.publish(t.id,false);return;}
     if ((msg.type === 'assistant' || msg.type === 'stream_event') && msg.parent_tool_use_id == null) {
@@ -500,7 +511,7 @@ class Engine extends EventEmitter {
         else if (e.content_block?.type === 'text') { addItem(turn, 'text'); this.setStatus(t, 'generating', '正在生成回复'); }
       }
       if (e.type === 'content_block_delta') {
-        if (e.delta.type === 'text_delta') { turn.answer += e.delta.text; appendItem(turn, 'text', e.delta.text); run.partialText = true; t.status = 'generating'; t.detail = '正在生成回复'; }
+        if (e.delta.type === 'text_delta') { turn.answer += e.delta.text; appendItem(turn, 'text', e.delta.text); run.partialText = true; if (this.stopUnexecutedToolText(t, turn)) return; t.status = 'generating'; t.detail = '正在生成回复'; }
         if (e.delta.type === 'thinking_delta') { turn.thinking += e.delta.thinking; appendItem(turn, 'thinking', e.delta.thinking); t.status = 'thinking'; t.detail = '模型正在思考'; }
         this.publish(t.id, false);
       }
@@ -522,6 +533,7 @@ class Engine extends EventEmitter {
         if (!turn.tools.some(x => x.id === b.id)) { turn.tools.push({ id: b.id, name: b.name, input: b.input, output: '', status: 'running', startedAt: Date.now() }); addItem(turn, 'tool', b.id); }
         if (t.status !== 'approval') this.setStatus(t, 'tool', `执行 ${b.name}`);
       }
+      if (this.stopUnexecutedToolText(t, turn)) return;
       if (msg.error) turn.modelWarning = this.redact(msg.error);
       this.publish(t.id); return;
     }
@@ -550,6 +562,7 @@ class Engine extends EventEmitter {
       if (msg.is_error || msg.subtype !== 'success') { this.fail(t, this.redact((msg.errors || []).join('\n') || msg.result || `运行失败：${msg.subtype}`)); }
       else {
         if (!turn.answer && msg.result) { turn.answer = msg.result; addItem(turn, 'text', msg.result); }
+        if (this.stopUnexecutedToolText(t, turn)) return;
         if (!turn.answer && turn.compacted) { const c = turn.compacted, text = `上下文已压缩${Number.isFinite(c.preTokens) ? `：约 ${c.preTokens.toLocaleString()}${Number.isFinite(c.postTokens) ? ` → ${c.postTokens.toLocaleString()}` : ''} tokens` : ''}`; turn.answer = text; addItem(turn, 'text', text); }
         turn.status = 'done'; this.settleSteers(t, run, turn);
         if (!t.contextUsage?.contextWindow) this.contextDetails(t.id).catch(() => {});

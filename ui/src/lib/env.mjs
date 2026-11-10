@@ -3,6 +3,13 @@ import { escape } from '../core/dom.mjs';
 
 export const SOURCE_LABELS = { native: '官方原生版', winget: 'WinGet 安装', npm: 'npm 安装', path: '系统 PATH 里的', bundled: 'Claude Desk 内置版，不会自动更新' };
 
+export function versionCheckText(result){
+  const local=result.cli?result.cli.version?`当前使用 ${result.cli.version}（${SOURCE_LABELS[result.cli.source]||'本地安装'}）：${result.cli.file}`:`当前 CLI 运行失败：${result.cli.file}`:'没有找到 Claude Code';
+  const latest=result.latest?`官方公开版本（npm）：${result.latest}`:'';
+  const state={available:'有新版本可用',current:'与官方公开版本一致',ahead:'当前版本高于官方公开版本'}[result.status]||'';
+  return[local,latest,state,result.error].filter(Boolean).join('。');
+}
+
 // One install command per row: where to run it, the command, copy and run.
 export function commandsHtml(commands) {
   return commands.map(c => `<div class="env-command"><span class="env-command-label">${escape(c.label)}</span><code>${escape(c.command)}</code><div class="env-command-actions"><button type="button" class="secondary" data-env-copy="${escape(c.id)}">复制</button><button type="button" class="${c.id === 'powershell' ? 'primary' : 'secondary'}" data-env-run="${escape(c.id)}">运行</button></div></div>`).join('');

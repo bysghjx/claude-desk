@@ -12,6 +12,57 @@ function fakeSdk(){let count=0;const messages=[];const outputs=new InputQueue();
   return{query,outputs,messages,contexts,get count(){return count;}};
 }
 async function complete(sdk,text='OK'){sdk.outputs.push({type:'assistant',uuid:String(Math.random()),message:{content:[{type:'text',text}]}});sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:text,usage:{output_tokens:2},total_cost_usd:0.001});await tick();}
+
+test('textual tool calls abort a split stream, preserve the queue and stay out of restored history',async()=>{
+  const sessions=[];const {engine,t,store}=setup(args=>{const sdk=fakeSdk();sessions.push(sdk);return sdk.query(args);});
+  try{
+    await engine.send(t.id,'inspect the files');await tick();const run=engine.runs.get(t.id),sdk=sessions[0];
+    engine.enqueue(t.id,'queued task');
+    const delta=text=>sdk.outputs.push({type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text}}});
+    delta('<invoke name="Bash">\n<parameter name="command">git status</parameter>\n</invoke>\nFAKE_RESULT_SENTINEL\n<inv');await tick();
+    assert.equal(t.status,'generating');assert.equal(run.abort.signal.aborted,false);
+    delta('oke name="Re');await tick();assert.equal(run.abort.signal.aborted,false);
+    delta('ad">\n');await tick();await run.task;
+    const turn=t.turns[0],savedAnswer=turn.answer;
+    assert.equal(run.abort.signal.aborted,true);assert.equal(engine.runs.has(t.id),false);
+    assert.equal(t.status,'error');assert.equal(turn.status,'error');assert.equal(turn.toolProtocolAborted,true);
+    assert.match(t.error,/工具调用异常，已中止/);assert.equal(t.queue.length,1);assert.equal(sessions.length,1);
+    engine.process(t,run,{type:'assistant',message:{content:[{type:'tool_use',id:'late',name:'Bash',input:{command:'late'}}]}});
+    engine.process(t,run,{type:'result',subtype:'success',result:'late success'});
+    assert.equal(turn.answer,savedAnswer);assert.equal(turn.tools.length,0);assert.equal(t.status,'error');
+    assert.equal(new JsonStore(store.file).state.threads[0].turns[0].toolProtocolAborted,true);
+    await engine.send(t.id,'try again');await tick();
+    assert.equal(sessions.length,2);assert.match(sessions[1].messages[0].message.content,/本轮因工具调用异常而中止/);
+    assert.doesNotMatch(sessions[1].messages[0].message.content,/FAKE_RESULT_SENTINEL|<invoke/);
+  }finally{await engine.shutdown();}
+});
+
+test('nonstreamed replies and result-only replies also stop on textual tool calls',async()=>{
+  const text='<invoke name="Bash">\n</invoke>\n<invoke name="Read">\n</invoke>';
+  for(const resultOnly of [false,true]){
+    const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+    try{
+      await engine.send(t.id,'inspect');await tick();const run=engine.runs.get(t.id);
+      sdk.outputs.push(resultOnly?{type:'result',subtype:'success',result:text}:{type:'assistant',uuid:'bad',message:{content:[{type:'text',text}]}});
+      await tick();await run.task;
+      assert.equal(run.abort.signal.aborted,true);assert.equal(t.status,'error');assert.equal(t.turns[0].answer,text);
+    }finally{await engine.shutdown();}
+  }
+});
+
+test('fenced examples and responses with real tool records keep their CLI running',async()=>{
+  const text='<invoke name="Bash">\n</invoke>\n<invoke name="Read">\n</invoke>';
+  for(const realTool of [false,true]){
+    const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+    try{
+      await engine.send(t.id,'explain');await tick();const run=engine.runs.get(t.id);
+      const blocks=[{type:'text',text:realTool?text:'```xml\n'+text+'\n```'}];
+      if(realTool)blocks.push({type:'tool_use',id:'real',name:'Bash',input:{command:'echo real'}});
+      sdk.outputs.push({type:'assistant',uuid:'valid',message:{content:blocks}});await tick();
+      assert.equal(engine.runs.get(t.id),run);assert.equal(run.abort.signal.aborted,false);assert.equal(t.turns[0].toolProtocolAborted,undefined);
+    }finally{await engine.shutdown();}
+  }
+});
 test('two turns retain one live CLI and never depend on resume IDs',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();await complete(sdk,'remembered');await engine.send(t.id,'second');await tick();await complete(sdk,'still remembered');assert.equal(sdk.count,1);assert.equal(sdk.messages.length,2);assert.equal(engine.thread(t.id).turns[1].answer,'still remembered');assert.equal(sdk.contexts[0].persistSession,false);assert.equal(sdk.contexts[0].resume,undefined);await engine.shutdown();});
 test('error result with success subtype reports errors instead of displaying Error: success',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();sdk.outputs.push({type:'result',subtype:'success',is_error:true,errors:['HTTP 400: adaptive thinking required']});await tick();assert.equal(t.status,'error');assert.match(t.error,/adaptive thinking/);assert.notEqual(t.error,'success');await engine.shutdown();});
 test('stop rejects pending permissions and next send recreates process with saved context',async()=>{const sdk=fakeSdk();const{engine,t}=setup(sdk.query);await engine.send(t.id,'first');await tick();const permission=sdk.contexts[0].canUseTool('Write',{file_path:'test.txt'},{toolUseID:'tool-1'});assert.equal(t.status,'approval');assert.equal(t.turns[0].approval.name,'Write');await engine.stop(t.id);assert.equal((await permission).behavior,'deny');assert.equal(t.status,'stopped');assert.equal(engine.pending.size,0);await engine.shutdown();});

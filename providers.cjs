@@ -19,7 +19,7 @@ function cleanUrl(value){
 }
 
 class Providers{
-  constructor({store,safeStorage,fetch=globalThis.fetch}){Object.assign(this,{store,safeStorage,fetch});}
+  constructor({store,safeStorage,fetch=globalThis.fetch,cursorProxy=null}){Object.assign(this,{store,safeStorage,fetch,cursorProxy});}
   get settings(){return this.store.state.settings;}
   get all(){return Array.isArray(this.settings.providers)?this.settings.providers:[];}
   // What the window sees: everything but the key.
@@ -45,7 +45,7 @@ class Providers{
     const typed=String(input.key||'').trim();
     if(!typed&&!existing?.key)throw Error('请填写密钥');
     if(typed.length>4000)throw Error('密钥太长');
-    const provider={id:existing?.id||randomUUID(),name,baseUrl,authType,models,fastModel,key:typed?this.encrypt(typed):existing.key};
+    const provider={id:existing?.id||randomUUID(),name,baseUrl,authType,models,fastModel,cursorCompat:input.cursorCompat===true,key:typed?this.encrypt(typed):existing.key};
     this.settings.providers=existing?this.all.map(p=>p===existing?provider:p):[...this.all,provider];
     this.store.save();return provider.id;
   }
@@ -67,7 +67,13 @@ class Providers{
     if(!p)return null;
     const env={ANTHROPIC_BASE_URL:p.baseUrl,ANTHROPIC_AUTH_TOKEN:p.authType==='token'?p.key:'',ANTHROPIC_API_KEY:p.authType==='key'?p.key:''};
     if(p.fastModel)Object.assign(env,{ANTHROPIC_DEFAULT_HAIKU_MODEL:p.fastModel,ANTHROPIC_SMALL_FAST_MODEL:p.fastModel});
-    const key=p.id+':'+createHash('sha256').update(JSON.stringify(env)).digest('hex').slice(0,16);
+    const key=p.id+':'+createHash('sha256').update(JSON.stringify([env,Boolean(p.cursorCompat)])).digest('hex').slice(0,16);
+    if(p.cursorCompat){
+      if(!this.cursorProxy)throw Error('Cursor 兼容服务不可用');
+      env.ANTHROPIC_BASE_URL=this.cursorProxy.urlFor(p.baseUrl,key);
+      env.NO_PROXY=[process.env.NO_PROXY||process.env.no_proxy,'127.0.0.1','localhost'].filter(Boolean).join(',');
+      env.no_proxy=env.NO_PROXY;
+    }
     return{key,name:p.name,env,settings:{env}};
   }
   headers(authType,key){return authType==='token'?{Authorization:`Bearer ${key}`,'anthropic-version':'2023-06-01'}:{'x-api-key':key,'anthropic-version':'2023-06-01'};}

@@ -65,7 +65,7 @@ function writeJson(file,value){
 function historyTail(turns,budget=120000){
   let tail=']';let found=false;
   for(let at=turns.length-1;at>=0;at--){const x=turns[at];if(!x.answer&&!x.tools?.length)continue;
-    const entry={user:x.user,...(x.images?.length?{images:`[附带 ${x.images.length} 张图片，图片本身未包含在历史中]`}:{}),context:x.context,answer:x.answer,tools:x.tools?.map(y=>({name:y.name,input:y.input,output:y.output}))};
+    const entry={user:x.user,...(x.images?.length?{images:`[附带 ${x.images.length} 张图片，图片本身未包含在历史中]`}:{}),context:x.context,answer:x.toolProtocolAborted?'[本轮因工具调用异常而中止，正文中的工具调用和结果未被执行。]':x.answer,tools:x.tools?.map(y=>({name:y.name,input:y.input,output:y.output}))};
     let text='';for(const chunk of jsonChunks(entry))text=(text+chunk).slice(-budget);
     tail=(text+(found?',':'')+tail).slice(-budget);found=true;if(tail.length===budget)break;
   }
