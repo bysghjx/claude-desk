@@ -7,6 +7,8 @@ import { guarded } from '../core/ui.mjs';
 
 const PAGE_URL = /^(https?:\/\/|about:blank$)/i;
 // A bare host or host:port typed in the address bar means a local http page.
+// A <webview>'s methods throw until its first dom-ready; before that its src is the address.
+const urlOf = view => view.dataset.attached ? view.getURL() : view.src;
 const normalize = text => { text = text.trim(); if (!text) return ''; if (/^[a-z]+:\/\//i.test(text) || text === 'about:blank') return text; return (/^(localhost|127\.|\[::1\]|\d+$)/.test(text) ? 'http://' : 'https://') + (/^\d+$/.test(text) ? 'localhost:' + text : text); };
 
 export function createPreviewPanel({ store, api, toast, desk, terminal }) {
@@ -15,7 +17,7 @@ export function createPreviewPanel({ store, api, toast, desk, terminal }) {
 
   function page(threadId, url) {
     let view = pages.get(threadId);
-    if (view) { if (url && view.getURL?.() !== url) view.loadURL(url).catch(() => {}); return view; }
+    if (view) { if (url && urlOf(view) !== url) { if (view.dataset.attached) view.loadURL(url).catch(() => {}); else view.src = url; } return view; }
     view = document.createElement('webview');
     view.setAttribute('partition', 'persist:claude-desk-preview');
     view.setAttribute('webpreferences', 'backgroundThrottling=no');
@@ -34,7 +36,7 @@ export function createPreviewPanel({ store, api, toast, desk, terminal }) {
     const view = pages.get(store.selected);
     for (const [id, other] of pages) other.classList.toggle('behind', id !== store.selected);
     empty.hidden = Boolean(view);
-    address.value = view?.getURL?.() || '';
+    address.value = view ? urlOf(view) : '';
     address.disabled = !store.selected;
   }
 
