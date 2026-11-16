@@ -56,8 +56,9 @@ export function createPreviewPanel({ store, api, toast, desk, terminal }) {
   $('#preview-hide').addEventListener('click', () => toggle(false));
   toggleButton.addEventListener('click', () => toggle());
 
-  // Claude opened a page: create it, and show the panel when it is for the conversation on screen.
+  // Claude opened a page or took a screenshot: show the panel when it is for the conversation on screen.
   desk.onPreview?.(event => {
+    if (event.type === 'show') { if (event.threadId === store.selected && pages.has(event.threadId) && panel.hidden) toggle(true); return; }
     if (event.type !== 'open') return;
     page(event.threadId, event.url);
     if (event.threadId === store.selected) { if (panel.hidden) toggle(true); else showCurrent(); }

@@ -43,10 +43,13 @@ class BrowserPreview {
     await new Promise(resolve => setTimeout(resolve, 50)); await this.settled(contents);
     return { url: contents.getURL(), title: contents.getTitle() };
   }
-  // capturePage needs the page on screen; when the panel or window is hidden the
-  // DevTools protocol still renders a frame.
+  // A screenshot brings the panel back if it was closed, so you see what Claude is
+  // looking at. capturePage needs the page on screen; when the window is hidden or
+  // another conversation is in front, the DevTools protocol still renders a frame.
   async screenshot(threadId) {
-    const { contents } = this.page(threadId); await this.settled(contents);
+    const { contents } = this.page(threadId);
+    this.send({ type: 'show', threadId }); await new Promise(resolve => setTimeout(resolve, 150));
+    await this.settled(contents);
     const image = await contents.capturePage().catch(() => null);
     if (image && !image.isEmpty()) return (image.getSize().width > 1280 ? image.resize({ width: 1280 }) : image).toJPEG(80).toString('base64');
     const tool = contents.debugger, attached = tool.isAttached();

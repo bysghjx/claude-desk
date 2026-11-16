@@ -17,12 +17,14 @@ test('opening a page asks the renderer for it, waits for the page and loads the 
   await assert.rejects(()=>preview.open('t1','file:///C:/secret.txt'),/http/);await assert.rejects(()=>preview.open('t1','javascript:alert(1)'),/http/);
 });
 test('page tools need an opened page; errors in the page come back with their message',async()=>{
-  const preview=new BrowserPreview({send:()=>{}});
+  const sent=[],preview=new BrowserPreview({send:event=>sent.push(event)});
   await assert.rejects(()=>preview.screenshot('none'),/还没有打开/);assert.throws(()=>preview.console('none'),/还没有打开/);
   preview.attach('t1',fakeContents({script:async code=>code.includes('#missing')?{error:'找不到元素：#missing'}:{value:{n:1}}}));
   assert.equal(await preview.evaluate('t1','({n:1})'),'{\n "n": 1\n}');
   await assert.rejects(()=>preview.click('t1','#missing'),/找不到元素：#missing/);
   assert.equal(await preview.screenshot('t1'),Buffer.from('jpeg').toString('base64'));
+  // A screenshot asks the renderer to bring the panel back in case it was closed.
+  assert.deepEqual(sent,[{type:'show',threadId:'t1'}]);
 });
 test('console output is kept per page and filtered by level',()=>{
   const preview=new BrowserPreview({send:()=>{}}),contents=fakeContents();preview.attach('t1',contents);
