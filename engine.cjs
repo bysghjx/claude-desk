@@ -486,6 +486,8 @@ class Engine extends EventEmitter {
     run.responseUsage={...usage};run.contextModel=model||run.contextModel||t.model;
     const previous=t.contextUsage;
     t.contextUsage={usedTokens:fields.reduce((sum,key)=>sum+(usage[key]||0),0),contextWindow:previous?.model===run.contextModel?previous.contextWindow:null,model:run.contextModel,updatedAt:Date.now()};
+    // A new CLI only reports its window with the first result; ask for it now so the meter shows during a long first turn.
+    if(!t.contextUsage.contextWindow&&!run.windowAsked){run.windowAsked=true;this.contextDetails(t.id).catch(()=>{});}
   }
   process(t, run, msg) {
     if (run.stopping) return;

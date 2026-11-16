@@ -133,6 +133,15 @@ test('streamed usage tracks the final response and a missing limit stays unknown
   await complete(sdk);assert.equal(t.contextUsage.usedTokens,640);assert.equal(t.contextUsage.contextWindow,null);
   await engine.shutdown();
 });
+test('a new CLI is asked for its window at the first response, so the meter shows before the turn ends',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'test');await tick();
+  let asked=0;engine.runs.get(t.id).query.getContextUsage=async()=>{asked++;return{model:t.model,totalTokens:600,maxTokens:180000,rawMaxTokens:200000,categories:[]};};
+  sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{model:t.model,usage:{input_tokens:100,cache_read_input_tokens:500,output_tokens:0}}}});await tick();
+  assert.equal(t.status,'waiting');assert.equal(t.contextUsage.usedTokens,600);assert.equal(t.contextUsage.contextWindow,200000);
+  sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{model:t.model,usage:{input_tokens:900,output_tokens:0}}}});await tick();
+  assert.equal(t.contextUsage.usedTokens,900);assert.equal(t.contextUsage.contextWindow,200000);assert.equal(asked,1);
+  await engine.shutdown();
+});
 test('aggregate result usage alone cannot fabricate context occupancy',async()=>{
   const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'test');await tick();
   sdk.outputs.push({type:'result',subtype:'success',is_error:false,usage:{input_tokens:5000,output_tokens:200},modelUsage:{[t.model]:{contextWindow:200000,inputTokens:5000}}});await tick();
