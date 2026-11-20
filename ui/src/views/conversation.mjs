@@ -144,21 +144,39 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     let file = href; try { file = decodeURI(href); } catch {}
     return { web: false, href: file.replace(/#.*$/, '') };
   }
-  async function openFile(ref, line) {
-    const result = await api('file:open', store.selected, ref, 'click');
-    if (result?.view) dock.openFile(store.selected, result.view.path, line, result.view);
+  const isMissingError = e => /(?:里)?找不到/.test(String(e?.message || e || ''));
+  function markMissing(node) { if (!node) return; node.classList.add('missing'); node.title = '文件不存在'; }
+  async function openFile(ref, line, node) {
+    if (node?.classList.contains('missing')) return;
+    const turnId = node?.closest?.('[data-turn]')?.dataset.turn || '';
+    try {
+      const result = await api('file:open', store.selected, ref, 'click', turnId);
+      if (result?.view) dock.openFile(store.selected, result.view.path, line, result.view);
+    } catch (e) {
+      if (isMissingError(e)) markMissing(node);
+      throw e;
+    }
   }
-  async function fileMenu(ref, line) {
-    const result = await api('file:menu', store.selected, ref);
-    if (result?.error) toast(result.error);
-    else if (result?.view) dock.openFile(store.selected, result.view.path, line, result.view);
-    else if (result?.copied) toast('已复制路径');
+  async function fileMenu(ref, line, node) {
+    if (node?.classList.contains('missing')) return;
+    const turnId = node?.closest?.('[data-turn]')?.dataset.turn || '';
+    try {
+      const result = await api('file:menu', store.selected, ref, turnId);
+      if (result?.error) { if (isMissingError(result.error)) markMissing(node); toast(result.error); }
+      else if (result?.view) dock.openFile(store.selected, result.view.path, line, result.view);
+      else if (result?.copied) toast('已复制路径');
+    } catch (e) {
+      if (isMissingError(e)) markMissing(node);
+      throw e;
+    }
   }
   box.addEventListener('contextmenu', event => {
     const fileRef = event.target.closest('[data-file-ref]'), link = !fileRef && linkOf(event.target);
     if (!fileRef && (!link || link.web)) return;
+    const node = fileRef || event.target.closest('a[href]');
+    if (node?.classList.contains('missing')) return;
     event.preventDefault();
-    fileMenu(fileRef ? fileRef.dataset.fileRef : link.href, fileRef?.dataset.fileLine).catch(e => toast(e.message));
+    fileMenu(fileRef ? fileRef.dataset.fileRef : link.href, fileRef?.dataset.fileLine, node).catch(e => toast(e.message));
   });
   box.addEventListener('click', guarded(toast, async event => {
     const target = event.target;
@@ -170,8 +188,8 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     const review = target.closest('[data-review-file]');
     // 查看变更 opens the turn's 变更 tab at the top; a file row opens it at that file.
     if (review) return dock.openChanges(store.selected, review.closest('[data-turn]').dataset.turn, review.classList.contains('changes-review') ? '' : review.dataset.reviewFile);
-    const fileRef = target.closest('[data-file-ref]'); if (fileRef) return openFile(fileRef.dataset.fileRef, fileRef.dataset.fileLine);
-    const link = linkOf(target); if (link) { event.preventDefault(); return link.web ? api('link:open', link.href) : openFile(link.href); }
+    const fileRef = target.closest('[data-file-ref]'); if (fileRef) return openFile(fileRef.dataset.fileRef, fileRef.dataset.fileLine, fileRef);
+    const link = linkOf(target); if (link) { event.preventDefault(); return link.web ? api('link:open', link.href) : openFile(link.href, undefined, target.closest('a[href]')); }
     const image = target.closest('[data-open-image]'); if (image) return showImage(await api('attachment:read', store.selected, image.dataset.imageTurn, image.dataset.openImage), image.title);
     const remove = target.closest('[data-delete-turn]');
     if (remove) { remove.disabled = true; try { await actions.deleteTurn(remove.dataset.deleteTurn); } finally { remove.disabled = false; } return; }

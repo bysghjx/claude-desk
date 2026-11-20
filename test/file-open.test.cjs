@@ -1,6 +1,6 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {resolveRef,clickAction,openRef}=require('../file-open.cjs');
+const {resolveRef,findInFolder,collectHints,clickAction,openRef}=require('../file-open.cjs');
 
 function folders(){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'desk-open-')),project=path.join(root,'project'),outside=path.join(root,'outside');
@@ -17,14 +17,64 @@ test('a file in a reply is found relative to the conversation folder, by absolut
   assert.equal(resolveRef(project,'src/app.js'),path.join(project,'src','app.js'));
   assert.equal(resolveRef(project,path.join(outside,'notes.md')),path.join(outside,'notes.md'));
   assert.equal(resolveRef(project,require('node:url').pathToFileURL(path.join(outside,'notes.md')).href),path.join(outside,'notes.md'));
-  assert.throws(()=>resolveRef(project,'missing.txt'),/找不到文件/);
+  assert.throws(()=>resolveRef(project,'missing.txt'),e=>{assert.match(e.message,/里找不到 missing\.txt/);assert.ok(e.message.includes(project));return true;});
   // Only a name, or the end of the path: the shallowest match in the folder.
   fs.mkdirSync(path.join(project,'outputs','releases'),{recursive:true});fs.mkdirSync(path.join(project,'work','a','releases'),{recursive:true});
   fs.writeFileSync(path.join(project,'outputs','releases','App-1.0.zip'),'x');fs.writeFileSync(path.join(project,'work','a','releases','App-1.0.zip'),'y');
   assert.equal(resolveRef(project,'App-1.0.zip'),path.join(project,'outputs','releases','App-1.0.zip'));
   assert.equal(resolveRef(project,'a/releases/App-1.0.zip'),path.join(project,'work','a','releases','App-1.0.zip'));
   assert.equal(resolveRef(project,'app.js'),path.join(project,'src','app.js'));
-  assert.throws(()=>resolveRef(project,'../outside/notes.md/x'),/找不到文件/);
+  assert.throws(()=>resolveRef(project,'../outside/notes.md/x'),/里找不到/);
+});
+
+test('tool hints locate files outside cwd, clicked turn wins, and removed worktrees explain why a file is missing',async()=>{
+  const {root,project,outside}=folders();
+  const docs=path.join(outside,'docs');fs.mkdirSync(docs,{recursive:true});
+  const docFile=path.join(docs,'desktop-candidate2.md');fs.writeFileSync(docFile,'# candidate');
+  const otherDir=path.join(root,'bash-work');fs.mkdirSync(path.join(otherDir,'sub'),{recursive:true});
+  const bashFile=path.join(otherDir,'sub','out.md');fs.writeFileSync(bashFile,'hi');
+  const olderFile=path.join(outside,'older','dup.md');fs.mkdirSync(path.dirname(olderFile),{recursive:true});fs.writeFileSync(olderFile,'old');
+  const newerFile=path.join(outside,'newer','dup.md');fs.mkdirSync(path.dirname(newerFile),{recursive:true});fs.writeFileSync(newerFile,'new');
+  // Direct hints array finds file outside cwd.
+  assert.equal(resolveRef(project,'docs/desktop-candidate2.md',[docFile]),docFile);
+  // collectHints reads file_path, notebook_path, path and Bash cd, preferring clicked turn.
+  const thread={cwd:project,turns:[
+    {id:'t1',tools:[{name:'Read',input:{file_path:olderFile}},{name:'Bash',input:{command:`cd "${otherDir}" && dir`}}]},
+    {id:'t2',tools:[{name:'Write',input:{file_path:docFile}},{name:'Read',input:{file_path:newerFile}}]}
+  ]};
+  assert.equal(resolveRef(project,'dup.md',collectHints(thread,'t1')),olderFile);
+  assert.equal(resolveRef(project,'dup.md',collectHints(thread,'t2')),newerFile);
+  assert.equal(resolveRef(project,'sub/out.md',collectHints(thread,'t2')),bashFile);
+  // Outside files found via hints open in their system app, not the split view.
+  const {calls,shell,clipboard}=fakeShell();
+  assert.deepEqual(await openRef({shell,clipboard},project,'docs/desktop-candidate2.md','click',{hints:collectHints(thread,'t2')}),{opened:true});
+  assert.deepEqual(calls,[['open',docFile]]);
+  // Removed worktree error mentions cwd and branch.
+  assert.throws(()=>resolveRef(project,'docs/only-in-branch.md',{worktree:{removed:true,branch:'claude-desk/abc123'}}),e=>{
+    assert.ok(e.message.includes(project));assert.match(e.message,/工作树已删除/);assert.match(e.message,/claude-desk\/abc123/);return true;
+  });
+});
+
+test('folder search enters dot-folders except .git, skips build outputs, and scales past 3000 folders',()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'desk-search-'));
+  fs.mkdirSync(path.join(root,'.github','workflows'),{recursive:true});
+  fs.mkdirSync(path.join(root,'.claude'),{recursive:true});
+  fs.mkdirSync(path.join(root,'.git','hooks'),{recursive:true});
+  fs.mkdirSync(path.join(root,'dist'),{recursive:true});
+  const gh=path.join(root,'.github','workflows','ci.yml'),cl=path.join(root,'.claude','settings.json');
+  fs.writeFileSync(gh,'name: ci');fs.writeFileSync(cl,'{}');
+  fs.writeFileSync(path.join(root,'.git','hooks','secret.sample'),'x');
+  fs.writeFileSync(path.join(root,'dist','bundle.js'),'x');
+  assert.equal(resolveRef(root,'workflows/ci.yml'),gh);
+  assert.equal(resolveRef(root,'settings.json'),cl);
+  assert.throws(()=>resolveRef(root,'secret.sample'),/里找不到/);
+  assert.throws(()=>resolveRef(root,'bundle.js'),/里找不到/);
+  // More than the old 3000-folder cap, still within the new entry budget.
+  const many=fs.mkdtempSync(path.join(os.tmpdir(),'desk-many-'));
+  for(let i=0;i<3050;i++)fs.mkdirSync(path.join(many,'d'+String(i).padStart(4,'0')));
+  const deep=path.join(many,'z-last','target-file.md');fs.mkdirSync(path.dirname(deep));fs.writeFileSync(deep,'ok');
+  assert.equal(findInFolder(many,'target-file.md',{maxEntries:20000,maxMs:5000}),deep);
+  fs.rmSync(root,{recursive:true,force:true});fs.rmSync(many,{recursive:true,force:true});
 });
 
 test('a click views project text in the split view and opens pages, binaries and outside files in their own app; programs are only shown',()=>{

@@ -158,6 +158,9 @@ kbd{font-size:11px;color:var(--faint);font-family:inherit}
 /* A file named in inline code opens in the split view. */
 .markdown code.file-ref{cursor:pointer;color:#e6c7a6;border-color:#e6c7a633}
 .markdown code.file-ref:hover{background:#e6c7a61a;text-decoration:underline;text-underline-offset:3px}
+.markdown code.file-ref.missing{cursor:default;color:inherit;border-color:#ffffff1f}
+.markdown code.file-ref.missing:hover{background:#ffffff10;text-decoration:none}
+.markdown a.missing{cursor:default;color:inherit;text-decoration:none;opacity:.65}
 /* > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION] */
 .markdown blockquote.callout{--callout:#7fb0ea;border:0;border-left:2px solid var(--callout);background:none;padding:0 0 0 14px;margin:12px 0;color:inherit}
 .markdown blockquote.callout p{margin:0}

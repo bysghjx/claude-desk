@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, prot
 const fs = require('node:fs');
 const diskFs=require('./disk-fs.cjs');
 const {within,listProjectFiles,readProjectFile}=require('./project-files.cjs');
-const {openRef,resolveRef,clickAction}=require('./file-open.cjs');
+const {openRef,resolveRef,clickAction,collectHints}=require('./file-open.cjs');
 const {writeJson}=require('./json-stream.cjs');
 const path = require('node:path');
 const os = require('node:os');
@@ -415,12 +415,12 @@ if(primaryInstance)app.whenReady().then(async () => {
   });
   // A file or link in a reply. A click views text from the conversation's folder in the split view
   // and opens anything else in its own app; the right-click menu offers each way.
-  const threadCwd=id=>{try{return engine.thread(id).cwd;}catch{return'';}};
-  handle('file:open',(id,ref,how)=>openRef({shell,clipboard},threadCwd(id),ref,['click','view','open','reveal','copy'].includes(how)?how:'click'));
-  handle('file:menu',(id,ref)=>{
-    const cwd=threadCwd(id),viewable=clickAction(cwd,resolveRef(cwd,ref))==='view';
+  const fileContext=(id,turnId)=>{try{const t=engine.thread(id);return{cwd:t.cwd,hints:collectHints(t,turnId),worktree:t.worktree};}catch{return{cwd:'',hints:[],worktree:null};}};
+  handle('file:open',(id,ref,how,turnId)=>{const ctx=fileContext(id,turnId);return openRef({shell,clipboard},ctx.cwd,ref,['click','view','open','reveal','copy'].includes(how)?how:'click',ctx);});
+  handle('file:menu',(id,ref,turnId)=>{
+    const ctx=fileContext(id,turnId),viewable=clickAction(ctx.cwd,resolveRef(ctx.cwd,ref,ctx))==='view';
     return new Promise(resolve=>{
-    let done=false;const choose=how=>{done=true;resolve(openRef({shell,clipboard},cwd,ref,how).catch(e=>({error:e.message})));};
+    let done=false;const choose=how=>{done=true;resolve(openRef({shell,clipboard},ctx.cwd,ref,how,ctx).catch(e=>({error:e.message})));};
     Menu.buildFromTemplate([...(viewable?[{label:'在分栏中查看',click:()=>choose('view')}]:[]),{label:'用默认应用打开',click:()=>choose('open')},{label:'在文件管理器中显示',click:()=>choose('reveal')},{type:'separator'},{label:'复制路径',click:()=>choose('copy')}])
       .popup({window:win,callback:()=>setTimeout(()=>{if(!done)resolve(null);},150)});
     });
