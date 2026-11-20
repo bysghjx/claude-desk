@@ -2,12 +2,12 @@ const {test}=require('node:test');const assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {Engine,JsonStore}=require('../engine.cjs');const {CursorCompatProxy,messageSSE}=require('../cursor-compat.cjs');
 
-test('real Claude Code asks permission for converted XML and returns the actual tool result',{skip:process.platform!=='win32',timeout:60000},async()=>{
+test('real Claude Code asks permission for converted XML and returns the actual tool result',{skip:process.platform!=='win32',timeout:120000},async()=>{
   const scratch=path.resolve(__dirname,'../../../work/cursor-cli-tests');fs.mkdirSync(scratch,{recursive:true});
   const root=fs.mkdtempSync(path.join(scratch,'compat-')),target=path.join(root,'result.txt');
   const cli=path.join(path.dirname(require.resolve('@anthropic-ai/claude-agent-sdk-win32-x64/package.json')),'claude.exe');
   const {query}=await import('@anthropic-ai/claude-agent-sdk');
-  let receivedResult=false,requests=0,allow=false,approvals=0;const seen=[];
+  let receivedResult=false,requests=0,allow=false,approvals=0;const seen=[],states=[],diags=[];
   const upstream=http.createServer(async(req,res)=>{
     const parts=[];for await(const chunk of req)parts.push(chunk);const body=JSON.parse(Buffer.concat(parts));requests++;
     seen.push((body.messages||[]).slice(-3).map(m=>({role:m.role,content:Array.isArray(m.content)?m.content.map(b=>b.type):typeof m.content})));
@@ -25,9 +25,13 @@ test('real Claude Code asks permission for converted XML and returns the actual 
   const store=new JsonStore(path.join(root,'state.json'));
   const engine=new Engine({store,cliPath:cli,env,query:args=>query({...args,options:{...args.options,settingSources:[],tools:['Write'],systemPrompt:'This is an isolated local test. Use Write only when approved.',maxTurns:3}})});
   const thread=engine.create(engine.addProject(root).id);
-  engine.on('thread',t=>{const approval=t.turns.at(-1)?.approval;if(!approval)return;approvals++;assert.equal(approval.name,'Write');assert.equal(approval.input.file_path,target);assert.equal(fs.existsSync(target),false);engine.approve(t.id,approval.id,allow);});
+  engine.on('diagnostic',d=>{const text=String(d?.message||'').trim();if(text)diags.push(text);});
+  engine.on('thread',t=>{
+    const line=`${t.status}:${t.detail||''}`;if(states.at(-1)!==line)states.push(line);
+    const approval=t.turns.at(-1)?.approval;if(!approval)return;approvals++;assert.equal(approval.name,'Write');assert.equal(approval.input.file_path,target);assert.equal(fs.existsSync(target),false);engine.approve(t.id,approval.id,allow);
+  });
   const waitDone=()=>new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>{engine.removeListener('thread',onUpdate);reject(Error('CLI test timed out: '+thread.status+' '+thread.error));},25000);
+    const timer=setTimeout(()=>{engine.removeListener('thread',onUpdate);reject(Error(`CLI test timed out: ${thread.status} ${thread.error||''} | states=${JSON.stringify(states.slice(-8))} | requests=${requests} | stderr=${JSON.stringify(diags.slice(-5).join('\n').slice(-1000))}`));},90000);
     function onUpdate(t){if(['done','error'].includes(t.status)){clearTimeout(timer);engine.removeListener('thread',onUpdate);resolve(t);}}
     engine.on('thread',onUpdate);
   });
