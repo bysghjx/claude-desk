@@ -1,6 +1,16 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const {createZip}=require('../scripts/zip.cjs');
 const {Updater,manifestOf,diff,verifyUpdate,safe,packagesFor,UPDATE_FILE}=require('../updates.cjs');
 const scratch=path.resolve(__dirname,'../../../work/update-tests');fs.mkdirSync(scratch,{recursive:true});
+
+test('local Beta ZIPs stay visible with stable-only online results and when GitHub is offline',()=>{
+  const {mergeUpdateScan}=require('../updates.cjs');
+  const beta={file:'C:/Downloads/ClaudeDesk-update.zip',from:'0.29.10',to:'0.29.11-beta'},local={ready:[beta],other:[]};
+  for(const online of [{status:'current',version:'0.29.10'},{status:'error',message:'offline'},null])assert.equal(mergeUpdateScan(local,online).ready[0],beta);
+  const remote={file:'github:1',to:'0.29.11-beta',source:'github'};
+  assert.equal(mergeUpdateScan(local,{update:remote}).ready.length,1);assert.equal(mergeUpdateScan(local,{update:remote}).ready[0],beta);
+  assert.equal(mergeUpdateScan(local,{update:{...remote,to:'0.29.11'}}).ready[0].to,'0.29.11');
+  assert.deepEqual(local.ready,[beta],'merging does not mutate the local scan');
+});
 const write=(dir,files)=>{for(const [rel,text] of Object.entries(files)){const file=path.join(dir,rel);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text);}};
 // Two versions of an app folder and the update package between them, built the way scripts/release.cjs does.
 async function versions(){

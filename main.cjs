@@ -25,8 +25,7 @@ const {Providers}=require('./providers.cjs');
 const {CursorCompatProxy}=require('./cursor-compat.cjs');
 const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
 const {createUpdateFetch}=require('./update-network.cjs');
-const {prereleaseVersion}=require('./update-version.cjs');
-const {newer}=require('./updates.cjs');
+const {mergeUpdateScan}=require('./updates.cjs');
 const {attachContextMenu}=require('./context-menu.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
@@ -442,10 +441,8 @@ if(primaryInstance)app.whenReady().then(async () => {
     foundUpdates.clear();return settings;
   });
   handle('update:scan', async force => {
-    const dirs=updateDirs(),result=findUpdates(dirs.map(d=>d.path),app.getVersion()),online=await githubUpdates.check(force===true);
-    if(!githubUpdates.network.updatePrerelease)result.ready=result.ready.filter(u=>!prereleaseVersion(u.to));
-    if(online.update&&!result.ready.some(u=>u.to===online.update.to))result.ready.push(online.update);
-    result.ready.sort((a,b)=>newer(b.to,a.to)?1:newer(a.to,b.to)?-1:0);
+    const dirs=updateDirs(),local=findUpdates(dirs.map(d=>d.path),app.getVersion()),online=await githubUpdates.check(force===true);
+    const result=mergeUpdateScan(local,online);
     foundUpdates=new Map(result.ready.map(u=>[u.file,u]));
     return { ...result, online, dirs, version: app.getVersion(), installable: app.isPackaged };
   });
@@ -453,7 +450,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     if (!app.isPackaged) throw Error('开发版不能安装更新包');
     const update=foundUpdates.get(file);if(!update)throw Error('找不到这个更新包，请重新检查');
     const zip=update.source==='github'?await githubUpdates.download(update,event=>{if(win&&!win.isDestroyed())win.webContents.send('update:progress',event);}):file;
-    return updater.stage(zip);
+    return updater.stage(zip,{fullManifest:update.full?await githubUpdates.fullManifest(update):null});
   });
   handle('update:reveal', file => { const update=foundUpdates.get(file);if(update?.source==='github')return shell.openExternal(RELEASES);if(update)shell.showItemInFolder(file); });
   handle('update:releases',()=>shell.openExternal(RELEASES));

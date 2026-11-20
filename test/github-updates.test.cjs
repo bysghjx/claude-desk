@@ -151,6 +151,21 @@ test('preview release automation accepts suffixes and keeps delta bases for both
   assert.equal(releaseInfo(release({ tag_name: 'v1.2.0', assets: [previewBase] }), '1.2.0-beta.2').status, 'available');
 });
 
+test('previews built locally keep their manifests in the repository as update bases', () => {
+  const { localPreviews, savePreviewManifest } = require('../scripts/github-release.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-preview-manifests-')), source = path.join(dir, 'source.json'), kept = path.join(dir, 'kept');
+  try {
+    fs.writeFileSync(source, '{}');
+    for (const version of ['1.2.0-beta.1', '1.1.0-beta', '1.2.0-rc.1', '1.2.0-beta.2', '1.3.0-beta']) savePreviewManifest(source, version, 4, kept);
+    assert.deepEqual(fs.readdirSync(kept).sort(), ['1.2.0-beta.1.json', '1.2.0-beta.2.json', '1.2.0-rc.1.json', '1.3.0-beta.json']);
+    fs.writeFileSync(path.join(kept, '1.0.0.json'), '{}'); fs.writeFileSync(path.join(kept, 'notes.txt'), '');
+    assert.deepEqual(localPreviews('1.2.0', [], 5, kept), ['1.2.0-rc.1', '1.2.0-beta.2', '1.2.0-beta.1']);
+    assert.deepEqual(localPreviews('1.2.0', ['1.2.0-rc.1'], 1, kept), ['1.2.0-beta.2']);
+    assert.deepEqual(localPreviews('1.2.0-beta.1', [], 5, kept), []);
+    assert.deepEqual(localPreviews('1.2.0', [], 5, path.join(dir, 'missing')), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('online UI explains download, failures and full-package fallback', async () => {
   const { updateCardHtml, noticeOf } = await import('../ui/src/lib/updates.mjs');
   const update = releaseInfo(release(), '1.0.0').update;

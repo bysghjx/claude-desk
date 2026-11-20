@@ -10,6 +10,9 @@ const source = path.resolve(__dirname, '..'), releasesDir = path.resolve(source,
 const version = require('../package.json').version;
 const tagPattern = new RegExp('^v(' + VERSION_SOURCE + ')$(?![\\s\\S])');
 const UPDATE_BASES = 5;
+// Previews built on a developer's computer are never published on GitHub, so release.cjs keeps their
+// file manifests in the repository and a later release can still build update packages from them.
+const PREVIEW_MANIFESTS = path.join(__dirname, 'preview-manifests');
 const gh = args => execFileSync('gh', args, { cwd: source, encoding: 'utf8', windowsHide: true });
 
 function validateVersion(tag, pkg, lock) {
@@ -29,6 +32,17 @@ function baseReleases(releases, current, count = UPDATE_BASES) {
     .sort((a,b) => newer(a.tag_name.slice(1),b.tag_name.slice(1)) ? -1 : 1).slice(0,count);
   return [...earlier.filter(hasManifest).slice(0, count), ...previews];
 }
+const previewNames = dir => { try { return fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => n.slice(0, -5)).filter(prereleaseVersion); } catch { return []; } };
+// The committed previews older than current, newest first; a preview published on GitHub uses its own manifest.
+function localPreviews(current, published = [], count = UPDATE_BASES, dir = PREVIEW_MANIFESTS) {
+  return previewNames(dir).filter(v => newer(current, v) && !published.includes(v)).sort((a, b) => newer(a, b) ? -1 : 1).slice(0, count);
+}
+// Called by release.cjs for a preview built outside GitHub Actions; only the newest count are kept.
+function savePreviewManifest(file, version, count = UPDATE_BASES, dir = PREVIEW_MANIFESTS) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(file, path.join(dir, version + '.json'));
+  for (const old of previewNames(dir).sort((a, b) => newer(a, b) ? -1 : 1).slice(count)) fs.rmSync(path.join(dir, old + '.json'));
+}
 function validateManifest(manifest, expected) {
   if (manifest.app !== 'ClaudeDesk' || manifest.version !== expected || !manifest.files || typeof manifest.files !== 'object' || Array.isArray(manifest.files) || !Object.keys(manifest.files).length) throw Error('上一版本的文件清单无效');
   for (const [rel, hash] of Object.entries(manifest.files)) { safe(rel); if (!/^[a-f0-9]{64}$/.test(hash)) throw Error('文件清单的 SHA-256 无效'); }
@@ -45,14 +59,15 @@ async function run(mode) {
   const existing = releases.find(r => r.tag_name === tag);
   if (existing && !existing.draft) throw Error('这个版本已经发布，请增加版本号；不会覆盖已发布的文件');
   if (releases.some(r => !r.draft && !r.prerelease && tagPattern.test(r.tag_name) && newer(r.tag_name.slice(1), version))) throw Error('不能把比现有正式版更旧的版本发布为最新版');
-  const bases = baseReleases(releases, version), froms = bases.map(r => r.tag_name.slice(1));
+  const bases = baseReleases(releases, version), local = localPreviews(version, releases.filter(r => !r.draft).map(r => r.tag_name.slice(1)));
+  const froms = [...bases.map(r => r.tag_name.slice(1)), ...local];
   const manifests = path.join(releasesDir, 'manifests');
   if (mode === 'prepare') {
     fs.mkdirSync(manifests, { recursive: true });
-    if (!bases.length) return console.log('首次发布：只生成完整包，并上传文件清单供下次生成增量包');
-    for (const base of bases) {
-      const from = base.tag_name.slice(1);
-      gh(['release', 'download', base.tag_name, '--repo', repo, '--pattern', from + '.json', '--dir', manifests, '--clobber']);
+    if (!froms.length) return console.log('首次发布：只生成完整包，并上传文件清单供下次生成增量包');
+    for (const from of froms) {
+      if (local.includes(from)) fs.copyFileSync(path.join(PREVIEW_MANIFESTS, from + '.json'), path.join(manifests, from + '.json'));
+      else gh(['release', 'download', 'v' + from, '--repo', repo, '--pattern', from + '.json', '--dir', manifests, '--clobber']);
       validateManifest(JSON.parse(fs.readFileSync(path.join(manifests, from + '.json'), 'utf8')), from);
     }
     return console.log('增量包基准版本：' + froms.join('、'));
@@ -63,7 +78,7 @@ async function run(mode) {
   validateManifest(JSON.parse(fs.readFileSync(manifest, 'utf8')), version);
   // release.cjs skips a base with no changed files, so only the previous release's package is required.
   const updateZip = from => path.join(releasesDir, 'ClaudeDesk-' + from + '-to-' + version + '-update.zip');
-  const updates = froms.filter((from, i) => !i || fs.existsSync(updateZip(from)));
+  const updates = froms.filter((from, i) => (!i && bases.length) || fs.existsSync(updateZip(from)));
   assets.push(...updates.map(updateZip));
   for (const file of assets) if (!fs.statSync(file).size) throw Error('发布文件为空：' + file);
   const notes = path.join(releasesDir, 'release-notes.md');
@@ -83,4 +98,4 @@ async function run(mode) {
   console.log('Published ' + tag);
 }
 if (require.main === module) run(process.argv[2]).catch(e => { console.error(e.message); process.exitCode = 1; });
-module.exports = { UPDATE_BASES, validateVersion, previousRelease, baseReleases, validateManifest };
+module.exports = { UPDATE_BASES, validateVersion, previousRelease, baseReleases, localPreviews, savePreviewManifest, validateManifest };

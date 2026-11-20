@@ -13,7 +13,7 @@ export function updateCardHtml(scan, { scanning = false, installing = '' } = {})
   if (!scan) return card(' idle', scanning ? '正在查找更新包…' : '还没有检查更新包', '');
   const update = scan.ready[0];
   if (update) {
-    if (update.source === 'github') return card('', `可以升级到 ${update.to}`, `${update.prerelease ? "GitHub 已发布预览版" : "GitHub 已发布新版本"}，更新包 ${mb(update.size)}。` + (scan.installable ? '下载并校验后安装。' : '开发版不能安装，请用正式版。'), (scan.installable ? button('install', '下载并安装', false) : '') + button('reveal', '查看发布页'));
+    if (update.source === 'github') return card('', `可以升级到 ${update.to}`, `${update.prerelease ? "GitHub 已发布预览版" : "GitHub 已发布新版本"}，${update.full?'完整包':'更新包'} ${mb(update.size)}。` + (update.full?'当前 Beta 没有对应增量包，将校验完整包后升级到正式版。':'') + (scan.installable ? '下载并校验后安装。' : '开发版不能安装，请用正式版。'), (scan.installable ? button('install', '下载并安装', false) : '') + button('reveal', '查看发布页'));
     const detail = `在「${folderOf(scan, update)}」找到 ${update.name}（${mb(update.size)}），替换 ${update.files} 个文件。` + (scan.installable ? '' : '开发版不能安装，请用正式版。');
     return card('', `可以升级到 ${update.to}`, detail, (scan.installable ? button('install', '安装并重启', false) : '') + button('reveal', '打开所在文件夹'));
   }

@@ -19,7 +19,7 @@ const releases = path.resolve(source, '../releases'), manifests = path.join(rele
 const work = build ? path.join(build, 'release') : path.resolve(source, '../../work/release');
 const { compareVersions: compare, validVersion, prereleaseVersion } = require('../update-version.cjs');
 const mb = n => (n / 2 ** 20).toFixed(1) + ' MB';
-const { UPDATE_BASES } = require('./github-release.cjs');
+const { UPDATE_BASES, savePreviewManifest } = require('./github-release.cjs');
 
 (async () => {
   if (!fs.existsSync(path.join(appDir, 'ClaudeDesk.exe'))) throw Error('先运行 npm run package');
@@ -36,6 +36,11 @@ const { UPDATE_BASES } = require('./github-release.cjs');
   fs.writeFileSync(path.join(full, '使用说明.txt'), fs.readFileSync(path.join(__dirname, 'release-readme.txt'), 'utf8').replaceAll('{version}', version));
   const manifest = await manifestOf(full, version);
   fs.writeFileSync(path.join(manifests, version + '.json'), JSON.stringify(manifest, null, 1));
+  // A preview built here is not on GitHub: commit its manifest so the release workflow can build the package that updates it.
+  if (prereleaseVersion(version) && !process.env.GITHUB_ACTIONS) {
+    savePreviewManifest(path.join(manifests, version + '.json'), version);
+    console.log('预览版文件清单已写入 scripts/preview-manifests/' + version + '.json，请和代码一起提交，之后发布的版本才会带从它升级的增量包');
+  }
   const fullZip = path.join(releases, `ClaudeDesk-${version}-win-x64.zip`);
   console.log('完整包', path.basename(fullZip), mb(createZip(path.dirname(full), fullZip)));
 

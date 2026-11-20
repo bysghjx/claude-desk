@@ -125,17 +125,50 @@ function findUpdates(dirs, version) {
   return { ready: ready.sort(order), other: other.sort(order) };
 }
 
+// Online channel preferences only affect the GitHub query. A ZIP deliberately
+// placed in a watched folder remains eligible, including a local Beta package.
+function mergeUpdateScan(local, online) {
+  const ready = [...local.ready];
+  if (online?.update && !ready.some(u => u.to === online.update.to)) ready.push(online.update);
+  ready.sort((a, b) => newer(b.to, a.to) ? 1 : newer(a.to, b.to) ? -1 : 0);
+  return { ...local, ready };
+}
+
 function sourceZip(dir) {
   try { const { file, size, modified } = JSON.parse(fs.readFileSync(path.join(dir, SOURCE_FILE), 'utf8')); const stat = fs.statSync(file); return stat.isFile() && /\.zip$/i.test(file) && stat.size === size && stat.mtimeMs === modified ? file : ''; } catch { return ''; }
 }
+// Turn a verified full release into the same staged layout the rollback-capable
+// installer already accepts. Only files named in the GitHub-hashed manifest move.
+async function prepareFullUpdate(dir, currentVersion, manifest) {
+  if (manifest.app !== 'ClaudeDesk' || !newer(manifest.version, currentVersion) || !manifest.files || Array.isArray(manifest.files) || typeof manifest.files !== 'object') throw Error('完整包文件清单或目标版本无效');
+  const full = path.resolve(dir, 'ClaudeDesk');
+  if (path.dirname(full) !== path.resolve(dir) || fs.lstatSync(full).isSymbolicLink()) throw Error('完整包路径无效');
+  for (const required of ['ClaudeDesk.exe', UPDATER_EXE, 'resources/app.asar', 'claude-desk-version.json']) if (!Object.hasOwn(manifest.files, required)) throw Error('完整包缺少必要文件：' + required);
+  const marker = JSON.parse(fs.readFileSync(path.join(full, 'claude-desk-version.json'), 'utf8'));
+  if (marker.app !== 'ClaudeDesk' || marker.version !== manifest.version) throw Error('完整包版本与文件清单不一致');
+  for (const [rel, hash] of Object.entries(manifest.files)) {
+    if (safe(rel) !== rel || !/^[a-f0-9]{64}$/.test(hash) || [UPDATE_FILE, SOURCE_FILE].includes(rel) || rel.startsWith('ClaudeDesk/')) throw Error('完整包文件清单路径或哈希无效');
+    const file = path.join(full, rel);
+    for (let p = file; p !== full; p = path.dirname(p)) if (fs.lstatSync(p).isSymbolicLink()) throw Error('完整包不能包含链接');
+    if (!fs.statSync(file).isFile() || await hashFile(file) !== hash) throw Error('完整包文件校验失败：' + rel);
+  }
+  for (const rel of Object.keys(manifest.files)) {
+    const target = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true }); fs.renameSync(path.join(full, rel), target);
+  }
+  // No installed user files are deleted by a full-package fallback.
+  fs.writeFileSync(path.join(dir, UPDATE_FILE), JSON.stringify({ app: 'ClaudeDesk', from: currentVersion, to: manifest.version, files: manifest.files, removed: [] }));
+}
 class Updater {
   constructor({ installDir, version, tempRoot = os.tmpdir(),helperPath=path.join(installDir,UPDATER_EXE) }) { Object.assign(this, { installDir, version, tempRoot,helperPath }); this.staged = null; }
-  async stage(zip) {
+  async stage(zip, { fullManifest = null } = {}) {
     this.staged=null;
     fs.mkdirSync(this.tempRoot,{recursive:true});
     const dir = fs.mkdtempSync(path.join(this.tempRoot, 'claude-desk-update-'));
     try {
-      await extract(zip, dir); this.staged = { dir, ...await verifyUpdate(dir, this.version) };
+      await extract(zip, dir);
+      if (fullManifest) await prepareFullUpdate(dir, this.version, fullManifest);
+      this.staged = { dir, ...await verifyUpdate(dir, this.version) };
       // Remember which zip this was, so it can go to the recycle bin once it is installed.
       const stat = fs.statSync(zip); fs.writeFileSync(path.join(dir, SOURCE_FILE), JSON.stringify({ file: path.resolve(zip), size: stat.size, modified: stat.mtimeMs }));
       return this.staged;
@@ -185,4 +218,4 @@ class Updater {
     return failed;
   }
 }
-module.exports = { Updater, findUpdates, packagesFor, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, UPDATER_EXE };
+module.exports = { Updater, findUpdates, mergeUpdateScan, packagesFor, readZipEntry, newer, manifestOf, diff, verifyUpdate, listFiles, hashFile, safe, extract, UPDATE_FILE, UPDATER_EXE };

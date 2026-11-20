@@ -30,7 +30,24 @@ function releaseInfo(release, version, includePrerelease = false) {
     if (!Number.isSafeInteger(asset.id) || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 2 ** 31 || !DIGEST.test(asset.digest || '')) continue;
     return { status: 'available', version: to, prerelease, releaseUrl, update: { file: 'github:' + asset.id, source: 'github', prerelease, name: asset.name, from: version, to, size: asset.size, url: url.href, sha256: DIGEST.exec(asset.digest)[1].toLowerCase() } };
   }
+  // A locally built Beta may have no published delta base. Use the stable full
+  // package and its independently hashed release manifest in that case.
+  if (prereleaseVersion(version) && !prerelease) {
+    const full = (release.assets || []).find(a => a.name === `ClaudeDesk-${to}-win-x64.zip` && validAsset(a));
+    const manifest = (release.assets || []).find(a => a.name === to + '.json' && validAsset(a) && a.size <= 4 * 1024 * 1024);
+    if (full && manifest) return { status: 'available', version: to, prerelease: false, releaseUrl, update: {
+      file: 'github:' + full.id, source: 'github', full: true, prerelease: false, name: full.name, from: version, to,
+      size: full.size, url: full.browser_download_url, sha256: DIGEST.exec(full.digest)[1].toLowerCase(),
+      manifest: { size: manifest.size, url: manifest.browser_download_url, sha256: DIGEST.exec(manifest.digest)[1].toLowerCase() }
+    } };
+  }
   return { status: 'manual', version: to, prerelease, releaseUrl };
+}
+
+function validAsset(asset) {
+  let url; try { url = new URL(asset.browser_download_url); } catch { return false; }
+  return asset.state === 'uploaded' && Number.isSafeInteger(asset.id) && Number.isSafeInteger(asset.size) && asset.size > 0 && asset.size <= 2 ** 31 && DIGEST.test(asset.digest || '') &&
+    url.origin === 'https://github.com' && !url.username && !url.password && url.pathname.startsWith('/bysghjx/claude-desk/releases/download/');
 }
 
 class GitHubUpdates {
@@ -65,7 +82,7 @@ class GitHubUpdates {
           return response.status === 404 ? { status: 'empty', releaseUrl: RELEASES } : releaseInfo(await response.json(), this.version);
         }
         // GitHub's /latest endpoint excludes prereleases. Compare published versions across the list.
-        let latest, page = 1;
+        let latest, stable, page = 1;
         while (true) {
           const response = await request(API.replace('/latest', '?per_page=100&page=' + page));
           if (response.status === 404) break;
@@ -74,10 +91,14 @@ class GitHubUpdates {
           for (const item of releases) {
             const version = VERSION.exec(item.tag_name)?.[1];
             if (!item.draft && validVersion(version) && (!latest || newer(version, VERSION.exec(latest.tag_name)[1]))) latest = item;
+            if (!item.draft && !item.prerelease && validVersion(version) && !prereleaseVersion(version) && (!stable || newer(version, VERSION.exec(stable.tag_name)[1]))) stable = item;
           }
           if (!/rel="next"/.test(response.headers.get('link') || '')) break;
           page++;
         }
+        // Beta users graduate to an available newer stable release first, even if
+        // the preview channel also offers the next development version.
+        if (prereleaseVersion(this.version) && stable && newer(VERSION.exec(stable.tag_name)[1], this.version)) latest = stable;
         return latest ? releaseInfo(latest, this.version, true) : { status: 'empty', releaseUrl: RELEASES };
       } catch (e) {
         return { status: 'error', message: '无法检查 GitHub 更新：' + e.message, releaseUrl: RELEASES };
@@ -123,6 +144,20 @@ class GitHubUpdates {
       finally { this.downloading = false; }
     }
   }
+  async fullManifest(update) {
+    if (!update.full || !update.manifest) return null;
+    const expected = update.manifest;
+    const response = await this.fetch(expected.url, { signal: AbortSignal.timeout(15000) }, this.network.updateProxy);
+    if (!response.ok || !response.body) throw Error('下载完整包文件清单失败');
+    let size = 0; const chunks = [];
+    for await (const chunk of response.body) { size += chunk.length; if (size > expected.size) throw Error('完整包文件清单大小不一致'); chunks.push(Buffer.from(chunk)); }
+    const bytes = Buffer.concat(chunks);
+    if (size !== expected.size || createHash('sha256').update(bytes).digest('hex') !== expected.sha256) throw Error('完整包文件清单校验失败');
+    const manifest = JSON.parse(bytes.toString('utf8'));
+    if (manifest.app !== 'ClaudeDesk' || manifest.version !== update.to || !manifest.files || Array.isArray(manifest.files) || typeof manifest.files !== 'object' || !Object.keys(manifest.files).length) throw Error('完整包文件清单内容无效');
+    for (const [rel, hash] of Object.entries(manifest.files)) { require('./updates.cjs').safe(rel); if (!/^[a-f0-9]{64}$/.test(hash)) throw Error('完整包文件清单哈希无效'); }
+    return manifest;
+  }
   async downloadFile(url, update, partial, progress) {
     const controller = new AbortController();
     let timer;
@@ -145,8 +180,14 @@ class GitHubUpdates {
       } });
       await pipeline(Readable.fromWeb(response.body), counter, fs.createWriteStream(partial), { signal });
       if (received !== update.size || hash.digest('hex') !== update.sha256) throw Error('更新包下载不完整或 SHA-256 校验失败，请重试');
-      const info = JSON.parse(readZipEntry(partial, UPDATE_FILE)?.toString('utf8') || '{}');
-      if (info.app !== 'ClaudeDesk' || info.from !== this.version || info.to !== update.to) throw Error('GitHub 更新包内容与发布版本不一致');
+      if (update.full) {
+        const entry = readZipEntry(partial, 'ClaudeDesk/claude-desk-version.json') || readZipEntry(partial, 'ClaudeDesk\\claude-desk-version.json');
+        const info = JSON.parse(entry?.toString('utf8') || '{}');
+        if (info.app !== 'ClaudeDesk' || info.version !== update.to) throw Error('GitHub 完整包内容与发布版本不一致');
+      } else {
+        const info = JSON.parse(readZipEntry(partial, UPDATE_FILE)?.toString('utf8') || '{}');
+        if (info.app !== 'ClaudeDesk' || info.from !== this.version || info.to !== update.to) throw Error('GitHub 更新包内容与发布版本不一致');
+      }
     } catch (e) {
       throw controller.signal.aborted ? controller.signal.reason : e;
     } finally {
