@@ -11,7 +11,7 @@ const host = url => { try { return new URL(url).host; } catch { return url; } };
 export function providerListHtml({ active = '', providers = [] }, info = {}) {
   const row = (id, name, detail, extra = '') => `<div class="provider-row${id === active ? ' selected' : ''}"><button type="button" class="provider-pick" role="radio" aria-checked="${id === active}" data-provider-pick="${escape(id)}"><span class="provider-radio" aria-hidden="true"></span><span class="provider-copy"><strong>${escape(name)}</strong><small>${escape(detail)}</small></span></button>${extra}</div>`;
   const own = row('', 'Claude Code 自己的配置', `${info.custom ? '' : info.host ? info.host + ' · ' : ''}来自 ~/.claude/settings.json、环境变量或登录`);
-  return own + providers.map(p => row(p.id, p.name, `${host(p.baseUrl)} · ${p.authType === 'key' ? 'API Key' : 'Auth Token'}${p.models?.length ? ` · ${p.models.length} 个模型` : ''}${p.cursorCompat?' · Cursor 兼容模式':''}`, `<button type="button" class="provider-action" data-provider-edit="${escape(p.id)}">编辑</button><button type="button" class="provider-action danger" data-provider-remove="${escape(p.id)}">删除</button>`)).join('');
+  return own + providers.map(p => row(p.id, p.name, `${host(p.baseUrl)} · ${p.authType === 'key' ? 'API Key' : 'Auth Token'}${p.models?.length ? ` · ${p.models.length} 个模型` : ''}${p.format === 'openai' ? ' · OpenAI 格式' : p.cursorCompat ? ' · Cursor 兼容模式' : ''}`, `<button type="button" class="provider-action" data-provider-edit="${escape(p.id)}">编辑</button><button type="button" class="provider-action danger" data-provider-remove="${escape(p.id)}">删除</button>`)).join('');
 }
 
 export function createProviders({ store, api, toast, confirm, env, composer }) {
@@ -24,19 +24,30 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
     store.state.providers = { active: result.active, providers: result.providers };
     env.showProvider(result.provider); render();
   }
+  function syncFormat() {
+    const openai = $('#provider-format').value === 'openai';
+    $('#provider-auth-wrap').hidden = openai;
+    $('#provider-cursor-row').hidden = openai;
+    $('#provider-openai-note').hidden = !openai;
+    $('#provider-url').placeholder = openai ? 'https://api.openai.com/v1' : 'https://api.example.com';
+    $('#provider-fast').placeholder = openai ? '例如 gpt-5-mini；不填则用第一个模型' : '后台小任务用，例如 claude-haiku-4-5';
+    setText($('#provider-fast-note'), openai ? '后台小任务用；不填则使用模型列表的第一个' : '服务商不提供 Haiku 时填一个它有的模型');
+  }
   function openForm(provider = null) {
     editing = provider?.id || null;
     form.hidden = false; $('#provider-add').hidden = true;
     setText($('#provider-form-title'), provider ? `编辑「${provider.name}」` : '添加服务商');
     $('#provider-name').value = provider?.name || ''; $('#provider-url').value = provider?.baseUrl || '';
+    $('#provider-format').value = provider?.format === 'openai' ? 'openai' : 'anthropic';
     $('#provider-auth').value = provider?.authType || 'token'; $('#provider-key').value = '';
     $('#provider-key').placeholder = provider?.hasKey ? '已保存，留空表示不修改' : '粘贴密钥';
     $('#provider-models').value = (provider?.models || []).join('\n'); $('#provider-fast').value = provider?.fastModel || '';
     $('#provider-cursor').checked = provider?.cursorCompat === true;
+    syncFormat();
     setText($('#provider-test-result'), ''); $('#provider-use-models').hidden = true; filled = ''; offered = []; $('#provider-name').focus();
   }
   function closeForm() { form.hidden = true; $('#provider-add').hidden = false; editing = null; }
-  const values = () => ({ id: editing, name: $('#provider-name').value, baseUrl: $('#provider-url').value, authType: $('#provider-auth').value, key: $('#provider-key').value, models: $('#provider-models').value, fastModel: $('#provider-fast').value, cursorCompat: $('#provider-cursor').checked });
+  const values = () => ({ id: editing, name: $('#provider-name').value, format: $('#provider-format').value, baseUrl: $('#provider-url').value, authType: $('#provider-auth').value, key: $('#provider-key').value, models: $('#provider-models').value, fastModel: $('#provider-fast').value, cursorCompat: $('#provider-cursor').checked });
 
   // Switching provider reads its model list right away, so the picker no longer offers the
   // previous provider's models; the composer moves to one of the new ones when the current
@@ -70,6 +81,7 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
   }));
   $('#provider-add').addEventListener('click', () => openForm());
   $('#provider-cancel').addEventListener('click', closeForm);
+  $('#provider-format').addEventListener('change', syncFormat);
   // Each test shows what the provider offers now. The model box takes the new list when it is
   // empty or still holds what the last test put there; a list typed by hand is replaced only on request.
   let filled = '', offered = [];

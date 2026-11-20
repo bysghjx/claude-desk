@@ -24,13 +24,14 @@ const {DeskTray,shouldShowTrayHint}=require('./tray.cjs');
 const {NotificationSounds}=require('./notification-sounds.cjs');
 const {Providers}=require('./providers.cjs');
 const {CursorCompatProxy}=require('./cursor-compat.cjs');
+const {OpenAICompatProxy}=require('./openai-compat.cjs');
 const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
 const {createUpdateFetch}=require('./update-network.cjs');
 const {mergeUpdateScan}=require('./updates.cjs');
 const {attachContextMenu}=require('./context-menu.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
-let win, engine, extensions, agentWindows, terminals, tray, providers, cursorProxy, quitting = false;
+let win, engine, extensions, agentWindows, terminals, tray, providers, cursorProxy, openaiProxy, quitting = false;
 app.setName('Claude Desk');
 // Windows shows toasts only for an app id that a Start menu shortcut carries.
 const APP_ID='com.claudedesk.app';
@@ -187,8 +188,10 @@ if(primaryInstance)app.whenReady().then(async () => {
   engine = new Engine({ query, startup, store: new DatabaseStore(dataRoot,legacy), cliPath: findCli(), attachmentRoot, chatRoot: path.join(dataRoot,'chats'), deskServer: deskServerFactory({ createSdkMcpServer, tool, z, preview }) });
   const githubUpdates=new GitHubUpdates({version:app.getVersion(),downloadDir:path.join(dataRoot,'update-downloads'),fetch:createUpdateFetch(session),network:engine.store.state.settings});
   cursorProxy=new CursorCompatProxy();
+  openaiProxy=new OpenAICompatProxy();
   if(engine.store.state.settings.providers?.some(p=>p.cursorCompat))await cursorProxy.start();
-  providers=new Providers({store:engine.store,safeStorage,cursorProxy});
+  if(engine.store.state.settings.providers?.some(p=>p.format==='openai'))await openaiProxy.start();
+  providers=new Providers({store:engine.store,safeStorage,cursorProxy,openaiProxy});
   engine.providerOptions=()=>providers.options();
   const keepAwake=new KeepAwake(powerSaveBlocker);
   const updateAwake=()=>keepAwake.update(engine.store.state.settings.keepAwake!==false&&engine.store.state.threads.some(x=>ACTIVE.has(x.status)));
@@ -380,7 +383,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('notify:test',kind=>showNotice({kind:kind==='done'?'done':'question',title:kind==='done'?'任务完成提示音':'需要你处理的提示音',body:'这是轻柔提示音试听。任务完成与提问、审批使用不同的声音。'},{force:true}));
   // 服务商: saved encrypted; the window only ever sees names, addresses and models.
   const providerResult=()=>({...providers.list(),provider:providerInfo()});
-  handle('providers:save',async input=>{if(input?.cursorCompat===true)await cursorProxy.start();const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
+  handle('providers:save',async input=>{if(input?.format==='openai')await openaiProxy.start();else if(input?.cursorCompat===true)await cursorProxy.start();const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
   handle('providers:remove',id=>{providers.remove(String(id));return providerResult();});
   handle('providers:activate',id=>{providers.setActive(id?String(id):'');return providerResult();});
   handle('providers:test',input=>providers.models(input&&typeof input==='object'?input:{}));
@@ -517,5 +520,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();openaiProxy?.close();engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());
