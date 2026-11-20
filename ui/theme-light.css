@@ -56,6 +56,9 @@
   .assistant-label .restore{color:#767268}
   .markdown pre{border-color:#eeeeec}
   .markdown code{background:#0f0f0f10;border-color:#0f0f0f1f}
+  .code-tool{border-color:#d6d6d6;background:#f3f3f3;color:#5b5b5b}
+  .code-tool:hover{background:#ededed;color:#232323}
+  .code-tool[aria-pressed="true"]{color:#232323;border-color:#949494}
   .markdown strong{color:#0f0f0f}
   .markdown code.file-ref{color:#cb8234;border-color:#cb823433}
   .markdown code.file-ref:hover{background:#cb82341a}

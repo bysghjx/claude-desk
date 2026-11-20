@@ -64,6 +64,12 @@ function prewarm(delay) {
 store.on('select', () => prewarm(1200));
 $('#prompt').addEventListener('input', () => prewarm(300));
 store.on('removed', id => dock.refresh(id));
+// Code block buttons (see enhance() in core/dom.mjs), wherever markdown is shown.
+document.addEventListener('click', event => {
+  const tool = event.target.closest?.('[data-code-copy],[data-code-wrap]'), pre = tool?.closest('.code-block')?.querySelector('pre'); if (!pre) return;
+  if (tool.hasAttribute('data-code-wrap')) return tool.setAttribute('aria-pressed', String(pre.classList.toggle('wrap')));
+  api('copy', pre.textContent.replace(/\n$/, '')).then(() => toast('已复制代码'), e => toast(e.message));
+});
 desk.onThread(thread => {
   if (!store.mergeThread(thread)) actions.fetchFull(thread.id).catch(e => toast(e.message));
   else if (thread.id === store.selected && document.hasFocus() && isUnread(store.thread(thread.id))) actions.markSeen(thread.id);
