@@ -20,7 +20,8 @@ const {NotificationTracker}=require('./notify.cjs');
 const {Checkpoints}=require('./checkpoint.cjs');
 const {Worktrees}=require('./worktree.cjs');
 const {Terminals}=require('./terminal.cjs');
-const {DeskTray}=require('./tray.cjs');
+const {DeskTray,shouldShowTrayHint}=require('./tray.cjs');
+const {NotificationSounds}=require('./notification-sounds.cjs');
 const {Providers}=require('./providers.cjs');
 const {CursorCompatProxy}=require('./cursor-compat.cjs');
 const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
@@ -71,12 +72,14 @@ function focusThread(id){
 }
 // Desktop notifications while the app is in the background; clicking one opens the conversation.
 const notifications=new NotificationTracker(),shownNotes=new Set();
+const notificationSounds=new NotificationSounds({BrowserWindow});
 function showNotice(notice,{force=false}={}){
   if(!force&&(engine.store.state.settings.notifications===false||BrowserWindow.getFocusedWindow()))return false;
   if(!Notification.isSupported())return false;
-  const note=new Notification({title:notice.title,body:notice.body,icon:path.join(__dirname,'ui/icon.png')});
+  const note=new Notification({title:notice.title,body:notice.body,icon:path.join(__dirname,'ui/icon.png'),silent:true});
   shownNotes.add(note);const drop=()=>shownNotes.delete(note);
   note.on('click',()=>{drop();focusThread(notice.threadId);});note.on('close',drop);note.on('failed',(_e,error)=>{drop();console.error('Notification failed',error);});
+  note.once('show',()=>{notificationSounds.play(notice.kind);});
   note.show();
   if(!force&&win&&!win.isDestroyed()&&!win.isFocused())win.flashFrame(true);
   return true;
@@ -374,7 +377,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;
     engine.store.save(); return settings;
   });
-  handle('notify:test',()=>showNotice({title:'Claude Desk 通知已开启',body:'任务完成、需要你批准或回答问题时，会在这里提醒你。'},{force:true}));
+  handle('notify:test',kind=>showNotice({kind:kind==='done'?'done':'question',title:kind==='done'?'任务完成提示音':'需要你处理的提示音',body:'这是轻柔提示音试听。任务完成与提问、审批使用不同的声音。'},{force:true}));
   // 服务商: saved encrypted; the window only ever sees names, addresses and models.
   const providerResult=()=>({...providers.list(),provider:providerInfo()});
   handle('providers:save',async input=>{if(input?.cursorCompat===true)await cursorProxy.start();const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
@@ -499,7 +502,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   win.on('close',event=>{
     if(quitting||engine.store.state.settings.closeToTray===false)return;
     event.preventDefault();win.hide();
-    if(!trayHintShown){trayHintShown=true;showNotice({title:'Claude Desk 仍在后台运行',body:'任务会继续进行。点右下角托盘图标打开，或在托盘菜单里退出。'},{force:true});}
+    if(shouldShowTrayHint(engine.store.state.threads,trayHintShown)){trayHintShown=true;showNotice({title:'Claude Desk 仍在后台运行',body:'任务会继续进行。点右下角托盘图标打开，或在托盘菜单里退出。'},{force:true});}
   });
   // The title bar swaps its maximise / restore icon.
   const sendMaximized=()=>{if(!win.isDestroyed())win.webContents.send('window:maximized',win.isMaximized());};
@@ -514,5 +517,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());

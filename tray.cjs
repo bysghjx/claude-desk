@@ -1,6 +1,7 @@
 // The notification-area icon. With 关闭时留在托盘 on, closing the window hides it
 // here and running conversations carry on; the menu lists them and quits for real.
 const {ACTIVE:RUNNING}=require('./engine.cjs');
+const shouldShowTrayHint = (threads, shown) => !shown && threads.some(t => RUNNING.has(t.status));
 
 // Plain menu items (label, click target) so the menu is tested without Electron.
 function trayItems(threads,limit=6){
@@ -33,4 +34,4 @@ class DeskTray{
   }
   destroy(){if(this.tray&&!this.tray.isDestroyed())this.tray.destroy();this.tray=null;}
 }
-module.exports={DeskTray,trayItems};
+module.exports={DeskTray,trayItems,shouldShowTrayHint};

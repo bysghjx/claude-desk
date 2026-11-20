@@ -1,5 +1,13 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');
-const {DeskTray,trayItems}=require('../tray.cjs');
+const {DeskTray,trayItems,shouldShowTrayHint}=require('../tray.cjs');
+
+test('closing an idle window is quiet and does not consume the first running-task tray hint',()=>{
+  const idle=[{status:'done'},{status:'idle'},{status:'stopped'},{status:'error'}];
+  assert.equal(shouldShowTrayHint(idle,false),false);
+  assert.equal(shouldShowTrayHint([...idle,{status:'generating'}],false),true);
+  assert.equal(shouldShowTrayHint([{status:'approval'}],false),true);
+  assert.equal(shouldShowTrayHint([{status:'tool'}],true),false);
+});
 
 test('tray menu lists running conversations, newest first, and those waiting on you',()=>{
   const {items,tooltip,running}=trayItems([{id:'a',title:'旧任务',status:'tool',startedAt:1},{id:'b',title:'需要批准',status:'approval',startedAt:2},{id:'c',title:'完成',status:'done'}]);
