@@ -58,6 +58,25 @@ function matchHints(hints,text){
   return'';
 }
 
+function findNearHints(hints,text){
+  if(!Array.isArray(hints)||!hints.length)return'';
+  const dirs=[],seen=new Set();
+  for(const raw of hints){
+    if(typeof raw!=='string'||!raw.trim())continue;
+    const hint=raw.trim();
+    let dir='';
+    try{dir=fs.statSync(hint).isDirectory()?hint:path.dirname(hint);}catch{continue;}
+    const key=dir.toLowerCase();
+    if(!seen.has(key)){seen.add(key);dirs.push(dir);}
+    if(dirs.length>=12)break;
+  }
+  for(const dir of dirs){
+    const found=findInFolder(dir,text,{maxEntries:3000,maxMs:60});
+    if(found)return found;
+  }
+  return'';
+}
+
 // `ref` is what the reply wrote: relative to the conversation's folder, absolute, or a file: URL.
 function resolveRef(cwd,ref,extra){
   let text=String(ref||'').trim();
@@ -69,6 +88,7 @@ function resolveRef(cwd,ref,extra){
   else{
     const hinted=matchHints(hints,text);if(hinted)return hinted;
     const target=path.resolve(cwd||'.',text);if(fs.existsSync(target))return target;
+    const near=findNearHints(hints,text);if(near)return near;
     // Replies often give only a file's name or the end of its path (ClaudeDesk-0.29.7-win-x64.zip
     // for outputs/releases/…); look for it in the conversation's folder.
     const found=cwd&&findInFolder(cwd,text);if(found)return found;
@@ -80,8 +100,8 @@ function resolveRef(cwd,ref,extra){
 const SKIP=new Set(['.git','node_modules','__pycache__','bower_components','dist','build','.next','target']);
 // Breadth first, so the shallowest match wins; stops after `maxEntries` entries or `maxMs` ms.
 function findInFolder(root,ref,opts={}){
-  const maxEntries=typeof opts==='number'?opts:(opts?.maxEntries??20000);
-  const maxMs=typeof opts==='object'&&opts?.maxMs!=null?opts.maxMs:500;
+  const maxEntries=typeof opts==='number'?opts:(opts?.maxEntries??150000);
+  const maxMs=typeof opts==='object'&&opts?.maxMs!=null?opts.maxMs:800;
   const tail=ref.replace(/^\.[\\/]/,'').split(/[\\/]+/).filter(Boolean),name=tail.at(-1)?.toLowerCase(),wanted=tail.join('/').toLowerCase();
   if(!name||tail.includes('..'))return'';
   const deadline=Date.now()+maxMs;

@@ -35,8 +35,12 @@ test('tool hints locate files outside cwd, clicked turn wins, and removed worktr
   const bashFile=path.join(otherDir,'sub','out.md');fs.writeFileSync(bashFile,'hi');
   const olderFile=path.join(outside,'older','dup.md');fs.mkdirSync(path.dirname(olderFile),{recursive:true});fs.writeFileSync(olderFile,'old');
   const newerFile=path.join(outside,'newer','dup.md');fs.mkdirSync(path.dirname(newerFile),{recursive:true});fs.writeFileSync(newerFile,'new');
-  // Direct hints array finds file outside cwd.
+  // Direct hints array finds file outside cwd, and also searches near hinted tool directories.
   assert.equal(resolveRef(project,'docs/desktop-candidate2.md',[docFile]),docFile);
+  const siblingSub=path.join(outside,'scripts','preview-manifests','0.29.11-beta.json');
+  const scriptFile=path.join(outside,'scripts','github-release.cjs');
+  fs.mkdirSync(path.dirname(siblingSub),{recursive:true});fs.writeFileSync(siblingSub,'{}');fs.writeFileSync(scriptFile,'');
+  assert.equal(resolveRef(project,'0.29.11-beta.json',[scriptFile]),siblingSub);
   // collectHints reads file_path, notebook_path, path and Bash cd, preferring clicked turn.
   const thread={cwd:project,turns:[
     {id:'t1',tools:[{name:'Read',input:{file_path:olderFile}},{name:'Bash',input:{command:`cd "${otherDir}" && dir`}}]},
