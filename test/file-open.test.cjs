@@ -1,6 +1,6 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {resolveRef,findInFolder,collectHints,clickAction,openRef}=require('../file-open.cjs');
+const {resolveRef,resolveRefAsync,findInFolder,findInFolderAsync,closeSearchWorker,collectHints,clickAction,openRef}=require('../file-open.cjs');
 
 function folders(){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'desk-open-')),project=path.join(root,'project'),outside=path.join(root,'outside');
@@ -79,6 +79,23 @@ test('folder search enters dot-folders except .git, skips build outputs, and sca
   const deep=path.join(many,'z-last','target-file.md');fs.mkdirSync(path.dirname(deep));fs.writeFileSync(deep,'ok');
   assert.equal(findInFolder(many,'target-file.md',{maxEntries:20000,maxMs:5000}),deep);
   fs.rmSync(root,{recursive:true,force:true});fs.rmSync(many,{recursive:true,force:true});
+});
+
+test('background worker thread prioritizes source folders over deferred work/build folders and still finds files in work',async t=>{
+  t.after(()=>closeSearchWorker());
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'desk-worker-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  fs.mkdirSync(path.join(root,'work','build-001','nested'),{recursive:true});
+  fs.mkdirSync(path.join(root,'outputs','scripts','preview-manifests'),{recursive:true});
+  const inWork=path.join(root,'work','build-001','only-in-work.md');
+  const dupWork=path.join(root,'work','0.29.11-beta.json');
+  const inOutputs=path.join(root,'outputs','scripts','preview-manifests','0.29.11-beta.json');
+  fs.writeFileSync(inWork,'w');fs.writeFileSync(dupWork,'{}');fs.writeFileSync(inOutputs,'{}');
+  // Normal folder wins over shallower deferred `work/` folder.
+  assert.equal(await resolveRefAsync(root,'0.29.11-beta.json'),inOutputs);
+  // Files that only live inside deferred `work/` are still found in pass 2.
+  assert.equal(await findInFolderAsync(root,'only-in-work.md'),inWork);
+  await assert.rejects(()=>resolveRefAsync(root,'definitely-missing.md'),e=>{assert.ok(e.message.includes(root));return true;});
 });
 
 test('a click views project text in the split view and opens pages, binaries and outside files in their own app; programs are only shown',()=>{

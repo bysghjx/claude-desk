@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, prot
 const fs = require('node:fs');
 const diskFs=require('./disk-fs.cjs');
 const {within,listProjectFiles,readProjectFile}=require('./project-files.cjs');
-const {openRef,resolveRef,clickAction,collectHints}=require('./file-open.cjs');
+const {openRef,resolveRefAsync,clickAction,collectHints,closeSearchWorker}=require('./file-open.cjs');
 const {writeJson}=require('./json-stream.cjs');
 const path = require('node:path');
 const os = require('node:os');
@@ -423,10 +423,10 @@ if(primaryInstance)app.whenReady().then(async () => {
     catch{try{return{cwd:folder(id),hints:[],worktree:null};}catch{return{cwd:'',hints:[],worktree:null};}}
   };
   handle('file:open',(id,ref,how,turnId)=>{const ctx=fileContext(id,turnId);return openRef({shell,clipboard},ctx.cwd,ref,['click','view','open','reveal','copy'].includes(how)?how:'click',ctx);});
-  handle('file:menu',(id,ref,turnId,opts)=>{
-    const ctx=fileContext(id,turnId),viewable=!opts?.hideView&&clickAction(ctx.cwd,resolveRef(ctx.cwd,ref,ctx))==='view';
+  handle('file:menu',async(id,ref,turnId,opts)=>{
+    const ctx=fileContext(id,turnId),target=await resolveRefAsync(ctx.cwd,ref,ctx),viewable=!opts?.hideView&&clickAction(ctx.cwd,target)==='view';
     return new Promise(resolve=>{
-    let done=false;const choose=how=>{done=true;resolve(openRef({shell,clipboard},ctx.cwd,ref,how,ctx).catch(e=>({error:e.message})));};
+    let done=false;const choose=how=>{done=true;resolve(openRef({shell,clipboard},ctx.cwd,target,how,ctx).catch(e=>({error:e.message})));};
     Menu.buildFromTemplate([...(viewable?[{label:'在分栏中查看',click:()=>choose('view')}]:[]),{label:'用默认应用打开',click:()=>choose('open')},{label:'在文件管理器中显示',click:()=>choose('reveal')},{type:'separator'},{label:'复制路径',click:()=>choose('copy')}])
       .popup({window:win,callback:()=>setTimeout(()=>{if(!done)resolve(null);},150)});
     });
@@ -523,5 +523,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();openaiProxy?.close();engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close();closeSearchWorker(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();openaiProxy?.close();engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());
