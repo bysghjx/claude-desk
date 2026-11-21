@@ -418,10 +418,13 @@ if(primaryInstance)app.whenReady().then(async () => {
   });
   // A file or link in a reply. A click views text from the conversation's folder in the split view
   // and opens anything else in its own app; the right-click menu offers each way.
-  const fileContext=(id,turnId)=>{try{const t=engine.thread(id);return{cwd:t.cwd,hints:collectHints(t,turnId),worktree:t.worktree};}catch{return{cwd:'',hints:[],worktree:null};}};
+  const fileContext=(id,turnId)=>{
+    try{const t=engine.thread(id);return{cwd:t.cwd,hints:collectHints(t,turnId),worktree:t.worktree};}
+    catch{try{return{cwd:folder(id),hints:[],worktree:null};}catch{return{cwd:'',hints:[],worktree:null};}}
+  };
   handle('file:open',(id,ref,how,turnId)=>{const ctx=fileContext(id,turnId);return openRef({shell,clipboard},ctx.cwd,ref,['click','view','open','reveal','copy'].includes(how)?how:'click',ctx);});
-  handle('file:menu',(id,ref,turnId)=>{
-    const ctx=fileContext(id,turnId),viewable=clickAction(ctx.cwd,resolveRef(ctx.cwd,ref,ctx))==='view';
+  handle('file:menu',(id,ref,turnId,opts)=>{
+    const ctx=fileContext(id,turnId),viewable=!opts?.hideView&&clickAction(ctx.cwd,resolveRef(ctx.cwd,ref,ctx))==='view';
     return new Promise(resolve=>{
     let done=false;const choose=how=>{done=true;resolve(openRef({shell,clipboard},ctx.cwd,ref,how,ctx).catch(e=>({error:e.message})));};
     Menu.buildFromTemplate([...(viewable?[{label:'在分栏中查看',click:()=>choose('view')}]:[]),{label:'用默认应用打开',click:()=>choose('open')},{label:'在文件管理器中显示',click:()=>choose('reveal')},{type:'separator'},{label:'复制路径',click:()=>choose('copy')}])

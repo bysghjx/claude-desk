@@ -114,6 +114,28 @@ test('dock tab keys survive HTML attributes and closing the last tab removes its
   dock.open('thread','agent');assert.equal(panel.hidden,false);assert.equal($('#agent-dock-views').frames.length,2);
 });
 
+test('dock file tabs and file views open the native file context menu unless text is selected',async()=>{
+  const {createDock}=await import('../ui/src/views/dock.mjs');const {createStore}=await modules();
+  const elements=new Map(),calls=[],toasts=[];
+  const $=id=>{if(!elements.has(id))elements.set(id,{hidden:false,innerHTML:'',classList:{toggle(){},add(){},remove(){}},append(frame){this.frames||=[];this.frames.push(frame);},style:{},setPointerCapture(){},releasePointerCapture(){}});return elements.get(id);};
+  const store=createStore();store.load({projects:[],threads:[{id:'t1',title:'T',cwd:'C:/demo',turns:[]}]});
+  let selectedText='';
+  const document={body:{classList:{toggle(){}}},createElement(){return{hidden:false,innerHTML:'',scrollTop:0,querySelector(){},remove(){}};},querySelector(){},documentElement:{style:{setProperty(){}}}};
+  const dock=createDock({$,store,api:async(name,...args)=>{calls.push([name,...args]);return{copied:true};},toast:t=>toasts.push(t),onSelectThread(){},document,window:{addEventListener(){},getSelection:()=>({toString:()=>selectedText})}});
+  await dock.openFile('t1','scripts/github-release.cjs',1,{path:'scripts/github-release.cjs',text:'line1\nline2'});
+  const panel=$('#agent-dock'),tabKey='file:t1:scripts/github-release.cjs';
+  let prevented=false;
+  panel.oncontextmenu({preventDefault(){prevented=true;},target:{closest:sel=>sel==='[data-dock-select]'?{dataset:{dockSelect:tabKey}}:null}});
+  assert.equal(prevented,true);assert.deepEqual(calls.at(-1),['file:menu','t1','scripts/github-release.cjs','',{hideView:true}]);
+  prevented=false;
+  panel.oncontextmenu({preventDefault(){prevented=true;},target:{closest:()=>null}});
+  assert.equal(prevented,true);assert.deepEqual(calls.at(-1),['file:menu','t1','scripts/github-release.cjs','',{hideView:true}]);
+  // Selected code keeps the standard copy/quote menu.
+  selectedText='const x = 1;';prevented=false;
+  panel.oncontextmenu({preventDefault(){prevented=true;},target:{closest:()=>null}});
+  assert.equal(prevented,false);assert.equal(calls.length,2);
+});
+
 test('sidebar dots: only running, waiting, or something new to read', async()=>{
   const {threadDot,isUnread}=await import('../ui/src/core/format.mjs');
   const t=(status,extra={})=>({status,turns:[],...extra});

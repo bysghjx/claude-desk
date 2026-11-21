@@ -24,6 +24,22 @@ export function createDock({ $, store, api, toast, onSelectThread, escape = esca
     const marked=item.frame.querySelector('.marked');if(marked)marked.scrollIntoView({block:'center'});else item.frame.scrollTop=0;
   }
   tabs.onclick=event=>{const close=event.target.closest('[data-dock-close]'),select=event.target.closest('[data-dock-select]');if(close){const key=close.dataset.dockClose;items.get(key)?.frame.remove();items.delete(key);if(active===key)active=[...items.keys()].at(-1)||'';render();}else if(select){active=select.dataset.dockSelect;render();}};
+  function showFileMenu(threadId,file,hideView=false){
+    api('file:menu',threadId,file,'',{hideView}).then(result=>{
+      if(result?.error)toast(result.error);
+      else if(result?.view)openFile(threadId,result.view.path,undefined,result.view);
+      else if(result?.copied)toast('已复制路径');
+    }).catch(e=>toast(e.message));
+  }
+  panel.oncontextmenu=event=>{
+    if(window.getSelection?.()?.toString().trim())return;
+    const tab=event.target?.closest?.('[data-dock-select]');
+    if(tab){const item=items.get(tab.dataset.dockSelect);if(!item?.file)return;event.preventDefault();return showFileMenu(item.threadId,item.file,true);}
+    const item=items.get(active);if(!item)return;
+    const cvFile=event.target?.closest?.('[data-cv-file]')?.dataset.cvFile;
+    if(item.file){event.preventDefault();return showFileMenu(item.threadId,item.file,true);}
+    if(item.turnId&&cvFile){event.preventDefault();return showFileMenu(item.threadId,cvFile,false);}
+  };
   $('#agent-dock-close').onclick=()=>{for(const item of items.values())item.frame.remove();items.clear();active='';render();};
   $('#agent-dock-detach').onclick=()=>{const item=items.get(active);if(item)api('agent:open',item.threadId,item.agentId).catch(e=>toast(e.message));};
   window.addEventListener('message',event=>{const item=[...items.values()].find(item=>item.frame.contentWindow===event.source);if(!item||event.data?.type!=='agent:action')return;const action=event.data.action;if(action==='state')send(item);if(action==='main')onSelectThread(item.threadId);if(action==='copy'){const a=data(item).agent;api('copy',a?.answer||a?.summary||'');}});

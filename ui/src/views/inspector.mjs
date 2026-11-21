@@ -126,6 +126,23 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
     const text = await api('project:diff', store.workspace().id, file.dataset.file);
     $('#diff-title').textContent = file.dataset.file; $('#diff-content').innerHTML = diffLines(text); $('#diff-view').hidden = false;
   }));
+  function openFileMenu(file) {
+    const workspace = store.workspace(); if (!workspace || !file) return;
+    api('file:menu', workspace.id, file, '', { hideView: false }).then(result => {
+      if (result?.error) toast(result.error);
+      else if (result?.view) dock.openFile(store.selected || workspace.id, result.view.path, undefined, result.view);
+      else if (result?.copied) toast('已复制路径');
+    }).catch(e => toast(e.message));
+  }
+  list.addEventListener('contextmenu', event => {
+    const file = event.target.closest('[data-file]')?.dataset.file || event.target.closest('[data-row]')?.dataset.row;
+    if (!file) return;
+    event.preventDefault(); openFileMenu(file);
+  });
+  $('#diff-title').addEventListener('contextmenu', event => {
+    const file = $('#diff-title').textContent.trim(); if (!file) return;
+    event.preventDefault(); openFileMenu(file);
+  });
   $('#agent-list').addEventListener('click', event => {
     const detached = event.target.closest('[data-agent-window]');
     if (detached) { event.preventDefault(); dock.open(detached.dataset.agentThread, detached.dataset.agentWindow); return; }
