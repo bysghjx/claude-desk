@@ -6,10 +6,12 @@ const LIMIT=64*1024*1024;
 const REASONING_MODEL=/^(o\d|gpt-5)/i;
 const frame=value=>`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
 
+const VERSIONED_BASE=/\/v\d+(?:alpha|beta)?(?:\/openai)?$/i;
+const ENDPOINT_TAIL=/\/(?:chat\/completions|responses)$/i;
 function joinUrl(baseUrl,pathname){
-  const base=String(baseUrl||'').replace(/\/+$/,'');
+  const base=String(baseUrl||'').replace(/\/+$/,'').replace(ENDPOINT_TAIL,'');
   const tail=String(pathname||'').replace(/^\/+/,'').replace(/^v1(?=\/|$)\/?/,'');
-  return(base.endsWith('/v1')?base:base+'/v1')+(tail?'/'+tail:'');
+  return(VERSIONED_BASE.test(base)?base:base+'/v1')+(tail?'/'+tail:'');
 }
 function docFallback(block){
   const name=block?.title||block?.name||block?.source?.media_type||'文档';

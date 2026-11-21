@@ -11,7 +11,7 @@ const parseSSE=text=>text.trim().split('\n\n').filter(Boolean).map(block=>{
 });
 const sseLine=obj=>`data: ${JSON.stringify(obj)}\n\n`;
 
-test('joinUrl handles trailing slashes and existing or missing /v1 segments',()=>{
+test('joinUrl handles trailing slashes, versioned paths (/v1,/v3,/v4,/v1beta/openai) and pasted endpoint URLs',()=>{
   assert.equal(joinUrl('https://api.openai.com/v1','/chat/completions'),'https://api.openai.com/v1/chat/completions');
   assert.equal(joinUrl('https://api.openai.com/v1/','/chat/completions'),'https://api.openai.com/v1/chat/completions');
   assert.equal(joinUrl('https://api.openai.com','/chat/completions'),'https://api.openai.com/v1/chat/completions');
@@ -19,6 +19,14 @@ test('joinUrl handles trailing slashes and existing or missing /v1 segments',()=
   assert.equal(joinUrl('https://api.openai.com/v1','/v1/models'),'https://api.openai.com/v1/models');
   assert.equal(joinUrl('https://dashscope.aliyuncs.com/compatible-mode/v1/','models'),'https://dashscope.aliyuncs.com/compatible-mode/v1/models');
   assert.equal(joinUrl('https://relay.example.com/customv1','/models'),'https://relay.example.com/customv1/v1/models');
+  // Non-v1 versioned bases (Volcengine /v3, Zhipu /v4, Gemini /v1beta/openai) and pasted full endpoints.
+  assert.equal(joinUrl('https://ark.cn-beijing.volces.com/api/v3','/chat/completions'),'https://ark.cn-beijing.volces.com/api/v3/chat/completions');
+  assert.equal(joinUrl('https://open.bigmodel.cn/api/paas/v4/','/chat/completions'),'https://open.bigmodel.cn/api/paas/v4/chat/completions');
+  assert.equal(joinUrl('https://generativelanguage.googleapis.com/v1beta/openai','/chat/completions'),'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+  assert.equal(joinUrl('https://api.openai.com/v1/chat/completions','/chat/completions'),'https://api.openai.com/v1/chat/completions');
+  assert.equal(joinUrl('https://api.openai.com/v1/chat/completions','/models'),'https://api.openai.com/v1/models');
+  assert.equal(joinUrl('https://ark.cn-beijing.volces.com/api/v3/responses','/responses'),'https://ark.cn-beijing.volces.com/api/v3/responses');
+  assert.equal(joinUrl('https://ark.cn-beijing.volces.com/api/v3/responses','/models'),'https://ark.cn-beijing.volces.com/api/v3/models');
 });
 
 test('toOpenAIRequest converts system, multimodal user messages, PDF fallback, tools and reasoning params',()=>{
