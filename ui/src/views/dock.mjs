@@ -10,7 +10,7 @@ export function createDock({ $, store, api, toast, onSelectThread, escape = esca
   const turnOf=item=>store.state.threads.find(t=>t.id===item.threadId)?.turns.find(t=>t.id===item.turnId);
   const title=item=>item.file?item.file.split('/').pop():item.turnId?'变更':data(item).agent?.name||'子智能体';
   function showChanges(item){const thread=store.state.threads.find(t=>t.id===item.threadId),turn=turnOf(item),html=turn?changesViewHtml(turn,thread.cwd,escape):'<p class="cv-empty">这一轮已被删除。</p>';if(item.frame.__html!==html){const top=item.frame.scrollTop;item.frame.innerHTML=html;item.frame.__html=html;item.frame.scrollTop=top;}}
-  function render(){panel.hidden=!items.size;document.body.classList.toggle('dock-open',Boolean(items.size));tabs.innerHTML=[...items].map(([key,item])=>`<div class="dock-tab ${key===active?'selected':''}"><button data-dock-select="${escape(key)}" title="${attr(title(item))}">${escape(title(item))}</button><button data-dock-close="${escape(key)}" aria-label="关闭子智能体标签">×</button></div>`).join('');for(const [key,item]of items)item.frame.hidden=key!==active;$('#agent-dock-detach').hidden=Boolean(items.get(active)?.frame.tagName!=='IFRAME');}
+  function render(){panel.hidden=!items.size;document.body.classList.toggle('dock-open',Boolean(items.size));tabs.innerHTML=[...items].map(([key,item])=>`<div class="dock-tab ${key===active?'selected':''}" data-dock-tab="${escape(key)}"><button data-dock-select="${escape(key)}" title="${attr(title(item))}">${escape(title(item))}</button><button data-dock-close="${escape(key)}" aria-label="关闭子智能体标签">×</button></div>`).join('');for(const [key,item]of items)item.frame.hidden=key!==active;$('#agent-dock-detach').hidden=Boolean(items.get(active)?.frame.tagName!=='IFRAME');}
   function open(threadId,agentId){const key=encodeURIComponent(JSON.stringify([threadId,agentId]));if(!items.has(key)){const frame=document.createElement('iframe');frame.src='agent.html?embedded=1';frame.title='子智能体详情';views.append(frame);const item={threadId,agentId,frame};items.set(key,item);frame.onload=()=>send(item);}active=key;render();}
   // One 变更 tab per conversation; opening it again shows the new turn and scrolls to `file`.
   function openChanges(threadId,turnId,file){const key='changes:'+threadId;let item=items.get(key);if(!item){const frame=document.createElement('div');frame.className='changes-view';views.append(frame);item={threadId,turnId,frame};items.set(key,item);}item.turnId=turnId;active=key;showChanges(item);render();const target=file&&[...item.frame.querySelectorAll('[data-cv-file]')].find(n=>n.dataset.cvFile===file);if(target)target.scrollIntoView({block:'start'});else item.frame.scrollTop=0;}
@@ -23,7 +23,11 @@ export function createDock({ $, store, api, toast, onSelectThread, escape = esca
     active=key;render();
     const marked=item.frame.querySelector('.marked');if(marked)marked.scrollIntoView({block:'center'});else item.frame.scrollTop=0;
   }
-  tabs.onclick=event=>{const close=event.target.closest('[data-dock-close]'),select=event.target.closest('[data-dock-select]');if(close){const key=close.dataset.dockClose;items.get(key)?.frame.remove();items.delete(key);if(active===key)active=[...items.keys()].at(-1)||'';render();}else if(select){active=select.dataset.dockSelect;render();}};
+  function closeTab(key){if(!items.has(key))return;items.get(key)?.frame.remove();items.delete(key);if(active===key)active=[...items.keys()].at(-1)||'';render();}
+  const tabKeyOf=target=>target?.closest?.('[data-dock-tab]')?.dataset.dockTab||target?.closest?.('[data-dock-select]')?.dataset.dockSelect||target?.closest?.('[data-dock-close]')?.dataset.dockClose||'';
+  tabs.onclick=event=>{const close=event.target.closest('[data-dock-close]'),select=event.target.closest('[data-dock-select]');if(close)closeTab(close.dataset.dockClose);else if(select){active=select.dataset.dockSelect;render();}};
+  tabs.onmousedown=event=>{if(event.button===1&&tabKeyOf(event.target))event.preventDefault();};
+  tabs.onauxclick=event=>{if(event.button!==1)return;const key=tabKeyOf(event.target);if(!key)return;event.preventDefault();closeTab(key);};
   function showFileMenu(threadId,file,hideView=false){
     api('file:menu',threadId,file,'',{hideView}).then(result=>{
       if(result?.error)toast(result.error);

@@ -134,6 +134,13 @@ test('dock file tabs and file views open the native file context menu unless tex
   selectedText='const x = 1;';prevented=false;
   panel.oncontextmenu({preventDefault(){prevented=true;},target:{closest:()=>null}});
   assert.equal(prevented,false);assert.equal(calls.length,2);
+  // Middle-click closes the dock tab and prevents browser autoscroll on mousedown.
+  const tabs=$('#agent-dock-tabs');
+  let mdPrevented=false,auxPrevented=false;
+  tabs.onmousedown({button:1,preventDefault(){mdPrevented=true;},target:{closest:sel=>sel==='[data-dock-tab]'?{dataset:{dockTab:tabKey}}:null}});
+  assert.equal(mdPrevented,true);
+  tabs.onauxclick({button:1,preventDefault(){auxPrevented=true;},target:{closest:sel=>sel==='[data-dock-tab]'?{dataset:{dockTab:tabKey}}:null}});
+  assert.equal(auxPrevented,true);assert.equal(panel.hidden,true);assert.equal(tabs.innerHTML,'');
 });
 
 test('sidebar dots: only running, waiting, or something new to read', async()=>{
