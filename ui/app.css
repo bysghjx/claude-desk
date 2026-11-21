@@ -923,7 +923,7 @@ dialog{background:#252525;border-color:#484848}
 .import-preview button{padding:9px 13px;border-radius:7px;background:#ddd;color:#222;font-size:12px}
 
 /* ── from dock.css ── */
-:root{--agent-dock-width:46%}
+:root{--agent-dock-ratio:46%;--agent-dock-width:clamp(260px,var(--agent-dock-ratio),max(260px,calc(100% - 320px)))}
 .agent-dock{position:absolute;right:0;top:0;bottom:0;width:var(--agent-dock-width);background:#202020;border-left:1px solid #3c3c3c;display:flex;flex-direction:column;z-index:5}
 .agent-dock[hidden]{display:none}
 .dock-open .main-area{padding-right:var(--agent-dock-width)}
@@ -1289,7 +1289,7 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .terminal-toggle{display:inline-flex;align-items:center;gap:5px}
 .terminal-toggle svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .terminal-toggle.active{color:#f0eee8;background:#ffffff12}
-:root{--terminal-width:44%}
+:root{--terminal-ratio:44%;--terminal-width:clamp(260px,var(--terminal-ratio),max(260px,calc(100% - 320px)))}
 .terminal-panel{position:absolute;right:0;top:0;bottom:0;width:var(--terminal-width);display:flex;flex-direction:column;background:#141413;border-left:1px solid #33332f;z-index:6}
 .terminal-panel[hidden]{display:none}
 .terminal-panel:not([hidden]){animation:slide-in-right var(--motion) var(--ease-out)}
@@ -1460,7 +1460,7 @@ dialog[open]::backdrop{animation:fade-in var(--motion) var(--ease-out)}
 .pr-link:hover{text-decoration:underline}
 .pr-card .small{justify-self:start;margin-top:2px}
 /* 浏览器 panel: same place and width handling as the terminal; one <webview> per conversation. */
-:root{--preview-width:46%}
+:root{--preview-ratio:46%;--preview-width:clamp(280px,var(--preview-ratio),max(280px,calc(100% - 320px)))}
 .preview-panel{position:absolute;right:0;top:0;bottom:0;width:var(--preview-width);display:flex;flex-direction:column;background:#141413;border-left:1px solid #33332f;z-index:6}
 .preview-panel[hidden]{display:none}
 .preview-panel:not([hidden]){animation:slide-in-right var(--motion) var(--ease-out)}

@@ -60,9 +60,12 @@ export function createTerminalPanel({ store, api, toast, desk }) {
   handle.addEventListener('pointermove', event => {
     if (!handle.hasPointerCapture(event.pointerId)) return;
     const area = document.querySelector('.main-area').getBoundingClientRect();
-    document.documentElement.style.setProperty('--terminal-width', Math.max(320, Math.min(area.width - 420, area.right - event.clientX)) + 'px');
+    if (!area.width) return;
+    const width = Math.max(260, Math.min(Math.max(260, area.width - 320), area.right - event.clientX));
+    document.documentElement.style.setProperty('--terminal-ratio', (width / area.width * 100).toFixed(2) + '%');
   });
   handle.addEventListener('pointerup', event => { handle.releasePointerCapture(event.pointerId); handle.classList.remove('dragging'); frame.style.pointerEvents = ''; host?.fit(); });
+  window.addEventListener('resize', () => { if (!panel.hidden) host?.fit(); });
 
   desk.onTerminal?.(event => {
     if (event.type === 'data') host?.write(event.id, event.data);

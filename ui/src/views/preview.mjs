@@ -75,7 +75,9 @@ export function createPreviewPanel({ store, api, toast, desk, terminal }) {
   handle.addEventListener('pointermove', event => {
     if (!handle.hasPointerCapture(event.pointerId)) return;
     const area = document.querySelector('.main-area').getBoundingClientRect();
-    document.documentElement.style.setProperty('--preview-width', Math.max(360, Math.min(area.width - 420, area.right - event.clientX)) + 'px');
+    if (!area.width) return;
+    const width = Math.max(280, Math.min(Math.max(280, area.width - 320), area.right - event.clientX));
+    document.documentElement.style.setProperty('--preview-ratio', (width / area.width * 100).toFixed(2) + '%');
   });
   handle.addEventListener('pointerup', event => { handle.releasePointerCapture(event.pointerId); handle.classList.remove('dragging'); views.style.pointerEvents = ''; });
   return { toggle };

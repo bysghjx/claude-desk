@@ -141,6 +141,14 @@ test('dock file tabs and file views open the native file context menu unless tex
   assert.equal(mdPrevented,true);
   tabs.onauxclick({button:1,preventDefault(){auxPrevented=true;},target:{closest:sel=>sel==='[data-dock-tab]'?{dataset:{dockTab:tabKey}}:null}});
   assert.equal(auxPrevented,true);assert.equal(panel.hidden,true);assert.equal(tabs.innerHTML,'');
+  // Dragging the dock resize handle stores a percentage ratio so resizing the window scales the dock.
+  const props={};
+  const doc2={body:{classList:{toggle(){}}},createElement(){return{hidden:false,innerHTML:'',scrollTop:0,querySelector(){},remove(){}};},querySelector:sel=>sel==='.main-area'?{getBoundingClientRect:()=>({width:1000,right:1200})}:null,documentElement:{style:{setProperty(k,v){props[k]=v;}}}};
+  const els2=new Map(),$2=id=>{if(!els2.has(id))els2.set(id,{hidden:false,innerHTML:'',classList:{toggle(){},add(){},remove(){}},append(){},style:{},setPointerCapture(){this._cap=true;},hasPointerCapture(){return Boolean(this._cap);},releasePointerCapture(){this._cap=false;}});return els2.get(id);};
+  createDock({$:$2,store,api:async()=>true,toast(){},onSelectThread(){},document:doc2,window:{addEventListener(){}}});
+  const handle=$2('#agent-dock-resize');
+  handle.onpointerdown({pointerId:1});handle.onpointermove({pointerId:1,clientX:650});handle.onpointerup({pointerId:1});
+  assert.equal(props['--agent-dock-ratio'],'55.00%');assert.equal($2('#agent-dock').style.width,'');
 });
 
 test('sidebar dots: only running, waiting, or something new to read', async()=>{
