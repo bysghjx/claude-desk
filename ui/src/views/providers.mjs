@@ -11,7 +11,8 @@ const host = url => { try { return new URL(url).host; } catch { return url; } };
 export function providerListHtml({ active = '', providers = [] }, info = {}) {
   const row = (id, name, detail, extra = '') => `<div class="provider-row${id === active ? ' selected' : ''}"><button type="button" class="provider-pick" role="radio" aria-checked="${id === active}" data-provider-pick="${escape(id)}"><span class="provider-radio" aria-hidden="true"></span><span class="provider-copy"><strong>${escape(name)}</strong><small>${escape(detail)}</small></span></button>${extra}</div>`;
   const own = row('', 'Claude Code 自己的配置', `${info.custom ? '' : info.host ? info.host + ' · ' : ''}来自 ~/.claude/settings.json、环境变量或登录`);
-  return own + providers.map(p => row(p.id, p.name, `${host(p.baseUrl)} · ${p.authType === 'key' ? 'API Key' : 'Auth Token'}${p.models?.length ? ` · ${p.models.length} 个模型` : ''}${p.format === 'openai' ? ' · OpenAI 格式' : p.cursorCompat ? ' · Cursor 兼容模式' : ''}`, `<button type="button" class="provider-action" data-provider-edit="${escape(p.id)}">编辑</button><button type="button" class="provider-action danger" data-provider-remove="${escape(p.id)}">删除</button>`)).join('');
+  const formatTag = p => p.format === 'openai-responses' ? ' · OpenAI Responses' : p.format === 'openai' ? ' · OpenAI 格式' : p.cursorCompat ? ' · Cursor 兼容模式' : '';
+  return own + providers.map(p => row(p.id, p.name, `${host(p.baseUrl)} · ${p.authType === 'key' ? 'API Key' : 'Auth Token'}${p.models?.length ? ` · ${p.models.length} 个模型` : ''}${formatTag(p)}`, `<button type="button" class="provider-action" data-provider-edit="${escape(p.id)}">编辑</button><button type="button" class="provider-action danger" data-provider-remove="${escape(p.id)}">删除</button>`)).join('');
 }
 
 export function createProviders({ store, api, toast, confirm, env, composer }) {
@@ -25,7 +26,7 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
     env.showProvider(result.provider); render();
   }
   function syncFormat() {
-    const openai = $('#provider-format').value === 'openai';
+    const format = $('#provider-format').value, openai = format === 'openai' || format === 'openai-responses';
     $('#provider-auth-wrap').hidden = openai;
     $('#provider-cursor-row').hidden = openai;
     $('#provider-openai-note').hidden = !openai;
@@ -38,7 +39,7 @@ export function createProviders({ store, api, toast, confirm, env, composer }) {
     form.hidden = false; $('#provider-add').hidden = true;
     setText($('#provider-form-title'), provider ? `编辑「${provider.name}」` : '添加服务商');
     $('#provider-name').value = provider?.name || ''; $('#provider-url').value = provider?.baseUrl || '';
-    $('#provider-format').value = provider?.format === 'openai' ? 'openai' : 'anthropic';
+    $('#provider-format').value = provider?.format === 'openai-responses' ? 'openai-responses' : provider?.format === 'openai' ? 'openai' : 'anthropic';
     $('#provider-auth').value = provider?.authType || 'token'; $('#provider-key').value = '';
     $('#provider-key').placeholder = provider?.hasKey ? '已保存，留空表示不修改' : '粘贴密钥';
     $('#provider-models').value = (provider?.models || []).join('\n'); $('#provider-fast').value = provider?.fastModel || '';

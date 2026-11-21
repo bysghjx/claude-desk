@@ -1,6 +1,6 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const http=require('node:http');
-const {OpenAICompatProxy,StreamAdapter,toOpenAIRequest,toAnthropicMessage,mapError,joinUrl}=require('../openai-compat.cjs');
+const {OpenAICompatProxy,StreamAdapter,ResponsesStreamAdapter,toOpenAIRequest,toOpenAIResponsesRequest,toAnthropicMessage,toAnthropicFromResponses,mapError,joinUrl}=require('../openai-compat.cjs');
 
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve('http://127.0.0.1:'+server.address().port)));
 const parseSSE=text=>text.trim().split('\n\n').filter(Boolean).map(block=>{
@@ -281,4 +281,154 @@ test('OpenAICompatProxy handles messages, count_tokens, models, headers, errors 
   const redirRes=await fetch(base+'/v1/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'gpt-5',messages:[{role:'user',content:'hi'}]})});
   assert.equal(redirRes.status,400);assert.match((await redirRes.json()).error.message,/OpenAI 兼容模式：.*重定向/);
   assert.equal((await fetch(base+'/v1/messages',{method:'POST',headers:{origin:'https://evil.example'},body:'{}'})).status,404);
+});
+
+test('toOpenAIResponsesRequest maps instructions, input items, flat tools, reasoning and tool_result ordering',()=>{
+  const req=toOpenAIResponsesRequest({
+    model:'gpt-5-codex',
+    system:[{type:'text',text:'Sys A'},{type:'text',text:'Sys B'}],
+    messages:[
+      {role:'user',content:[
+        {type:'text',text:'Look'},
+        {type:'image',source:{type:'base64',media_type:'image/png',data:'AAAA'}},
+        {type:'document',title:'doc.pdf',source:{type:'base64',media_type:'application/pdf',data:'JVBERi'}}
+      ]},
+      {role:'assistant',content:[
+        {type:'thinking',thinking:'hidden',signature:'s'},
+        {type:'text',text:'Running Read'},
+        {type:'tool_use',id:'call_1',name:'Read',input:{file_path:'a.txt'}}
+      ]},
+      {role:'user',content:[
+        {type:'text',text:'Follow up'},
+        {type:'tool_result',tool_use_id:'call_1',content:[
+          {type:'text',text:'failed'},
+          {type:'image',source:{type:'url',url:'https://example.com/e.png'}}
+        ],is_error:true}
+      ]}
+    ],
+    tools:[
+      {name:'Read',description:'Read file',input_schema:{type:'object',properties:{file_path:{type:'string'}}}},
+      {type:'web_search_20250305',name:'web_search'}
+    ],
+    tool_choice:{type:'tool',name:'Read'},
+    max_tokens:2048,
+    stop_sequences:['STOP'],
+    temperature:0.5,
+    top_p:0.9,
+    thinking:{type:'enabled',budget_tokens:10000},
+    stream:true
+  });
+  assert.equal(req.model,'gpt-5-codex');
+  assert.equal(req.store,false);
+  assert.equal(req.instructions,'Sys A\n\nSys B');
+  assert.equal(req.max_output_tokens,2048);
+  assert.equal('stop' in req,false);
+  assert.equal('temperature' in req,false);
+  assert.deepEqual(req.reasoning,{effort:'medium',summary:'auto'});
+  assert.equal(req.stream,true);
+  assert.deepEqual(req.tools,[{type:'function',name:'Read',description:'Read file',parameters:{type:'object',properties:{file_path:{type:'string'}}}}]);
+  assert.deepEqual(req.tool_choice,{type:'function',name:'Read'});
+  assert.deepEqual(req.input,[
+    {type:'message',role:'user',content:[
+      {type:'input_text',text:'Look'},
+      {type:'input_image',image_url:'data:image/png;base64,AAAA'},
+      {type:'input_text',text:'[附件 doc.pdf 无法发送给 OpenAI 格式的模型]'}
+    ]},
+    {type:'message',role:'assistant',content:[{type:'output_text',text:'Running Read'}]},
+    {type:'function_call',call_id:'call_1',name:'Read',arguments:'{"file_path":"a.txt"}'},
+    {type:'function_call_output',call_id:'call_1',output:'Error: failed'},
+    {type:'message',role:'user',content:[
+      {type:'input_text',text:'Follow up'},
+      {type:'input_image',image_url:'https://example.com/e.png'}
+    ]}
+  ]);
+  assert.equal(toOpenAIResponsesRequest({model:'gpt-4o',messages:[],temperature:0.4,tool_choice:{type:'any'}}).temperature,0.4);
+  assert.equal(toOpenAIResponsesRequest({model:'gpt-4o',messages:[],tool_choice:{type:'any'}}).tool_choice,'required');
+});
+
+test('ResponsesStreamAdapter translates reasoning, text, parallel function calls, incomplete and error streams',()=>{
+  const raw=(
+    'event: response.created\r\ndata: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5-codex"}}\r\n\r\n'+
+    'event: response.reasoning_summary_text.delta\r\ndata: {"type":"response.reasoning_summary_text.delta","delta":"思考中"}\r\n\r\n'+
+    'event: response.output_text.delta\r\ndata: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"你好！"}\r\n\r\n'+
+    'event: response.output_item.added\r\ndata: {"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_a","name":"Read","arguments":""}}\r\n\r\n'+
+    'event: response.function_call_arguments.delta\r\ndata: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":1,"delta":"{\\"file_path\\":"}\r\n\r\n'+
+    'event: response.function_call_arguments.delta\r\ndata: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":1,"delta":"\\"a.txt\\"}"}\r\n\r\n'+
+    'event: response.output_item.done\r\ndata: {"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_a","name":"Read","arguments":"{\\"file_path\\":\\"a.txt\\"}"}}\r\n\r\n'+
+    'event: response.output_item.added\r\ndata: {"type":"response.output_item.added","output_index":2,"item":{"id":"fc_2","type":"function_call","call_id":"call_b","name":"Bash","arguments":""}}\r\n\r\n'+
+    'event: response.function_call_arguments.done\r\ndata: {"type":"response.function_call_arguments.done","item_id":"fc_2","output_index":2,"arguments":"{\\"command\\":\\"ls\\"}"}\r\n\r\n'+
+    'event: response.completed\r\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"gpt-5-codex","usage":{"input_tokens":150,"input_tokens_details":{"cached_tokens":50},"output_tokens":40}}}\r\n\r\n'
+  );
+  const adapter=new ResponsesStreamAdapter('fallback');
+  const buf=Buffer.from(raw,'utf8');let out='';
+  for(let i=0;i<buf.length;i++)out+=adapter.push(buf.subarray(i,i+1));
+  out+=adapter.end();
+  const events=parseSSE(out);
+  assert.equal(events[0].event,'message_start');assert.equal(events[0].data.message.model,'gpt-5-codex');
+  assert.equal(events.filter(e=>e.event==='content_block_start').length,4);
+  const deltas=idx=>events.filter(e=>e.event==='content_block_delta'&&e.data.index===idx);
+  assert.equal(deltas(0)[0].data.delta.thinking,'思考中');
+  assert.equal(deltas(1)[0].data.delta.text,'你好！');
+  assert.deepEqual(JSON.parse(deltas(2).map(e=>e.data.delta.partial_json).join('')),{file_path:'a.txt'});
+  assert.deepEqual(JSON.parse(deltas(3).map(e=>e.data.delta.partial_json).join('')),{command:'ls'});
+  assert.deepEqual(events.find(e=>e.event==='message_delta').data,{type:'message_delta',delta:{stop_reason:'tool_use',stop_sequence:null},usage:{input_tokens:100,output_tokens:40,cache_read_input_tokens:50}});
+  assert.equal(events.at(-1).event,'message_stop');
+
+  // incomplete -> max_tokens
+  const inc=new ResponsesStreamAdapter('gpt-5');
+  const incEv=parseSSE(inc.push('data: {"type":"response.output_text.delta","delta":"cut"}\n\ndata: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n')+inc.end());
+  assert.equal(incEv.find(e=>e.event==='message_delta').data.delta.stop_reason,'max_tokens');
+
+  // premature disconnect -> error
+  const drop=new ResponsesStreamAdapter('gpt-5');
+  const dropEv=parseSSE(drop.push('data: {"type":"response.output_text.delta","delta":"half"}\n\n')+drop.end());
+  assert.equal(dropEv.at(-1).event,'error');assert.equal(dropEv.some(e=>e.event==='message_stop'),false);
+
+  // response.failed -> error
+  const fail=new ResponsesStreamAdapter('gpt-5');
+  const failEv=parseSSE(fail.push('data: {"type":"response.failed","response":{"error":{"message":"quota exceeded","status":429}}}\n\n')+fail.end());
+  assert.equal(failEv.at(-1).event,'error');assert.equal(failEv.at(-1).data.error.type,'rate_limit_error');
+
+  // non-streaming toAnthropicFromResponses
+  const msg=toAnthropicFromResponses({
+    model:'gpt-5-codex',status:'completed',
+    output:[
+      {type:'reasoning',summary:[{type:'summary_text',text:'plan'}]},
+      {type:'message',content:[{type:'output_text',text:'hello'}]},
+      {type:'function_call',call_id:'c1',name:'Read',arguments:'{"file_path":"x.js"}'}
+    ],
+    usage:{input_tokens:80,input_tokens_details:{cached_tokens:20},output_tokens:15}
+  });
+  assert.equal(msg.stop_reason,'tool_use');
+  assert.deepEqual(msg.usage,{input_tokens:60,output_tokens:15,cache_read_input_tokens:20});
+  assert.deepEqual(msg.content,[{type:'thinking',thinking:'plan',signature:''},{type:'text',text:'hello'},{type:'tool_use',id:'c1',name:'Read',input:{file_path:'x.js'}}]);
+});
+
+test('OpenAICompatProxy routes openai-responses providers to /v1/responses',async t=>{
+  const seen=[];
+  const upstream=http.createServer(async(req,res)=>{
+    const parts=[];for await(const b of req)parts.push(b);
+    const body=JSON.parse(Buffer.concat(parts));seen.push({url:req.url,body});
+    if(body.stream){
+      res.writeHead(200,{'content-type':'text/event-stream'});
+      res.write('event: response.created\ndata: {"type":"response.created","response":{"model":"gpt-5-codex"}}\n\n');
+      res.write('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"resp ok"}\n\n');
+      res.end('event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":12,"output_tokens":3}}}\n\n');
+    }else{
+      res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({model:'gpt-5-codex',status:'completed',output:[{type:'message',content:[{type:'output_text',text:'resp json'}]}],usage:{input_tokens:10,output_tokens:2}}));
+    }
+  });
+  const origin=await listen(upstream);
+  const proxy=new OpenAICompatProxy();await proxy.start();
+  t.after(()=>{proxy.close();upstream.closeAllConnections();upstream.close();});
+  const base=proxy.urlFor(origin+'/v1','resp-key','openai-responses');
+
+  const s=await fetch(base+'/v1/messages',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer sk-r'},body:JSON.stringify({model:'gpt-5-codex',stream:true,messages:[{role:'user',content:'hi'}]})});
+  const sText=await s.text();assert.equal(s.status,200,sText);
+  const events=parseSSE(sText);
+  assert.equal(events.find(e=>e.event==='content_block_delta').data.delta.text,'resp ok');
+  assert.equal(seen[0].url,'/v1/responses');assert.equal(seen[0].body.store,false);
+
+  const j=await fetch(base+'/v1/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'gpt-5-codex',stream:false,messages:[{role:'user',content:'hi'}]})});
+  assert.equal(j.status,200);assert.equal((await j.json()).content[0].text,'resp json');
 });

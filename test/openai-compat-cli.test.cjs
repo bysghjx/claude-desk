@@ -71,3 +71,68 @@ test('real Claude Code executes Read tool and finishes through OpenAI-compatible
     assert.equal(followUp.messages.some(m=>m.role==='tool'&&m.tool_call_id==='call_read_1'&&String(m.content).includes('OPENAI_COMPAT_READ_OK_9481')),true);
   }finally{await engine.shutdown();proxy.close();upstream.closeAllConnections();upstream.close();}
 });
+
+test('real Claude Code executes Read tool and finishes through OpenAI Responses proxy',{skip:process.platform!=='win32',timeout:120000},async()=>{
+  const scratch=path.resolve(__dirname,'../../../work/openai-cli-tests');fs.mkdirSync(scratch,{recursive:true});
+  const root=fs.mkdtempSync(path.join(scratch,'responses-')),target=path.join(root,'note.txt');
+  fs.writeFileSync(target,'OPENAI_RESPONSES_READ_OK_5521\n');
+  const cli=path.join(path.dirname(require.resolve('@anthropic-ai/claude-agent-sdk-win32-x64/package.json')),'claude.exe');
+  const {query}=await import('@anthropic-ai/claude-agent-sdk');
+  const seen=[],states=[],diags=[];let requests=0,sawToolResult=false;
+  const upstream=http.createServer(async(req,res)=>{
+    const parts=[];for await(const chunk of req)parts.push(chunk);
+    const body=parts.length?JSON.parse(Buffer.concat(parts)):{};
+    requests++;
+    seen.push({url:req.url,headers:req.headers,body});
+    const outItem=(body.input||[]).findLast(i=>i.type==='function_call_output');
+    const hasRead=(body.tools||[]).some(t=>t.name==='Read');
+    if(outItem&&String(outItem.output).includes('OPENAI_RESPONSES_READ_OK_5521'))sawToolResult=true;
+    res.writeHead(200,{'content-type':'text/event-stream; charset=utf-8'});
+    res.write(`event: response.created\n`+sse({type:'response.created',response:{id:'resp_'+requests,model:body.model}}));
+    if(hasRead&&!outItem){
+      const args=JSON.stringify({file_path:target}),mid=Math.floor(args.length/2);
+      res.write(`event: response.reasoning_summary_text.delta\n`+sse({type:'response.reasoning_summary_text.delta',delta:'Reading file via Responses API.'}));
+      res.write(`event: response.output_item.added\n`+sse({type:'response.output_item.added',output_index:0,item:{id:'fc_1',type:'function_call',call_id:'call_resp_1',name:'Read',arguments:''}}));
+      res.write(`event: response.function_call_arguments.delta\n`+sse({type:'response.function_call_arguments.delta',item_id:'fc_1',output_index:0,delta:args.slice(0,mid)}));
+      res.write(`event: response.function_call_arguments.delta\n`+sse({type:'response.function_call_arguments.delta',item_id:'fc_1',output_index:0,delta:args.slice(mid)}));
+      res.write(`event: response.output_item.done\n`+sse({type:'response.output_item.done',output_index:0,item:{id:'fc_1',type:'function_call',call_id:'call_resp_1',name:'Read',arguments:args}}));
+      res.end(`event: response.completed\n`+sse({type:'response.completed',response:{id:'resp_'+requests,status:'completed',model:body.model,usage:{input_tokens:90,output_tokens:20}}}));
+      return;
+    }
+    const reply=sawToolResult?'Verified Responses token: OPENAI_RESPONSES_READ_OK_5521':'OK';
+    res.write(`event: response.output_text.delta\n`+sse({type:'response.output_text.delta',output_index:0,content_index:0,delta:reply}));
+    res.end(`event: response.completed\n`+sse({type:'response.completed',response:{id:'resp_'+requests,status:'completed',model:body.model,usage:{input_tokens:120,output_tokens:15}}}));
+  });
+  await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve));
+  const proxy=new OpenAICompatProxy();await proxy.start();
+  const base=proxy.urlFor('http://127.0.0.1:'+upstream.address().port+'/v1','isolated-responses-test','openai-responses');
+  const env={...process.env,ANTHROPIC_BASE_URL:base,ANTHROPIC_AUTH_TOKEN:'dummy-resp-token',ANTHROPIC_API_KEY:'',ANTHROPIC_DEFAULT_HAIKU_MODEL:'gpt-5-codex',ANTHROPIC_SMALL_FAST_MODEL:'gpt-5-codex',CLAUDE_CODE_OAUTH_TOKEN:'',CLAUDE_CONFIG_DIR:path.join(root,'config'),CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',HTTP_PROXY:'',HTTPS_PROXY:'',ALL_PROXY:'',NO_PROXY:'127.0.0.1,localhost'};
+  const store=new JsonStore(path.join(root,'state.json'));
+  const engine=new Engine({store,cliPath:cli,env,query:args=>query({...args,options:{...args.options,settingSources:[],tools:['Read'],systemPrompt:'This is an isolated local test. Read the requested file and report its token.',maxTurns:3}})});
+  const thread=engine.create(engine.addProject(root).id);
+  engine.on('diagnostic',d=>{const text=String(d?.message||'').trim();if(text)diags.push(text);});
+  engine.on('thread',t=>{const line=`${t.status}:${t.detail||''}`;if(states.at(-1)!==line)states.push(line);});
+  const waitDone=()=>new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{engine.removeListener('thread',onUpdate);reject(Error(`Responses CLI test timed out: ${thread.status} ${thread.error||''} | states=${JSON.stringify(states.slice(-8))} | requests=${requests} | stderr=${JSON.stringify(diags.slice(-5).join('\n').slice(-1000))}`));},90000);
+    function onUpdate(t){if(['done','error'].includes(t.status)){clearTimeout(timer);engine.removeListener('thread',onUpdate);resolve(t);}}
+    engine.on('thread',onUpdate);
+  });
+  try{
+    const done=waitDone();
+    await engine.send(thread.id,'Read note.txt and tell me the token.',{model:'gpt-5-codex'});
+    await done;
+    assert.equal(thread.status,'done',`${thread.error} | stderr=${diags.join('\n')}`);
+    assert.equal(sawToolResult,true,'fake Responses upstream should receive Read tool output');
+    const turn=thread.turns.at(-1);
+    assert.equal(turn.tools[0].name,'Read');assert.equal(turn.tools[0].status,'done');
+    assert.match(turn.answer,/OPENAI_RESPONSES_READ_OK_5521/);
+    const respReqs=seen.filter(r=>r.url==='/v1/responses');
+    assert.ok(respReqs.length>=2);
+    assert.equal(respReqs[0].headers.authorization,'Bearer dummy-resp-token');
+    assert.equal(respReqs[0].body.store,false);
+    const followUp=respReqs.find(r=>r.body.input.some(i=>i.type==='function_call_output'));
+    assert.ok(followUp,'follow-up request should include function_call_output');
+    assert.equal(followUp.body.input.some(i=>i.type==='function_call'&&i.call_id==='call_resp_1'),true);
+    assert.equal(followUp.body.input.some(i=>i.type==='function_call_output'&&i.call_id==='call_resp_1'&&String(i.output).includes('OPENAI_RESPONSES_READ_OK_5521')),true);
+  }finally{await engine.shutdown();proxy.close();upstream.closeAllConnections();upstream.close();}
+});

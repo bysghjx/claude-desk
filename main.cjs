@@ -190,7 +190,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   cursorProxy=new CursorCompatProxy();
   openaiProxy=new OpenAICompatProxy();
   if(engine.store.state.settings.providers?.some(p=>p.cursorCompat))await cursorProxy.start();
-  if(engine.store.state.settings.providers?.some(p=>p.format==='openai'))await openaiProxy.start();
+  if(engine.store.state.settings.providers?.some(p=>p.format==='openai'||p.format==='openai-responses'))await openaiProxy.start();
   providers=new Providers({store:engine.store,safeStorage,cursorProxy,openaiProxy});
   engine.providerOptions=()=>providers.options();
   const keepAwake=new KeepAwake(powerSaveBlocker);
@@ -383,7 +383,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   handle('notify:test',kind=>showNotice({kind:kind==='done'?'done':'question',title:kind==='done'?'任务完成提示音':'需要你处理的提示音',body:'这是轻柔提示音试听。任务完成与提问、审批使用不同的声音。'},{force:true}));
   // 服务商: saved encrypted; the window only ever sees names, addresses and models.
   const providerResult=()=>({...providers.list(),provider:providerInfo()});
-  handle('providers:save',async input=>{if(input?.format==='openai')await openaiProxy.start();else if(input?.cursorCompat===true)await cursorProxy.start();const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
+  handle('providers:save',async input=>{if(input?.format==='openai'||input?.format==='openai-responses')await openaiProxy.start();else if(input?.cursorCompat===true)await cursorProxy.start();const id=providers.save(input&&typeof input==='object'?input:{});return{...providerResult(),id};});
   handle('providers:remove',id=>{providers.remove(String(id));return providerResult();});
   handle('providers:activate',id=>{providers.setActive(id?String(id):'');return providerResult();});
   handle('providers:test',input=>providers.models(input&&typeof input==='object'?input:{}));

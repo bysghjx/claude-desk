@@ -57,7 +57,7 @@ test('Cursor compatibility is opt-in, survives editing, and changing it invalida
 test('OpenAI-compatible providers force token auth, disable Cursor compat, route via openaiProxy and set default models',async()=>{
   const routes=[],calls=[];
   const fetch=async(url,init)=>{calls.push([url,init.headers]);return{ok:true,json:async()=>({data:[{id:'gpt-5'},{id:'gpt-5-mini'}]})};};
-  const {store,providers}=setup({fetch,openaiProxy:{urlFor:(url,key)=>{routes.push([url,key]);return'http://127.0.0.1:32200/openai-tok';}}});
+  const {store,providers}=setup({fetch,openaiProxy:{urlFor:(url,key,format)=>{routes.push([url,key,format]);return'http://127.0.0.1:32200/openai-tok';}}});
   // Legacy provider without format defaults to anthropic.
   store.state.settings.providers=[{id:'old-1',name:'Legacy',baseUrl:'https://legacy.example.com',authType:'key',models:[],fastModel:'',cursorCompat:false,key:providers.encrypt('sk-old')}];
   assert.equal(providers.list().providers[0].format,'anthropic');
@@ -77,17 +77,28 @@ test('OpenAI-compatible providers force token auth, disable Cursor compat, route
   const withFast=providers.options();
   assert.equal(withFast.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,'gpt-5-mini');assert.equal(withFast.env.ANTHROPIC_SMALL_FAST_MODEL,'gpt-5-mini');
   assert.equal(withFast.env.ANTHROPIC_DEFAULT_SONNET_MODEL,'gpt-5');assert.notEqual(withFast.key,oa.key);
+  // Switching to openai-responses keeps token auth, passes format to openaiProxy, and changes cache key.
+  providers.save({id,name:'OpenAI',format:'openai-responses',baseUrl:'https://api.openai.com/v1',authType:'key',cursorCompat:true,key:'',models:'gpt-5-codex'});
+  const resp=providers.options();
+  assert.equal(providers.list().providers.find(p=>p.id===id).format,'openai-responses');
+  assert.equal(providers.list().providers.find(p=>p.id===id).cursorCompat,false);
+  assert.equal(routes.at(-1)[2],'openai-responses');
+  assert.notEqual(resp.key,withFast.key);
+  assert.equal(resp.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,'gpt-5-codex');
   // Switching format back to anthropic changes cache key and stops using openaiProxy.
   providers.save({id,name:'OpenAI',format:'anthropic',baseUrl:'https://api.openai.com/v1',key:'',models:'gpt-5'});
   const anth=providers.options();
-  assert.notEqual(anth.key,withFast.key);assert.equal(anth.env.ANTHROPIC_BASE_URL,'https://api.openai.com/v1');
+  assert.notEqual(anth.key,resp.key);assert.equal(anth.env.ANTHROPIC_BASE_URL,'https://api.openai.com/v1');
   // models() joins /models correctly with or without /v1 and uses Bearer only.
   await providers.models({format:'openai',baseUrl:'https://api.openai.com/v1',authType:'key',key:'sk-1'});
-  await providers.models({format:'openai',baseUrl:'https://api.deepseek.com',authType:'key',key:'sk-2'});
+  await providers.models({format:'openai-responses',baseUrl:'https://api.deepseek.com',authType:'key',key:'sk-2'});
   assert.equal(calls[0][0],'https://api.openai.com/v1/models');assert.deepEqual(calls[0][1],{Authorization:'Bearer sk-1'});
   assert.equal(calls[1][0],'https://api.deepseek.com/v1/models');assert.deepEqual(calls[1][1],{Authorization:'Bearer sk-2'});
-  // UI list renders OpenAI format label.
+  // UI list renders OpenAI format labels.
   const {providerListHtml}=await import('../ui/src/views/providers.mjs');
-  const html=providerListHtml({active:'',providers:[{id:'1',name:'DS',format:'openai',baseUrl:'https://api.deepseek.com/v1',authType:'token',models:['deepseek-chat']}]});
-  assert.match(html,/OpenAI 格式/);
+  const html=providerListHtml({active:'',providers:[
+    {id:'1',name:'DS',format:'openai',baseUrl:'https://api.deepseek.com/v1',authType:'token',models:['deepseek-chat']},
+    {id:'2',name:'Codex',format:'openai-responses',baseUrl:'https://api.openai.com/v1',authType:'token',models:['gpt-5-codex']}
+  ]});
+  assert.match(html,/OpenAI 格式/);assert.match(html,/OpenAI Responses/);
 });

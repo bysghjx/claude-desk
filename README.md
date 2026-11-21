@@ -28,7 +28,7 @@ Beta 用户发现比当前版本更新的正式版时会优先升级正式版，
 
 后台通知使用两种轻柔短音：提问、审批和错误使用待处理音，任务完成使用完成音，替代 Windows 默认提示音。可在「设置 → 通知与电源」分别试听；空闲关闭到托盘时不再显示后台运行提示。
 
-在「设置 → 服务商」添加服务商时，可将接口格式选为 **OpenAI 兼容（/v1/chat/completions）**，直接接入 OpenAI、DeepSeek、通义或 OpenAI 格式的中转站，无需另装 LiteLLM。Claude Desk 会在本机 127.0.0.1 代理转换请求与流式响应，固定使用 Bearer 认证，与 Cursor 兼容模式互斥。已知限制：
+在「设置 → 服务商」添加服务商时，可将接口格式选为 **OpenAI Chat（`/v1/chat/completions`）** 或 **OpenAI Responses（`/v1/responses`，适用于 Codex 系列、o3-pro 等仅支持 Responses 接口的模型与中转站）**，直接接入 OpenAI、DeepSeek、通义或 OpenAI 格式的中转站，无需另装 LiteLLM。Claude Desk 会在本机 127.0.0.1 代理转换请求与流式响应，固定使用 Bearer 认证，与 Cursor 兼容模式互斥。已知限制：
 
 - 不支持 Anthropic 提示缓存，长会话费用更高、首字响应也可能更慢。
 - WebSearch 等服务端工具不可用；PDF 附件无法发送给 OpenAI 格式模型（会降级为文字提示）；图片需要所选模型本身支持识图。

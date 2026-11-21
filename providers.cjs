@@ -6,8 +6,9 @@
 const {randomUUID,createHash}=require('node:crypto');
 const {joinUrl}=require('./openai-compat.cjs');
 const AUTH_TYPES=new Set(['token','key']);
-const FORMATS=new Set(['anthropic','openai']);
+const FORMATS=new Set(['anthropic','openai','openai-responses']);
 const formatOf=value=>FORMATS.has(value)?value:'anthropic';
+const isOpenAI=format=>format==='openai'||format==='openai-responses';
 const MODEL=/^[\w.:/\-\[\]]{1,150}$/;
 
 function cleanModels(value){
@@ -40,8 +41,8 @@ class Providers{
   // `input.key` blank keeps the saved key when editing.
   save(input={}){
     const name=String(input.name||'').trim().slice(0,40);if(!name)throw Error('请填写服务商名称');
-    const format=formatOf(input.format),baseUrl=cleanUrl(input.baseUrl);
-    const authType=format==='openai'?'token':(AUTH_TYPES.has(input.authType)?input.authType:'token');
+    const format=formatOf(input.format),openai=isOpenAI(format),baseUrl=cleanUrl(input.baseUrl);
+    const authType=openai?'token':(AUTH_TYPES.has(input.authType)?input.authType:'token');
     const models=cleanModels(input.models),fastModel=String(input.fastModel||'').trim();
     if(fastModel&&!MODEL.test(fastModel))throw Error('快速模型 ID 不合法');
     const existing=input.id&&this.all.find(p=>p.id===input.id);
@@ -49,7 +50,7 @@ class Providers{
     const typed=String(input.key||'').trim();
     if(!typed&&!existing?.key)throw Error('请填写密钥');
     if(typed.length>4000)throw Error('密钥太长');
-    const cursorCompat=format==='openai'?false:input.cursorCompat===true;
+    const cursorCompat=openai?false:input.cursorCompat===true;
     const provider={id:existing?.id||randomUUID(),name,format,baseUrl,authType,models,fastModel,cursorCompat,key:typed?this.encrypt(typed):existing.key};
     this.settings.providers=existing?this.all.map(p=>p===existing?provider:p):[...this.all,provider];
     this.store.save();return provider.id;
@@ -70,17 +71,17 @@ class Providers{
   options(){
     let p;try{p=this.active();}catch{return null;}
     if(!p)return null;
-    const format=formatOf(p.format),authType=format==='openai'?'token':p.authType;
+    const format=formatOf(p.format),openai=isOpenAI(format),authType=openai?'token':p.authType;
     const env={ANTHROPIC_BASE_URL:p.baseUrl,ANTHROPIC_AUTH_TOKEN:authType==='token'?p.key:'',ANTHROPIC_API_KEY:authType==='key'?p.key:''};
     const firstModel=Array.isArray(p.models)&&p.models[0]||'';
-    const fast=p.fastModel||(format==='openai'?firstModel:'');
+    const fast=p.fastModel||(openai?firstModel:'');
     if(fast)Object.assign(env,{ANTHROPIC_DEFAULT_HAIKU_MODEL:fast,ANTHROPIC_SMALL_FAST_MODEL:fast});
-    if(format==='openai'&&firstModel)Object.assign(env,{ANTHROPIC_DEFAULT_SONNET_MODEL:firstModel,ANTHROPIC_DEFAULT_OPUS_MODEL:firstModel});
-    const cursorCompat=format==='openai'?false:Boolean(p.cursorCompat);
+    if(openai&&firstModel)Object.assign(env,{ANTHROPIC_DEFAULT_SONNET_MODEL:firstModel,ANTHROPIC_DEFAULT_OPUS_MODEL:firstModel});
+    const cursorCompat=openai?false:Boolean(p.cursorCompat);
     const key=p.id+':'+createHash('sha256').update(JSON.stringify([env,cursorCompat,format])).digest('hex').slice(0,16);
-    if(format==='openai'){
+    if(openai){
       if(!this.openaiProxy)throw Error('OpenAI 兼容服务不可用');
-      env.ANTHROPIC_BASE_URL=this.openaiProxy.urlFor(p.baseUrl,key);
+      env.ANTHROPIC_BASE_URL=this.openaiProxy.urlFor(p.baseUrl,key,format);
       env.NO_PROXY=[process.env.NO_PROXY||process.env.no_proxy,'127.0.0.1','localhost'].filter(Boolean).join(',');
       env.no_proxy=env.NO_PROXY;
     }else if(cursorCompat){
@@ -95,11 +96,11 @@ class Providers{
   // Reads /v1/models with the given (unsaved) settings, or the saved provider's when `input.id` is set and no key is typed.
   async models(input){
     const saved=input.id&&this.all.find(p=>p.id===input.id);
-    const format=formatOf(input.format!==undefined?input.format:saved?.format);
-    const baseUrl=cleanUrl(input.baseUrl||saved?.baseUrl),authType=format==='openai'?'token':(AUTH_TYPES.has(input.authType)?input.authType:saved?.authType||'token');
+    const format=formatOf(input.format!==undefined?input.format:saved?.format),openai=isOpenAI(format);
+    const baseUrl=cleanUrl(input.baseUrl||saved?.baseUrl),authType=openai?'token':(AUTH_TYPES.has(input.authType)?input.authType:saved?.authType||'token');
     const key=String(input.key||'').trim()||(saved?this.decrypt(saved.key):'');if(!key)throw Error('请填写密钥');
-    const url=format==='openai'?joinUrl(baseUrl,'/models'):baseUrl+'/v1/models';
-    const headers=format==='openai'?{Authorization:`Bearer ${key}`}:this.headers(authType,key);
+    const url=openai?joinUrl(baseUrl,'/models'):baseUrl+'/v1/models';
+    const headers=openai?{Authorization:`Bearer ${key}`}:this.headers(authType,key);
     const response=await this.fetch(url,{signal:AbortSignal.timeout(15000),headers});
     if(!response.ok)throw Error(response.status===401||response.status===403?`密钥被拒绝（HTTP ${response.status}）`:`连接失败：HTTP ${response.status}`);
     const json=await response.json().catch(()=>({}));
