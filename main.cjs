@@ -29,6 +29,7 @@ const {GitHubUpdates,RELEASES}=require('./github-updates.cjs');
 const {createUpdateFetch}=require('./update-network.cjs');
 const {mergeUpdateScan}=require('./updates.cjs');
 const {attachContextMenu}=require('./context-menu.cjs');
+const {startStallLog}=require('./stall-log.cjs');
 const {randomUUID}=require('node:crypto');
 const exec = promisify(execFile);
 let win, engine, extensions, agentWindows, terminals, tray, providers, cursorProxy, openaiProxy, quitting = false;
@@ -55,6 +56,8 @@ async function serveApp(request){
 }
 const primaryInstance=app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
+// 卡顿记录: ~/.claude-desk/logs/stalls.log names what the main process was doing when it stopped responding.
+const stalls=primaryInstance?startStallLog(path.join(stableRoot,'logs','stalls.log')):null;
 app.on('second-instance', () => { win?.show(); win?.focus(); });
 
 function ensureStartMenuShortcut(){
@@ -121,7 +124,7 @@ function folder(id) { const t = engine.store.state.threads.find(t => t.id === id
 function handle(name, callback) {
   ipcMain.handle(name, async (event, ...args) => {
     if(event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame) throw Error('无效请求来源');
-    return callback(...args);
+    const done=stalls?.begin(name);try{return callback(...args);}finally{done?.();}
   });
 }
 function saveUi(value={}) {
@@ -259,7 +262,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(result.canceled)return false;fs.writeFileSync(result.filePath,usageCsv(usageSummary(engine.store.state,filter||{})));return true;
   });
   handle('ui:save',value=>saveUi(value));
-  ipcMain.on('ui:sync',(event,value)=>{try{if(event.sender!==win?.webContents||event.senderFrame!==win.webContents.mainFrame)throw Error('无效来源');event.returnValue=saveUi(value);}catch{event.returnValue=false;}});
+  ipcMain.on('ui:sync',(event,value)=>{try{if(event.sender!==win?.webContents||event.senderFrame!==win.webContents.mainFrame)throw Error('无效来源');const done=stalls?.begin('ui:sync');try{event.returnValue=saveUi(value);}finally{done?.();}}catch{event.returnValue=false;}});
   handle('project:add', async () => { const r = await dialog.showOpenDialog(win, { title: '选择项目文件夹', properties: ['openDirectory'] }); return r.canceled ? null : engine.addProject(r.filePaths[0]); });
   const worktrees=new Worktrees(path.join(dataRoot,'worktrees'));
   handle('thread:create', async (id, options={}) => threadOut(engine.create(id || null, id && options?.worktree ? { worktree: await worktrees.create(project(id).path) } : {})));
@@ -495,6 +498,7 @@ if(primaryInstance)app.whenReady().then(async () => {
   win.webContents.on('did-attach-webview',(_event,contents)=>{contents.setWindowOpenHandler(({url})=>{if(PAGE_URL.test(url))contents.loadURL(url);return{action:'deny'};});contents.on('will-navigate',(e,url)=>{if(!PAGE_URL.test(url))e.preventDefault();});contents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));});
   win.on('closed',()=>{agentWindows.close();terminals?.closeAll();});
   win.on('focus',()=>win.flashFrame(false));
+  win.on('unresponsive',()=>stalls?.note('窗口页面无响应'));win.on('responsive',()=>stalls?.note('窗口页面恢复响应'));
   attachContextMenu(win.webContents,{Menu,clipboard,shell,onQuote:text=>win.webContents.send('app:command',{quote:text})});
   // Closing hides the window to the tray (unless turned off in 设置); quitting from the tray menu really closes.
   tray=new DeskTray({Tray,Menu,icon:icon.resize({width:16,height:16}),onAction:({action,threadId})=>{
