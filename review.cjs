@@ -19,9 +19,13 @@ function inside(top,relative){
   if(!rel||rel.startsWith('..')||path.isAbsolute(rel)||rel.split(/[\\/]/)[0]==='.git')throw Error('文件不在仓库内');
   return target;
 }
-function textLines(file){
+// Line counts for new files are read asynchronously, a few at a time, and only for the
+// first COUNT_LIMIT: thousands of untracked files used to hold the main process (and the
+// window) for seconds on every refresh of the changes panel.
+const COUNT_LIMIT=1000,COUNT_PARALLEL=8;
+async function textLines(file){
   if(archivePath(file))return null;
-  try{const stat=fs.statSync(file);if(!stat.isFile()||stat.size>2*1024*1024)return null;const text=fs.readFileSync(file,'utf8');if(text.includes('\0'))return null;return text===''?0:text.replace(/\n$/,'').split('\n').length;}catch{return null;}
+  try{const stat=await fs.promises.stat(file);if(!stat.isFile()||stat.size>2*1024*1024)return null;const text=await fs.promises.readFile(file,'utf8');if(text.includes('\0'))return null;return text===''?0:text.replace(/\n$/,'').split('\n').length;}catch{return null;}
 }
 async function changes(projectPath){
   let info;try{info=await repo(projectPath);}catch{return{isGit:false,files:[],branch:''};}
@@ -36,11 +40,15 @@ async function changes(projectPath){
   const counts=new Map();
   const numstat=async args=>{for(const row of (await run(top,['diff','--numstat','-z',...args],{allowFail:true})).stdout.split('\0')){const m=row.match(/^(-|\d+)\t(-|\d+)\t(.*)$/s);if(!m||!m[3])continue;const c=counts.get(m[3])||{added:0,removed:0,binary:false};if(m[1]==='-')c.binary=true;else{c.added+=Number(m[1]);c.removed+=Number(m[2]);}counts.set(m[3],c);}};
   if(hasHead)await numstat(['HEAD']);else{await numstat(['--cached']);await numstat([]);}
+  const uncounted=[];
   for(const file of files){
     const c=counts.get(file.path);
     if(c)Object.assign(file,c);
-    else if(file.untracked||(!hasHead&&file.index==='A')){const n=textLines(path.join(top,file.path));if(n==null)file.binary=true;else file.added=n;}
+    else if(file.untracked||(!hasHead&&file.index==='A'))uncounted.push(file);
   }
+  for(const file of uncounted.slice(COUNT_LIMIT))file.uncounted=true;
+  const todo=uncounted.slice(0,COUNT_LIMIT);let next=0;
+  await Promise.all(Array.from({length:COUNT_PARALLEL},async()=>{while(next<todo.length){const file=todo[next++],n=await textLines(path.join(top,file.path));if(n==null)file.binary=true;else file.added=n;}}));
   let branch='';try{branch=(await run(top,['branch','--show-current'])).stdout.trim();}catch{}
   return{isGit:true,files,branch,prefix,hasHead,root:top};
 }

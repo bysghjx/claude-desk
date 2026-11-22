@@ -7,7 +7,7 @@ export function createReview({ store, api, toast, confirm, inspector }) {
   const baseName=p=>p.split('/').pop();
   const dirName=p=>p.includes('/')?p.slice(0,p.lastIndexOf('/')):'';
   const kind=f=>f.untracked||f.index==='A'?['新','added']:f.index==='D'||f.worktree==='D'?['删','deleted']:f.index==='R'?['移','renamed']:['改','modified'];
-  const delta=f=>f.binary?'<span class="step-delta"><span class="muted">二进制</span></span>':`<span class="step-delta"><span class="plus">+${f.added}</span><span class="minus">−${f.removed}</span></span>`;
+  const delta=f=>f.uncounted?'<span class="step-delta"><span class="muted">未统计</span></span>':f.binary?'<span class="step-delta"><span class="muted">二进制</span></span>':`<span class="step-delta"><span class="plus">+${f.added}</span><span class="minus">−${f.removed}</span></span>`;
   function render(p,changes){
     const sig=JSON.stringify([p.id,changes]),list=$('#file-list');if(sig===signature&&project?.id===p.id&&list.dataset.view==='review')return;
     project=p;model=changes;signature=sig;list.dataset.view='review';

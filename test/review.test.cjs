@@ -18,6 +18,17 @@ test('changes report per-file counts for modified, new and staged files',async()
   assert.match(await review.diff(dir,'new.md'),/^\+a$/m);assert.match(await review.diff(dir,'src/a.js'),/^-two$/m);
   assert.deepEqual(await review.changes(scratch).then(r=>r.isGit),false);
 });
+test('thousands of new files are listed without reading them all, and the main thread is never held for long',async()=>{
+  const dir=repo();fs.mkdirSync(path.join(dir,'gen'));
+  for(let i=0;i<1200;i++)fs.writeFileSync(path.join(dir,'gen',`f${String(i).padStart(4,'0')}.txt`),'x\ny\n');
+  let last=Date.now(),worst=0;const timer=setInterval(()=>{const now=Date.now();worst=Math.max(worst,now-last);last=now;},10);
+  const result=await review.changes(dir);clearInterval(timer);
+  const fresh=result.files.filter(f=>f.path.startsWith('gen/'));
+  assert.equal(fresh.length,1200);
+  assert.equal(fresh.filter(f=>f.uncounted).length,200);
+  assert.equal(fresh.filter(f=>!f.uncounted&&f.added===2).length,1000);
+  assert.ok(worst<250,`event loop blocked for ${worst} ms`);
+});
 test('stage, unstage, revert and commit act on single files inside the repository',async()=>{
   const dir=repo();fs.writeFileSync(path.join(dir,'src/a.js'),'changed\n');fs.writeFileSync(path.join(dir,'new.md'),'new\n');fs.writeFileSync(path.join(dir,'keep.txt'),'edited\n');
   await review.stage(dir,['keep.txt'],true);assert.equal((await review.changes(dir)).files.find(f=>f.path==='keep.txt').staged,true);
