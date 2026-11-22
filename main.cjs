@@ -527,5 +527,5 @@ if(primaryInstance)app.whenReady().then(async () => {
   }
   app.on('activate',()=>{win?.show();});
 }).catch(e=>{dialog.showErrorBox('Claude Desk 启动失败',e.message); app.quit();});
-app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close();closeSearchWorker(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().finally(()=>{cursorProxy?.close();openaiProxy?.close();engine.store.close?.();app.quit();}); });
+app.on('before-quit', e => { terminals?.closeAll(); tray?.destroy();notificationSounds.close();closeSearchWorker(); if(quitting || !engine) return; e.preventDefault(); quitting=true; engine.shutdown().then(()=>engine.store.flush?.()).finally(()=>{cursorProxy?.close();openaiProxy?.close();engine.store.close?.();app.quit();}); });
 app.on('window-all-closed',()=>app.quit());

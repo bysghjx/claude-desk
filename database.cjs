@@ -1,7 +1,7 @@
 const fs=require('./disk-fs.cjs');const path=require('node:path');
 const {randomUUID,createHash}=require('node:crypto');const {DatabaseSync}=require('node:sqlite');
 const {JsonStore}=require('./engine.cjs');const {readState,mergeLegacy,atomicWrite}=require('./storage.cjs');
-const {legacyUsage}=require('./usage.cjs');const {recordChunks,readRecord,writeJson}=require('./json-stream.cjs');
+const {legacyUsage}=require('./usage.cjs');const {recordChunks,readRecord,writeJson,jsonChunks}=require('./json-stream.cjs');
 const fingerprint=value=>{const hash=createHash('sha256');for(const chunk of recordChunks(value))hash.update(chunk);return hash.digest('hex');};
 const TABLES=`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY,body TEXT NOT NULL);
@@ -64,7 +64,7 @@ class DatabaseStore{
         const backup=path.join(root,'migration-backup.json');if(!fs.existsSync(backup))atomicWrite(backup,this.state);
         this.revision=0;this.datasetId=randomUUID();this.normalize();this.save();
       }
-      this.mirror(new Set(this.state.threads.map(t=>t.id)));
+      this.mirror(this.staleMirrors());
     }catch(e){this.db.close();throw Error('会话数据库未能打开，原文件已保留：'+e.message,{cause:e});}
   }
   read(kind,owner,id){
@@ -147,17 +147,85 @@ class DatabaseStore{
       }catch(e){this.db.exec('ROLLBACK');throw e;}
     }finally{this.db.exec('PRAGMA synchronous=FULL');}
   }
+  // The sessions folder holds one JSON copy per thread. sessions-index.json records,
+  // per copy, a digest of the saved records it was written from and the file's size and
+  // mtime, so a restart rewrites only copies that are missing, edited or behind the
+  // database (e.g. after a crash lost the copies a light save had deferred).
+  mirrorDigest(id){const record=this.prior.get(id);if(!record)return'';const hash=createHash('sha256').update(record.hash);for(const [turn,{hash:value}] of record.turns)hash.update('\n'+turn+':'+value);return hash.digest('hex');}
+  mirrorName(id){return createHash('sha256').update(id).digest('hex')+'.json';}
+  loadMirrorIndex(){
+    if(this.mirrorIndex)return this.mirrorIndex;
+    try{const index=JSON.parse(fs.readFileSync(path.join(this.root,'sessions-index.json'),'utf8'));if(index.version===1&&index.dataset===this.datasetId&&index.files&&typeof index.files==='object')return this.mirrorIndex=index;}catch{}
+    return this.mirrorIndex={version:1,dataset:this.datasetId,files:{}};
+  }
+  staleMirrors(){
+    const index=this.loadMirrorIndex(),folder=path.join(this.root,'sessions'),stale=new Set();
+    for(const thread of this.state.threads){
+      const name=this.mirrorName(thread.id),entry=index.files[name];let stat;try{stat=fs.statSync(path.join(folder,name));}catch{}
+      if(!entry||!stat||entry.digest!==this.mirrorDigest(thread.id)||entry.size!==stat.size||entry.mtimeMs!==stat.mtimeMs)stale.add(thread.id);
+    }
+    return stale;
+  }
+  // Copies are written in the background, one at a time: each thread is serialized in a
+  // single tick (a consistent snapshot), then written and fsynced off the main thread.
+  // A light save only queues its threads; the next full save, mirror() or close() writes them.
   mirror(dirty=new Set()){
     const pending=this.mirrorDirty||=new Set();for(const id of dirty)pending.add(id);
+    if(this.closed)return Promise.resolve();this.mirrorRequested=true;
+    return this.mirroring||=this.mirrorRun().finally(()=>{this.mirroring=null;if(this.mirrorRequested&&!this.closed)this.mirror();});
+  }
+  async mirrorRun(){
+    const pending=this.mirrorDirty,folder=path.join(this.root,'sessions');
     try{
-      const folder=path.join(this.root,'sessions');fs.mkdirSync(folder,{recursive:true});const keep=new Set();
-      for(const thread of this.state.threads){const name=createHash('sha256').update(thread.id).digest('hex')+'.json';keep.add(name);const file=path.join(folder,name);if(pending.has(thread.id)||!fs.existsSync(file)){writeJson(file,thread);pending.delete(thread.id);}}
-      for(const name of fs.readdirSync(folder))if(/^[a-f0-9]{64}\.json(?:\.tmp)?$/.test(name)&&!keep.has(name))fs.unlinkSync(path.join(folder,name));
-      this.warning='';
+      while(this.mirrorRequested&&!this.closed){
+        this.mirrorRequested=false;await fs.promises.mkdir(folder,{recursive:true});
+        for(const thread of [...this.state.threads]){
+          if(this.closed)return;
+          const name=this.mirrorName(thread.id),file=path.join(folder,name);
+          if(!this.state.threads.includes(thread)||(!pending.has(thread.id)&&fs.existsSync(file)))continue;
+          pending.delete(thread.id);this.mirrorActive=thread.id;
+          try{await this.mirrorWrite(file,name,thread);}catch(e){pending.add(thread.id);throw e;}finally{this.mirrorActive=null;}
+        }
+        this.mirrorPrune(true);await this.mirrorSaveIndex();
+      }
+      if(!this.closed)this.warning='';
     }catch{this.warning='数据库已保存，但独立会话副本写入失败，请检查磁盘空间。';}
   }
+  async mirrorWrite(file,name,thread){
+    const digest=this.mirrorDigest(thread.id),chunks=[...jsonChunks(thread)],temp=file+'.'+randomUUID().slice(0,8)+'.tmp';
+    try{
+      const handle=await fs.promises.open(temp,'w');
+      try{for(const chunk of chunks)await handle.write(chunk);await handle.sync();}finally{await handle.close();}
+      await fs.promises.rename(temp,file);
+    }catch(e){await fs.promises.rm(temp,{force:true}).catch(()=>{});throw e;}
+    this.mirrorRecord(name,digest,await fs.promises.stat(file));
+  }
+  mirrorRecord(name,digest,stat){const files=this.loadMirrorIndex().files;if(digest)files[name]={digest,size:stat.size,mtimeMs:stat.mtimeMs};else delete files[name];}
+  // Removes copies of deleted threads; temp files only when no write of ours is in flight.
+  mirrorPrune(temps){
+    const folder=path.join(this.root,'sessions'),keep=new Set(this.state.threads.map(t=>this.mirrorName(t.id))),files=this.loadMirrorIndex().files,ids=new Set(this.state.threads.map(t=>t.id));
+    for(const id of this.mirrorDirty||[])if(!ids.has(id))this.mirrorDirty.delete(id);
+    for(const name of Object.keys(files))if(!keep.has(name))delete files[name];
+    let names=[];try{names=fs.readdirSync(folder);}catch{}
+    for(const name of names){const match=/^([a-f0-9]{64}\.json)(\.(?:[a-f0-9]{8}\.)?tmp)?$/.exec(name);if(match&&(match[2]?temps:!keep.has(match[1])))fs.rmSync(path.join(folder,name),{force:true});}
+  }
+  async mirrorSaveIndex(){const file=path.join(this.root,'sessions-index.json'),temp=file+'.'+randomUUID().slice(0,8)+'.tmp';await fs.promises.writeFile(temp,JSON.stringify(this.loadMirrorIndex()));await fs.promises.rename(temp,file);}
+  // Waits for the background copies, e.g. before quitting.
+  async flush(){while(this.mirroring)await this.mirroring;}
   export(file){writeJson(file,this.state);}
   info(){return{database:this.file,datasetId:this.datasetId,revision:this.revision,storageVersion:2,migrationBackup:this.migrationBackup,threads:this.state.threads.length,turns:this.state.threads.reduce((n,t)=>n+t.turns.length,0),warning:this.warning};}
-  close(){if(this.mirrorDirty?.size)this.mirror();this.db.close();}
+  // Writes what is still queued synchronously; a copy being written in the background
+  // finishes on its own (or is redone on the next start).
+  close(){
+    this.closed=true;
+    try{
+      if(this.mirrorDirty?.size){
+        const folder=path.join(this.root,'sessions');
+        for(const thread of this.state.threads)if(this.mirrorDirty.has(thread.id)&&thread.id!==this.mirrorActive){const name=this.mirrorName(thread.id),file=path.join(folder,name);writeJson(file,thread);this.mirrorDirty.delete(thread.id);this.mirrorRecord(name,this.mirrorDigest(thread.id),fs.statSync(file));}
+        this.mirrorPrune(!this.mirrorActive);const index=path.join(this.root,'sessions-index.json');fs.writeFileSync(index+'.tmp',JSON.stringify(this.loadMirrorIndex()));fs.renameSync(index+'.tmp',index);
+      }
+    }catch{this.warning='数据库已保存，但独立会话副本写入失败，请检查磁盘空间。';}
+    this.db.close();
+  }
 }
 module.exports={DatabaseStore};
