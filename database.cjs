@@ -3,6 +3,30 @@ const {randomUUID,createHash}=require('node:crypto');const {DatabaseSync}=requir
 const {JsonStore}=require('./engine.cjs');const {readState,mergeLegacy,atomicWrite}=require('./storage.cjs');
 const {legacyUsage}=require('./usage.cjs');const {recordChunks,readRecord,writeJson,jsonChunks}=require('./json-stream.cjs');
 const fingerprint=value=>{const hash=createHash('sha256');for(const chunk of recordChunks(value))hash.update(chunk);return hash.digest('hex');};
+// A trace lists a record's structure and leaf values. Strings are immutable, so a value
+// that still matches its trace serializes exactly as before: comparing it costs one step
+// per node and never reads string contents. Values with toJSON never match.
+const OBJECT=Symbol('object'),ARRAY=Symbol('array');
+function trace(value,out=[]){
+  if(value===null||typeof value!=='object')out.push(value);
+  else if(Array.isArray(value)){out.push(ARRAY,value.length);for(let i=0;i<value.length;i++)trace(value[i],out);}
+  else{const keys=Object.keys(value);out.push(OBJECT,keys.length);for(const key of keys){out.push(key);trace(value[key],out);}}
+  return out;
+}
+function traced(value,list){
+  let at=0;
+  const same=item=>{
+    if(item===null||typeof item!=='object')return at<list.length&&list[at++]===item;
+    if(typeof item.toJSON==='function')return false;
+    if(Array.isArray(item)){if(list[at++]!==ARRAY||list[at++]!==item.length)return false;for(let i=0;i<item.length;i++)if(!same(item[i]))return false;return true;}
+    const keys=Object.keys(item);if(list[at++]!==OBJECT||list[at++]!==keys.length)return false;
+    for(const key of keys)if(list[at++]!==key||!same(item[key]))return false;
+    return true;
+  };
+  return same(value)&&at===list.length;
+}
+// Hashing first also rejects circular values before they are traced.
+const entry=(value,position)=>{const hash=fingerprint(value);return{hash,position,trace:trace(value)};};
 const TABLES=`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY,body TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,body TEXT NOT NULL);
@@ -73,12 +97,13 @@ class DatabaseStore{
     return readRecord(parts());
   }
   normalize(){const normal=Object.create(JsonStore.prototype);normal.state=this.state;JsonStore.normalize(normal);this.state=normal.state;}
-  describe(thread,position){const {turns,...meta}=thread;return{hash:fingerprint(meta),position,turns:new Map(turns.map((turn,index)=>[turn.id,{hash:fingerprint(turn),position:index}]))};}
-  remember(){this.prior=new Map(this.state.threads.map((t,i)=>[t.id,this.describe(t,i)]));this.usagePrior=new Map((this.state.usageLog||[]).map((row,i)=>[row.id,{hash:fingerprint(row),position:i}]));}
+  describe(thread,position){const {turns,...meta}=thread;return{...entry(meta,position),turns:new Map(turns.map((turn,index)=>[turn.id,entry(turn,index)]))};}
+  remember(){this.prior=new Map(this.state.threads.map((t,i)=>[t.id,this.describe(t,i)]));this.usagePrior=new Map((this.state.usageLog||[]).map((row,i)=>[row.id,entry(row,i)]));}
   // A light save (`durable:false`, while Claude streams) only looks at the threads in
   // `touched`, commits without waiting for the disk (WAL with synchronous=NORMAL: an
   // app crash loses nothing, a power cut at most the last moments) and leaves the JSON
-  // copies to the next full save. Every other save checks every thread and turn.
+  // copies to the next full save. Every other save checks every thread and turn: a record
+  // that still matches the trace saved with it keeps its hash, the rest are hashed again.
   save(migration=false,{durable=true,touched=null}={}){
     const metadata={...this.state,savedAt:Date.now()};delete metadata.threads;delete metadata.usageLog;
     const next=new Map(),usage=new Map(),dirty=new Set(),light=!durable&&touched instanceof Set;
@@ -92,8 +117,9 @@ class DatabaseStore{
       const insert=this.db.prepare('INSERT INTO records(kind,owner,id,position,part,body) VALUES(?,?,?,?,?,?)');
       const move=this.db.prepare('UPDATE records SET position=? WHERE kind=? AND owner=? AND id=?');
       const write=(kind,owner,id,position,value,prior)=>{
-        const hash=fingerprint(value),record={hash,position};
-        if(hash!==prior?.hash){erase.run(kind,owner,id);let part=0;for(const body of recordChunks(value))insert.run(kind,owner,id,position,part++,body);}
+        if(prior?.trace&&traced(value,prior.trace)){if(position!==prior.position)move.run(position,kind,owner,id);return{...prior,position};}
+        const record=entry(value,position);
+        if(record.hash!==prior?.hash){erase.run(kind,owner,id);let part=0;for(const body of recordChunks(value))insert.run(kind,owner,id,position,part++,body);}
         else if(position!==prior.position)move.run(position,kind,owner,id);
         return record;
       };
@@ -128,8 +154,8 @@ class DatabaseStore{
     this.prior=next;this.usagePrior=usage;
     if(light)for(const id of dirty)(this.mirrorDirty||=new Set()).add(id);else this.mirror(dirty);
   }
-  // Settings, projects and drafts only, e.g. while typing. save() hashes every turn,
-  // which grows with the history; changed threads are left to the next save().
+  // Settings, projects and drafts only, e.g. while typing. save() walks every turn and
+  // waits for the disk; changed threads are left to the next save().
   // Without the fsync (synchronous=NORMAL) a power cut can lose the last few drafts, never the database.
   saveState(){
     const metadata={...this.state,savedAt:Date.now()};delete metadata.threads;delete metadata.usageLog;

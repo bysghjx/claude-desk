@@ -95,3 +95,45 @@ test('a full save returns before the JSON copy is written, and close writes what
   assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).turns[0].answer,'last');
   const reopened=new DatabaseStore(root);assert.equal(reopened.staleMirrors().size,0);reopened.close();
 });
+test('a full save serializes only the records that changed, and catches every kind of in-place edit',()=>{
+  // database.cjs takes recordChunks when it loads: count what a fresh copy serializes.
+  const stream=require('../json-stream.cjs'),original=stream.recordChunks,serialized=[],file=require.resolve('../database.cjs');
+  stream.recordChunks=value=>{serialized.push(value);return original(value);};delete require.cache[file];
+  let Store;try{({DatabaseStore:Store}=require('../database.cjs'));}finally{stream.recordChunks=original;delete require.cache[file];}
+  const root=fixture(),store=new Store(root),turn=(id,answer)=>({id,user:'q',answer,tools:[{id:'x',status:'done',output:'out'}],usage:{output:1}});
+  store.state.threads.push({id:'a',title:'one',turns:[turn('a1','first'),turn('a2','second')]},{id:'b',title:'two',turns:[turn('b1','third')]});store.save();
+  const turns=()=>serialized.filter(value=>store.state.threads.some(t=>t.turns.includes(value))).map(value=>value.id);
+  const rows=()=>store.db.prepare("SELECT kind,owner,id,position,part,body FROM records WHERE kind IN ('thread','turn') ORDER BY kind,owner,id,part").all();
+  const check=(label,edit,expected)=>{
+    const before=rows();serialized.length=0;edit(store.state.threads);store.save();
+    assert.deepEqual(turns().sort(),expected.flatMap(id=>id.endsWith('=')?[id.slice(0,-1)]:[id,id]).sort(),label+': hashed and written once each, or hashed alone (=)');
+    const again=new Store(root);assert.deepEqual(again.state.threads,JSON.parse(JSON.stringify(store.state.threads)),label+': saved');again.close();
+    if(expected.every(id=>id.endsWith('=')))assert.deepEqual(rows(),before,label+': nothing rewritten');
+  };
+  check('nothing changed',()=>{},[]);
+  check('same-length string',t=>{t[0].turns[0].answer='FIRST';},['a1']);
+  check('nested output',t=>{t[1].turns[0].tools[0].output='new';},['b1']);
+  check('added key',t=>{t[0].turns[1].error='boom';},['a2']);
+  check('deleted key',t=>{delete t[0].turns[1].error;},['a2']);
+  check('number',t=>{t[0].turns[0].usage.output=2;},['a1']);
+  check('array push',t=>{t[1].turns[0].tools.push({id:'y',status:'done'});},['b1']);
+  check('array element replaced by a different type',t=>{t[1].turns[0].tools[1]='y';},['b1']);
+  check('toJSON value',t=>{t[0].turns[0].finishedAt=new Date(5);},['a1']);
+  check('toJSON value again',()=>{},['a1=']);
+  delete store.state.threads[0].turns[0].finishedAt;store.save();
+  // Equal content in new objects is neither hashed nor rewritten.
+  let before=rows();serialized.length=0;store.state.threads[0].turns[1]=structuredClone(store.state.threads[0].turns[1]);store.save();
+  assert.deepEqual(turns(),[]);assert.deepEqual(rows(),before);
+  // Moves update positions only; thread metadata is traced like turns.
+  serialized.length=0;store.state.threads[0].turns.reverse();store.state.threads[0].title='renamed';store.save();assert.deepEqual(turns(),[]);
+  let again=new Store(root);assert.deepEqual(again.state.threads,store.state.threads);again.close();
+  // A failed save keeps the traces of what is in the database.
+  store.db.exec("CREATE TRIGGER fail BEFORE INSERT ON records WHEN NEW.kind='turn' BEGIN SELECT RAISE(ABORT,'simulated'); END");
+  store.state.threads[1].turns[0].answer='lost';assert.throws(()=>store.save(),/simulated/);store.db.exec('DROP TRIGGER fail');
+  serialized.length=0;store.save();assert.deepEqual(turns().sort(),['b1','b1']);
+  again=new Store(root);assert.equal(again.state.threads[1].turns[0].answer,'lost');again.close();
+  // Deleting still audits; circular values still fail.
+  store.state.threads[0].turns.pop();store.save();assert.equal(store.db.prepare("SELECT count(*) n FROM audit WHERE action='delete_turn'").get().n,1);
+  const loop={id:'loop'};loop.self=loop;store.state.threads[1].turns.push(loop);assert.throws(()=>store.save(),/circular/);store.state.threads[1].turns.pop();
+  store.close();
+});
