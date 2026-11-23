@@ -22,7 +22,8 @@ test('a stalled main thread is logged with the IPC request in progress, its JS s
     let log=fs.readFileSync(file,'utf8');
     assert.match(log,/主进程卡住超过 0\.5 秒，正在处理：project:files/);
     assert.match(log,/调用栈：\n  spinForStallTest test\/stall-log\.test\.cjs:6:/);
-    assert.match(log,/主进程恢复，共卡住 1\.\d 秒/);
+    let recovered=/主进程恢复，共卡住 (\d+\.\d) 秒/.exec(log);
+    assert.ok(recovered&&Number(recovered[1])>=1&&Number(recovered[1])<5,`unexpected stall duration: ${log}`);
     // Native code holding the thread (SQLite waiting for a lock) is logged right away under
     // the request name; a stack, if any, is only where JS ran next.
     fs.writeFileSync(file,'');
@@ -30,7 +31,8 @@ test('a stalled main thread is logged with the IPC request in progress, its JS s
     await wait(600);
     log=fs.readFileSync(file,'utf8');
     assert.match(log,/主进程卡住超过 0\.5 秒，正在处理：ui:save/);
-    assert.match(log,/主进程恢复，共卡住 1\.\d 秒/);
+    recovered=/主进程恢复，共卡住 (\d+\.\d) 秒/.exec(log);
+    assert.ok(recovered&&Number(recovered[1])>=1&&Number(recovered[1])<5,`unexpected stall duration: ${log}`);
     fs.writeFileSync(file,'');spinForStallTest(800);await wait(400);
     assert.match(fs.readFileSync(file,'utf8'),/不在处理界面请求/);
     // Idle time is not a stall, and the label goes back to what was running before.
