@@ -99,6 +99,17 @@ test('failed staging preserves the validation error even when Windows denies tem
   const updater=new Updater({installDir:root,version:'0.9.0',tempRoot:temp});fs.rmSync=(file,options)=>{if(path.dirname(file)===temp)throw Error('locked fixture');return remove(file,options);};
   try{assert.match(updater.cleanup(),/暂存目录未能清理/);}finally{fs.rmSync=remove;}
 });
+test('zip extraction does not depend on PowerShell Archive modules and fails loudly on broken archives',{skip:process.platform!=='win32'},async()=>{
+  const {extract}=require('../updates.cjs');
+  const {root,pkg}=await versions(),zip=path.join(root,'update.zip'),out=path.join(root,'extracted');
+  createZip(pkg,zip);fs.mkdirSync(out);
+  const saved=process.env.PSModulePath;process.env.PSModulePath='C:\\nonexistent-ps-modules';
+  try{await extract(zip,out);}finally{if(saved===undefined)delete process.env.PSModulePath;else process.env.PSModulePath=saved;}
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out,UPDATE_FILE),'utf8')).to,'1.1.0');
+  assert.equal(fs.readFileSync(path.join(out,'使用说明.txt'),'utf8'),'说明 2');
+  const broken=path.join(root,'broken.zip');fs.writeFileSync(broken,'not a zip');
+  await assert.rejects(()=>extract(broken,path.join(root,'broken-out')));
+});
 test('the About card and the notice say what was found and what happens next',async()=>{
   const {updateCardHtml,noticeOf}=await import('../ui/src/lib/updates.mjs');
   const update={file:'D:/dl/a.zip',name:'ClaudeDesk-1.0.0-to-1.1.0-update.zip',dir:'D:/dl',from:'1.0.0',to:'1.1.0',size:4.3*1048576,files:2};

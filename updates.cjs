@@ -58,9 +58,25 @@ async function verifyUpdate(dir, currentVersion) {
   return { from: info.from, to: info.to, files: Object.keys(info.files).length, removed: (info.removed || []).length, size, notes: String(info.notes || '') };
 }
 const powershell = (args, options = {}) => new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args], { windowsHide: true, timeout: 300000, ...options }, (error, stdout, stderr) => error ? reject(Error(String(stderr || error.message).trim().split('\n').slice(-3).join('\n'))) : resolve(stdout)));
-// Extracts a zip with the PowerShell that ships with Windows. Paths go in through the environment:
-// -Command joins its arguments into one string, which would split paths at spaces.
-const extract = (zip, dir) => powershell(['-Command', 'Expand-Archive -LiteralPath $env:CLAUDE_DESK_ZIP -DestinationPath $env:CLAUDE_DESK_DIR -Force'], { env: { ...process.env, CLAUDE_DESK_ZIP: zip, CLAUDE_DESK_DIR: dir } });
+// Extracts a zip directly through .NET System.IO.Compression.ZipFile (matching scripts/zip.cjs)
+// instead of Expand-Archive, which depends on Microsoft.PowerShell.Archive and can silently exit 0
+// without extracting when PSModulePath mixes PowerShell 7 and Windows PowerShell 5.1.
+const EXTRACT_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+  '$dest = [IO.Path]::GetFullPath($env:CLAUDE_DESK_DIR)',
+  'if (-not $dest.EndsWith([IO.Path]::DirectorySeparatorChar)) { $dest += [IO.Path]::DirectorySeparatorChar }',
+  '$zip = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($env:CLAUDE_DESK_ZIP))',
+  'try {',
+  '  foreach ($entry in $zip.Entries) {',
+  "    $rel = $entry.FullName -replace '/', '\\'",
+  '    $target = [IO.Path]::GetFullPath([IO.Path]::Combine($dest, $rel))',
+  '    if (-not $target.StartsWith($dest, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe zip path: $($entry.FullName)" }',
+  "    if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\\')) { [IO.Directory]::CreateDirectory($target) | Out-Null } else { [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)) | Out-Null; [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true) }",
+  '  }',
+  '} finally { $zip.Dispose() }'
+].join('\n');
+const extract = (zip, dir) => powershell(['-Command', EXTRACT_SCRIPT], { env: { ...process.env, CLAUDE_DESK_ZIP: path.resolve(zip), CLAUDE_DESK_DIR: path.resolve(dir) } });
 
 // Reads one small file out of a zip without extracting it: the central directory at the end
 // lists every entry with its size and where its data starts. Stored and deflated entries only.
