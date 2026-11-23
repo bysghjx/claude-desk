@@ -28,6 +28,13 @@ test('thousands of new files are listed without reading them all, and the main t
   assert.equal(fresh.filter(f=>f.uncounted).length,200);
   assert.equal(fresh.filter(f=>!f.uncounted&&f.added===2).length,1000);
   assert.ok(worst<250,`event loop blocked for ${worst} ms`);
+  // Tracked edits sort ahead of untracked files so real changes stay visible at the top.
+  fs.writeFileSync(path.join(dir,'src/a.js'),'one\nCHANGED\nthree\n');
+  const withEdit=await review.changes(dir);
+  assert.equal(withEdit.files[0].path,'src/a.js');
+  // Single-file revert inspects only that path instead of rescanning all untracked files.
+  await review.revert(dir,'src/a.js');
+  assert.equal(fs.readFileSync(path.join(dir,'src/a.js'),'utf8'),'one\ntwo\nthree\n');
 });
 test('stage, unstage, revert and commit act on single files inside the repository',async()=>{
   const dir=repo();fs.writeFileSync(path.join(dir,'src/a.js'),'changed\n');fs.writeFileSync(path.join(dir,'new.md'),'new\n');fs.writeFileSync(path.join(dir,'keep.txt'),'edited\n');

@@ -10,15 +10,16 @@ function within(root,relative){
 async function listProjectFiles(root,git){
   try{return [...new Set((await git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(file=>file&&!archivePath(file)))].sort().slice(0,2500);}catch{}
   const files=[];
-  function walk(dir,depth=0){
+  async function walk(dir,depth=0){
     if(depth>8||files.length>=2500)return;
-    for(const ent of fs.readdirSync(dir,{withFileTypes:true})){
+    let entries=[];try{entries=await fs.promises.readdir(dir,{withFileTypes:true});}catch{return;}
+    for(const ent of entries){
       if(['.git','node_modules','.next','dist','.venv'].includes(ent.name)||/\.asar$/i.test(ent.name)||ent.isSymbolicLink())continue;
-      const full=path.join(dir,ent.name);if(ent.isDirectory())walk(full,depth+1);else files.push(path.relative(root,full));
+      const full=path.join(dir,ent.name);if(ent.isDirectory())await walk(full,depth+1);else files.push(path.relative(root,full));
       if(files.length>=2500)break;
     }
   }
-  walk(root);return files;
+  await walk(root);return files;
 }
 function readProjectFile(target){
   if(archivePath(target))return'二进制归档，请在外部应用中查看。';

@@ -109,7 +109,34 @@ export function createComposer({ store, api, toast, actions }) {
     $('#add-menu').hidden=true;$('#add-context').setAttribute('aria-expanded','false');
     for(const name of ['model','mode']){$('#'+name+'-picker').hidden=true;$('#'+name+'-toggle').setAttribute('aria-expanded','false');}
     $('#model-list-picker').hidden=true;$('#model-list-toggle').setAttribute('aria-expanded','false');
+    if(!$('#usage-picker').hidden){breakdownToken++;breakdownBusy=false;breakdownState='idle';breakdownRetryKey='';}
     $('#usage-picker').hidden=true;$('#context-usage').setAttribute('aria-expanded','false');
+  }
+  function syncUsageButtons(){
+    const t=store.current(),active=store.running(),analyze=$('#usage-analyze'),compact=$('#usage-compact');
+    if(breakdownBusy){
+      analyze.disabled=true;analyze.title='正在读取上下文信息…';
+      compact.disabled=true;compact.title='正在读取上下文信息…';
+      return;
+    }
+    if(!t){
+      analyze.disabled=true;analyze.title='进入会话后可以分析上下文';
+      compact.disabled=true;compact.title='进入会话后可以压缩上下文';
+      return;
+    }
+    if(breakdownState==='unavailable'){
+      analyze.disabled=true;analyze.title='这个会话当前没有运行中的 Claude 进程，发送一条消息后即可分析';
+      compact.disabled=true;compact.title='发送一条消息启动 Claude 后可以压缩';
+      return;
+    }
+    if(breakdownState==='starting'){
+      analyze.disabled=false;analyze.title='Claude 正在启动，点击可重试逐项精确计数';
+      compact.disabled=true;compact.title='等待 Claude 启动完成后可以压缩';
+      return;
+    }
+    analyze.disabled=false;analyze.title='让 CLI 逐项精确统计上下文占用';
+    compact.disabled=active;
+    compact.title=active?'运行结束后可以压缩':'让 Claude 把之前的对话总结成摘要，腾出上下文空间（/compact）';
   }
   function renderUsage(){
     const t=store.current(),usage=t?.contextUsage;
@@ -122,14 +149,31 @@ export function createComposer({ store, api, toast, actions }) {
     $('#context-usage').classList.toggle('usage-high',percent!==null&&percent>=80);
     const number=value=>Number.isFinite(value)?value.toLocaleString():'未返回';
     const last=t?.turns.at(-1)?.usage;
+    const lastInput=last?(last.input||0)+(last.cache||0)+(last.cacheWrite||0):null;
+    const lastCache=last?(last.cache||0)+(last.cacheWrite||0):0;
     const summary=percent===null?'上下文用量：等待 CLI 返回完整统计':`上下文已用 ${label}，约 ${number(used)} / ${number(limit)} tokens`;
     $('#context-usage').title=summary;$('#context-usage').setAttribute('aria-label',summary);
-    const rows=[['最近上下文',used===null?'暂无统计':`${number(used)} tokens`],['上下文上限',limit===null?'CLI 尚未返回':`${number(limit)} tokens`],['剩余空间',used!==null&&limit!==null?`${number(Math.max(0,limit-used))} tokens`:'暂无统计'],['统计模型',usage?.model||'发送后更新'],['本轮输入 / 输出',last?`${number(last.input)} / ${number(last.output)} tokens`:'暂无统计']];
+    const rows=[
+      ['最近上下文',used===null?'暂无统计':`${number(used)} tokens`],
+      ['上下文上限',limit===null?'CLI 尚未返回':`${number(limit)} tokens`],
+      ['剩余空间',used!==null&&limit!==null?`${number(Math.max(0,limit-used))} tokens`:'暂无统计'],
+      ['统计模型',usage?.model||'发送后更新'],
+      ['本轮输入 / 输出',last?`${number(lastInput)} / ${number(last.output)} tokens${lastCache>0?`（含缓存 ${number(lastCache)}）`:''}`:'暂无统计']
+    ];
     $('#usage-details').innerHTML=rows.map(([name,value])=>`<div class="usage-detail-row"><span>${escape(name)}</span><strong>${escape(value)}</strong></div>`).join('');
+    if(!$('#usage-picker').hidden){
+      if(breakdownThread!==store.selected){loadBreakdown('summary');return;}
+      syncUsageButtons();
+      if((breakdownState==='starting'||breakdownState==='unavailable')&&!breakdownBusy&&t){
+        const readySignal=Boolean(t.status&&!['idle','starting','interrupted'].includes(t.status))||Number.isFinite(usage?.updatedAt);
+        const key=`${t.id}|${t.status}|${usage?.updatedAt||0}`;
+        if(readySignal&&key!==breakdownRetryKey){breakdownRetryKey=key;loadBreakdown('summary');}
+      }
+    }
   }
   // 上下文明细: what fills the window, by category, as the CLI's /context counts it.
   const CONTEXT_PARTS={system_prompt:['系统提示词','#8b8fa3'],system_tools:['内置工具','#6f8fb8'],mcp_tools:['MCP 工具','#3fa7a0'],mcp_instructions:['MCP 说明','#5bb7a9'],custom_agents:['自定义子智能体','#b48ad6'],memory_files:['记忆文件（CLAUDE.md）','#d6a35a'],skills:['技能','#c97a9c'],messages:['对话消息','#7fb069'],autocompact_buffer:['自动压缩预留','#5c5c5c'],compact_buffer:['压缩预留','#5c5c5c'],free_space:['剩余空间','#343434']};
-  let breakdownToken=0;
+  let breakdownToken=0,breakdownBusy=false,breakdownState='idle',breakdownThread=null,breakdownRetryKey='';
   function breakdownHtml(d){
     const total=d.maxTokens||1,pct=n=>`${Math.max(0,n/total*100).toFixed(1)}%`,k=n=>n>=1000?(n/1000).toFixed(n>=100000?0:1)+'k':String(n);
     const rows=d.categories.filter(c=>c.tokens>0).map(c=>{const [name,color]=CONTEXT_PARTS[c.id]||[c.name,'#777'];return{name,color,tokens:c.tokens,kind:c.kind};});
@@ -140,16 +184,19 @@ export function createComposer({ store, api, toast, actions }) {
   }
   async function loadBreakdown(detail='summary'){
     const id=store.selected,box=$('#usage-breakdown'),token=++breakdownToken;
-    $('#usage-compact').disabled=true;$('#usage-analyze').disabled=true;
-    if(!id){box.innerHTML='<p class="usage-estimate">进入会话后可以查看明细。</p>';return;}
+    breakdownThread=id;breakdownBusy=true;syncUsageButtons();
+    if(!id){breakdownBusy=false;breakdownState='idle';syncUsageButtons();box.innerHTML='<p class="usage-estimate">进入会话后可以查看明细。</p>';return;}
     box.innerHTML=`<p class="usage-estimate">${detail==='full'?'正在逐项计数…':'正在读取明细…'}</p>`;
     try{
       const d=await api('context:details',id,detail);if(token!==breakdownToken)return;
-      if(!d){box.innerHTML='<p class="usage-estimate">这个会话的 Claude 还没启动，发送一条消息后可以查看明细和压缩。重新打开的会话只带最近的历史，一般不需要压缩。</p>';return;}
-      box.innerHTML=breakdownHtml(d);for(const el of box.querySelectorAll('[data-c]')){el.style.background=el.dataset.c;if(el.dataset.w)el.style.width=el.dataset.w;}$('#usage-analyze').disabled=false;$('#usage-compact').disabled=store.running();
-      $('#usage-compact').title=store.running()?'运行结束后可以压缩':'让 Claude 把之前的对话总结成摘要，腾出上下文空间（/compact）';
+      breakdownBusy=false;
+      if(!d){breakdownState='unavailable';syncUsageButtons();box.innerHTML='<p class="usage-estimate">这个会话的 Claude 还没启动，发送一条消息后可以查看明细和压缩。重新打开的会话只带最近的历史，一般不需要压缩。</p>';return;}
+      if(d.status==='starting'){breakdownState='starting';syncUsageButtons();box.innerHTML='<p class="usage-estimate">Claude 正在启动或记录文件快照，就绪后会自动刷新；也可以点「详细分析」重试。</p>';return;}
+      breakdownState='ready';
+      box.innerHTML=breakdownHtml(d);for(const el of box.querySelectorAll('[data-c]')){el.style.background=el.dataset.c;if(el.dataset.w)el.style.width=el.dataset.w;}
+      syncUsageButtons();
       renderUsage();
-    }catch(e){if(token===breakdownToken){box.innerHTML=`<p class="usage-estimate">${escape(e.message)}</p>`;$('#usage-analyze').disabled=false;}}
+    }catch(e){if(token===breakdownToken){breakdownBusy=false;breakdownState='error';syncUsageButtons();box.innerHTML=`<p class="usage-estimate">${escape(e.message)}（可点「详细分析」重试）</p>`;}}
   }
   function openModelList(){
     closeAll();syncPickers();$('#model-list-picker').hidden=false;$('#model-toggle').setAttribute('aria-expanded','true');$('#model-list-toggle').setAttribute('aria-expanded','true');

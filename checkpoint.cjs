@@ -53,15 +53,21 @@ class Checkpoints {
     return this.serial(cwd, () => this.record(cwd)).catch(e => { if (e.tooMany) this.tooMany.set(this.key(cwd), { at: Date.now(), message: e.message }); throw e; });
   }
   async record(cwd) {
-    if (!fs.statSync(cwd).isDirectory()) throw Error('项目文件夹不存在');
+    if (!(await fs.promises.stat(cwd)).isDirectory()) throw Error('项目文件夹不存在');
     const listed = nulList(await this.git(cwd, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']));
     const unique = [...new Set(listed)];
     if (unique.length > MAX_FILES) throw Object.assign(Error(`文件超过 ${MAX_FILES} 个，未记录快照（可在项目里加 .gitignore 排除构建产物）`), { tooMany: true });
     const add = [], drop = [];
-    for (const rel of unique) {
-      let stat; try { stat = fs.lstatSync(path.join(cwd, rel)); } catch { add.push(rel); continue; } // deleted: `add -A` records the removal
-      if (stat.isFile() && stat.size <= MAX_FILE || stat.isSymbolicLink()) add.push(rel); else drop.push(rel);
-    }
+    // Stat asynchronously in small parallel batches so thousands of files never stall the main thread.
+    const STAT_PARALLEL = 48;
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(STAT_PARALLEL, unique.length) }, async () => {
+      while (cursor < unique.length) {
+        const rel = unique[cursor++];
+        let stat; try { stat = await fs.promises.lstat(path.join(cwd, rel)); } catch { add.push(rel); continue; } // deleted: `add -A` records the removal
+        if (stat.isFile() && stat.size <= MAX_FILE || stat.isSymbolicLink()) add.push(rel); else drop.push(rel);
+      }
+    }));
     if (drop.length) await this.git(cwd, ['update-index', '--force-remove', '-z', '--stdin'], { input: drop.join('\0') + '\0' });
     if (add.length) await this.git(cwd, ['add', '-A', '--ignore-errors', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: add.join('\0') + '\0' }).catch(e => { if (!/ignore-errors|unable to (index|stat)|warning/i.test(e.message)) throw e; });
     const tree = (await this.git(cwd, ['write-tree'])).trim();
@@ -96,9 +102,9 @@ class Checkpoints {
       const back = files.filter(f => f.status !== 'A').map(f => f.path);
       if (back.length) await this.git(cwd, ['checkout', tree, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: back.join('\0') + '\0' });
       for (const f of files.filter(f => f.status === 'A')) {
-        const file = inside(f.path); try { fs.rmSync(file, { force: true }); } catch {}
+        const file = inside(f.path); try { await fs.promises.rm(file, { force: true }); } catch {}
         // Remove folders left empty by the deletion, up to the project root.
-        for (let dir = path.dirname(file); dir !== root && dir.startsWith(root); dir = path.dirname(dir)) { try { fs.rmdirSync(dir); } catch { break; } }
+        for (let dir = path.dirname(file); dir !== root && dir.startsWith(root); dir = path.dirname(dir)) { try { await fs.promises.rmdir(dir); } catch { break; } }
       }
       return { before: now, files };
     });

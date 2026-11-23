@@ -3,7 +3,7 @@ const {archivePath}=require('./project-files.cjs');
 // Git review actions for the changes panel. Paths are repository-relative (as git
 // status reports them) and are checked to stay inside the repository.
 function run(cwd,args,{allowFail=false}={}){
-  return new Promise((resolve,reject)=>execFile('git',['--no-optional-locks','-c','core.quotepath=off','-C',cwd,...args],{windowsHide:true,timeout:20000,maxBuffer:8*1024*1024},(error,stdout,stderr)=>{
+  return new Promise((resolve,reject)=>execFile('git',['--no-optional-locks','-c','core.quotepath=off','-C',cwd,...args],{windowsHide:true,timeout:20000,maxBuffer:32*1024*1024},(error,stdout,stderr)=>{
     if(error&&!allowFail)return reject(Error((String(stderr||'').trim()||error.message).split('\n').slice(0,6).join('\n')));
     resolve({stdout:String(stdout),code:error?error.code??1:0});
   }));
@@ -49,8 +49,11 @@ async function changes(projectPath){
   for(const file of uncounted.slice(COUNT_LIMIT))file.uncounted=true;
   const todo=uncounted.slice(0,COUNT_LIMIT);let next=0;
   await Promise.all(Array.from({length:COUNT_PARALLEL},async()=>{while(next<todo.length){const file=todo[next++],n=await textLines(path.join(top,file.path));if(n==null)file.binary=true;else file.added=n;}}));
+  // Show tracked/staged edits before untracked files so real code changes are not buried under thousands of new files.
+  const trackedFiles=files.filter(f=>!f.untracked),untrackedFiles=files.filter(f=>f.untracked);
+  const ordered=[...trackedFiles,...untrackedFiles];
   let branch='';try{branch=(await run(top,['branch','--show-current'])).stdout.trim();}catch{}
-  return{isGit:true,files,branch,prefix,hasHead,root:top};
+  return{isGit:true,files:ordered,branch,prefix,hasHead,root:top};
 }
 async function diff(projectPath,relative){
   const {top,hasHead}=await repo(projectPath),target=inside(top,relative);
@@ -76,12 +79,20 @@ async function stage(projectPath,paths,staged){
 // Discards one file's changes against HEAD. New files are deleted; this cannot be undone.
 async function revert(projectPath,relative){
   const {top,hasHead}=await repo(projectPath),target=inside(top,relative);
-  const row=(await changes(projectPath)).files.find(f=>f.path===relative);if(!row)throw Error('这个文件已没有改动');
+  const status=(await run(top,['status','--porcelain=v1','-z','--untracked-files=all','--',relative])).stdout.split('\0');
+  let row=null;
+  for(let i=0;i<status.length;i++){
+    const line=status[i];if(!line)continue;
+    const x=line[0],y=line[1],entry={path:line.slice(3),staged:x!==' '&&x!=='?'};
+    if(x==='R'||x==='C')entry.from=status[++i];
+    if(entry.path===relative){row=entry;break;}
+  }
+  if(!row)throw Error('这个文件已没有改动');
   const inHead=hasHead&&(await run(top,['cat-file','-e','HEAD:'+relative],{allowFail:true})).code===0;
   if(row.from){inside(top,row.from);await run(top,['restore','--source=HEAD','--staged','--worktree','--',row.from]);}
   if(inHead){await run(top,['restore','--source=HEAD','--staged','--worktree','--',relative]);return true;}
   if(row.staged)await run(top,hasHead?['restore','--staged','--',relative]:['rm','--cached','--quiet','--',relative]);
-  if(fs.existsSync(target)&&fs.lstatSync(target).isFile())fs.rmSync(target);
+  try{if((await fs.promises.lstat(target)).isFile())await fs.promises.rm(target);}catch{}
   return true;
 }
 async function commit(projectPath,message,all){

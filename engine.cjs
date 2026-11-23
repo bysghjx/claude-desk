@@ -193,7 +193,7 @@ class Engine extends EventEmitter {
       }
       run = this.startRun(t,extensionOptions,extensionKey);
     }
-    run.turnId = turn.id; run.unread = null; run.steersAfterTool = new Set(); run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.mainDone=false;
+    run.turnId = turn.id; run.unread = null; run.steersAfterTool = new Set(); run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.responseMessageId=''; run.mainDone=false;
     // A conversation keeps its CLI between messages; only a new one says it is starting.
     const ready = reused ? '已发送，等待模型响应' : '正在启动 Claude';
     this.setStatus(t, reused ? 'waiting' : 'starting', this.checkpoint ? '正在记录文件快照（用于回退和撤销）' : ready);
@@ -255,7 +255,7 @@ class Engine extends EventEmitter {
     old.steers = old.steers.filter(s => !ids.includes(s.id)); old.items = old.items.filter(i => i.type !== 'steer' || !ids.includes(i.id));
     const next = { id: randomUUID(), user: moved.map(s => s.text).filter(Boolean).join('\n\n'), context: '', references: moved.flatMap(s => s.references || []), images: moved.flatMap(s => s.images || []), answer: '', thinking: '', items: [], tools: [], startedAt: Date.now(), status: 'running', usage: null, fromSteer: true };
     t.turns.push(next);
-    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, mainDone: false, steersAfterTool: new Set() });
+    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, responseMessageId: '', mainDone: false, steersAfterTool: new Set() });
     t.finishedAt = null; this.setStatus(t, 'waiting', '继续处理你插入的消息');
   }
   // A stop or failure leaves unread 插话 in the queue, under the same id, so nothing typed is lost.
@@ -460,34 +460,95 @@ class Engine extends EventEmitter {
     return true;
   }
   // The breakdown the CLI computes for /context (by category, against the window it
-  // compacts at). Needs the conversation's live CLI; null without one. A known window
-  // also fills in the context meter when the result did not report one.
+  // compacts at). Needs the conversation's live CLI; null without one, or {status:'starting'}
+  // while the CLI is still attaching. Reuses in-flight calls of the same detail level and
+  // syncs authoritative CLI totals back into the context meter.
   async contextDetails(id, detail = 'summary') {
     const t = this.thread(id), run = this.runs.get(id);
-    if (!run || run.finished || typeof run.query?.getContextUsage !== 'function') return null;
-    const usage = await Promise.race([run.query.getContextUsage({ detail: detail === 'full' ? 'full' : 'summary' }), new Promise((_, reject) => setTimeout(() => reject(Error('读取上下文明细超时')), 30000))]);
-    const window = usage.rawMaxTokens || usage.maxTokens;
-    if (Number.isFinite(window) && window > 0) {
-      t.contextUsage = { ...(t.contextUsage || {}), usedTokens: Number.isFinite(t.contextUsage?.usedTokens) ? t.contextUsage.usedTokens : usage.totalTokens, contextWindow: window, model: t.contextUsage?.model || usage.model, updatedAt: Date.now() };
-      this.publish(id);
-    }
-    const servers = new Map(); for (const tool of usage.mcpTools || []) if (tool.isLoaded !== false) servers.set(tool.serverName, (servers.get(tool.serverName) || 0) + tool.tokens);
-    return {
-      model: usage.model, totalTokens: usage.totalTokens, maxTokens: window, percentage: usage.percentage, detail,
-      categories: (usage.categories || []).filter(c => c.kind !== 'deferred' && !c.isDeferred).map(c => ({ id: c.id || '', name: c.name, tokens: c.tokens, kind: c.kind })),
-      memoryFiles: (usage.memoryFiles || []).slice(0, 8).map(f => ({ path: f.path, tokens: f.tokens })),
-      mcpServers: [...servers].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, tokens]) => ({ name, tokens }))
-    };
+    if (!run || run.finished) return null;
+    if (typeof run.query?.getContextUsage !== 'function') return run.query ? null : { status: 'starting' };
+    const mode = detail === 'full' ? 'full' : 'summary';
+    const inflight = (run.contextPromises ||= new Map());
+    if (inflight.has(mode)) return inflight.get(mode);
+    const timeoutMs = mode === 'full' ? 30000 : 10000;
+    const task = (async () => {
+      let timer;
+      const usage = await Promise.race([
+        run.query.getContextUsage({ detail: mode }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(Error('读取上下文明细超时')), timeoutMs); timer.unref?.(); })
+      ]).finally(() => clearTimeout(timer));
+      const window = usage.rawMaxTokens || usage.maxTokens;
+      const cliTotal = Number.isFinite(usage.totalTokens) && usage.totalTokens >= 0 ? usage.totalTokens : null;
+      if ((Number.isFinite(window) && window > 0) || cliTotal !== null) {
+        const previous = t.contextUsage || {};
+        const nextUsed = cliTotal !== null && (mode === 'full' || cliTotal > 0 || !Number.isFinite(previous.usedTokens)) ? cliTotal : previous.usedTokens;
+        const hasWindow = Number.isFinite(window) && window > 0;
+        t.contextUsage = {
+          ...previous,
+          ...(Number.isFinite(nextUsed) ? { usedTokens: nextUsed } : {}),
+          contextWindow: hasWindow ? window : previous.contextWindow ?? null,
+          ...(hasWindow ? { windowSource: 'cli' } : {}),
+          model: previous.model || usage.model || run.contextModel || t.model,
+          updatedAt: Date.now()
+        };
+        this.publish(id);
+      }
+      const servers = new Map(); for (const tool of usage.mcpTools || []) if (tool.isLoaded !== false) servers.set(tool.serverName, (servers.get(tool.serverName) || 0) + tool.tokens);
+      return {
+        model: usage.model, totalTokens: usage.totalTokens, maxTokens: window, percentage: usage.percentage, detail: mode,
+        categories: (usage.categories || []).filter(c => c.kind !== 'deferred' && !c.isDeferred).map(c => ({ id: c.id || '', name: c.name, tokens: c.tokens, kind: c.kind })),
+        memoryFiles: (usage.memoryFiles || []).slice(0, 8).map(f => ({ path: f.path, tokens: f.tokens })),
+        mcpServers: [...servers].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, tokens]) => ({ name, tokens }))
+      };
+    })().finally(() => { if (inflight.get(mode) === task) inflight.delete(mode); });
+    inflight.set(mode, task);
+    return task;
   }
-  recordContext(t,run,usage,model) {
-    if(!usage || !Number.isFinite(usage.input_tokens) || usage.input_tokens<0)return;
-    const fields=['input_tokens','cache_read_input_tokens','cache_creation_input_tokens','output_tokens'];
-    if(fields.some(key=>usage[key]!=null&&(!Number.isFinite(usage[key])||usage[key]<0)))return;
-    run.responseUsage={...usage};run.contextModel=model||run.contextModel||t.model;
-    const previous=t.contextUsage;
-    t.contextUsage={usedTokens:fields.reduce((sum,key)=>sum+(usage[key]||0),0),contextWindow:previous?.model===run.contextModel?previous.contextWindow:null,model:run.contextModel,updatedAt:Date.now()};
+  recordContext(t, run, usage, model, { messageId = '', merge = false } = {}) {
+    if (!usage || typeof usage !== 'object') return;
+    const inputFields = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
+    const fields = [...inputFields, 'output_tokens'];
+    if (fields.some(key => usage[key] != null && (!Number.isFinite(usage[key]) || usage[key] < 0))) return;
+    if (!fields.some(key => Number.isFinite(usage[key]))) return;
+    // Stream deltas (and some proxies) send null or 0 for unchanged input/cache counters:
+    // never let null/0 clobber positive input/cache counts already reported for the same response.
+    let effective;
+    if (merge && run.responseUsage) {
+      effective = { ...run.responseUsage };
+      for (const key of inputFields) {
+        if (Number.isFinite(usage[key]) && (usage[key] > 0 || !(Number.isFinite(effective[key]) && effective[key] > 0))) effective[key] = usage[key];
+      }
+      if (Number.isFinite(usage.output_tokens)) {
+        effective.output_tokens = Math.max(Number.isFinite(effective.output_tokens) ? effective.output_tokens : 0, usage.output_tokens);
+      }
+    } else {
+      effective = { ...usage };
+    }
+    if (!Number.isFinite(effective.input_tokens)) {
+      if (inputFields.some(key => Number.isFinite(effective[key]) && effective[key] > 0)) effective.input_tokens = 0;
+      else return;
+    }
+    run.responseUsage = effective;
+    if (messageId) run.responseMessageId = messageId;
+    run.contextModel = model || run.contextModel || t.model;
+    const usedTokens = fields.reduce((sum, key) => sum + (Number.isFinite(effective[key]) ? effective[key] : 0), 0);
+    // Ignore all-zero placeholder usage (e.g. OpenAI-compatible message_start) so we do not wipe prior context.
+    if (usedTokens === 0) return;
+    const previous = t.contextUsage;
+    const sameModel = previous?.model === run.contextModel;
+    t.contextUsage = {
+      usedTokens,
+      contextWindow: sameModel ? previous.contextWindow : null,
+      ...(sameModel && previous?.windowSource ? { windowSource: previous.windowSource } : {}),
+      model: run.contextModel,
+      updatedAt: Date.now()
+    };
+    this.publish(t.id, false);
     // A new CLI only reports its window with the first result; ask for it now so the meter shows during a long first turn.
-    if(!t.contextUsage.contextWindow&&!run.windowAsked){run.windowAsked=true;this.contextDetails(t.id).catch(()=>{});}
+    if (!t.contextUsage.contextWindow && run.windowAskedModel !== run.contextModel) {
+      run.windowAskedModel = run.contextModel;
+      this.contextDetails(t.id).catch(() => {});
+    }
   }
   process(t, run, msg) {
     if (run.stopping) return;
@@ -504,8 +565,8 @@ class Engine extends EventEmitter {
     if (msg.type === 'stream_event') {
       const e = msg.event;
       if(msg.parent_tool_use_id==null){
-        if(e.type==='message_start')this.recordContext(t,run,e.message?.usage,e.message?.model);
-        if(e.type==='message_delta'&&run.responseUsage&&e.usage)this.recordContext(t,run,{...run.responseUsage,...e.usage},run.contextModel);
+        if(e.type==='message_start'){run.responseUsage=null;run.responseMessageId=e.message?.id||'';this.recordContext(t,run,e.message?.usage,e.message?.model,{messageId:run.responseMessageId});}
+        if(e.type==='message_delta'&&e.usage)this.recordContext(t,run,e.usage,run.contextModel,{messageId:run.responseMessageId,merge:Boolean(run.responseUsage)});
       }
       if (e.type === 'content_block_start') {
         run.blocks.set(e.index, e.content_block?.type);
@@ -521,7 +582,11 @@ class Engine extends EventEmitter {
       return;
     }
     if (msg.type === 'assistant') {
-      if(msg.parent_tool_use_id==null)this.recordContext(t,run,msg.message?.usage,msg.message?.model);
+      if(msg.parent_tool_use_id==null){
+        const msgId=msg.message?.id||'';
+        const sameMsg=Boolean(run.responseUsage&&((msgId&&msgId===run.responseMessageId)||(!msgId&&!run.responseMessageId)));
+        this.recordContext(t,run,msg.message?.usage,msg.message?.model,{messageId:msgId,merge:sameMsg});
+      }
       if (run.seen.has(msg.uuid)) return; if (msg.uuid) run.seen.add(msg.uuid);
       const blocks = msg.message?.content || [];
       markNarration(turn.items ||= [], msg);
@@ -555,10 +620,14 @@ class Engine extends EventEmitter {
       run.mainDone=true;run.steersAfterTool?.clear();run.resultStatus=msg.is_error||msg.subtype!=='success'?'error':'done';
       turn.finishedAt = Date.now(); t.finishedAt = Date.now();
       const entries=Object.entries(msg.modelUsage||{});
-      const modelUsage=entries.find(([id,value])=>id===run.contextModel||value.canonicalModel===run.contextModel)||entries.find(([id,value])=>id===t.model||value.canonicalModel===t.model);
-      if(t.contextUsage&&modelUsage&&Number.isFinite(modelUsage[1].contextWindow)&&modelUsage[1].contextWindow>0)t.contextUsage.contextWindow=modelUsage[1].contextWindow;
+      const normModel=s=>String(s||'').split('/').pop().replace(/-\d{8}$/,'').toLowerCase();
+      const matchModel=target=>target&&(entries.find(([id,value])=>id===target||value.canonicalModel===target)||entries.find(([id,value])=>normModel(id)===normModel(target)||normModel(value.canonicalModel)===normModel(target)));
+      const modelUsage=matchModel(run.contextModel)||matchModel(t.model)||(entries.length===1?entries[0]:null);
+      if(t.contextUsage&&modelUsage&&Number.isFinite(modelUsage[1].contextWindow)&&modelUsage[1].contextWindow>0&&(!t.contextUsage.contextWindow||t.contextUsage.windowSource!=='cli')){
+        t.contextUsage.contextWindow=modelUsage[1].contextWindow;t.contextUsage.windowSource='model';
+      }
       const totalCost=Number.isFinite(msg.total_cost_usd)?msg.total_cost_usd:run.lastCost||0;
-      turn.usage = { input: msg.usage?.input_tokens || 0, output: msg.usage?.output_tokens || 0, cache: msg.usage?.cache_read_input_tokens || 0, cost: Math.max(0,totalCost-(run.lastCost||0)) };
+      turn.usage = { input: msg.usage?.input_tokens || 0, output: msg.usage?.output_tokens || 0, cache: msg.usage?.cache_read_input_tokens || 0, cacheWrite: msg.usage?.cache_creation_input_tokens || 0, cost: Math.max(0,totalCost-(run.lastCost||0)) };
       run.lastCost=totalCost;
       recordUsage(this.store.state,run,t,turn,msg);
       if (msg.is_error || msg.subtype !== 'success') { this.fail(t, this.redact((msg.errors || []).join('\n') || msg.result || `运行失败：${msg.subtype}`)); }
@@ -577,6 +646,7 @@ class Engine extends EventEmitter {
       const meta = msg.compact_metadata || {}; turn.compacted = { trigger: meta.trigger, preTokens: meta.pre_tokens, postTokens: meta.post_tokens };
       t.contextUsage = Number.isFinite(meta.post_tokens) ? { ...(t.contextUsage || {}), usedTokens: meta.post_tokens, updatedAt: Date.now() } : null;
       this.publish(t.id);
+      if (!Number.isFinite(meta.post_tokens)) this.contextDetails(t.id).catch(() => {});
     }
   }
   requestApproval(t, run, name, args, ctx = {}) {

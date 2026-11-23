@@ -578,3 +578,55 @@ test('empty sub-agents older versions made for Bash calls are dropped on load',a
   const restored=new JsonStore(store.file).state.threads[0].turns[0];
   assert.deepEqual(restored.subagents.map(a=>a.name),['Real']);
 });
+test('message_delta null/zero cache fields and placeholder zero usage never wipe long-session context',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);await engine.send(t.id,'long');await tick();
+  // message_start reports real cached context; message_delta sends null/0 for cache fields (standard Anthropic & proxies).
+  sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{id:'msg_1',model:t.model,usage:{input_tokens:15,cache_read_input_tokens:110000,cache_creation_input_tokens:4500,output_tokens:1}}}});
+  sdk.outputs.push({type:'stream_event',event:{type:'message_delta',usage:{input_tokens:15,cache_read_input_tokens:null,cache_creation_input_tokens:0,output_tokens:800}}});
+  // Assistant frame for the same message carrying partial usage cannot overwrite cached input tokens either.
+  sdk.outputs.push({type:'assistant',uuid:'u-partial',message:{id:'msg_1',model:t.model,content:[{type:'text',text:'done'}],usage:{input_tokens:15,output_tokens:800}}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,usage:{input_tokens:15,cache_read_input_tokens:110000,cache_creation_input_tokens:4500,output_tokens:800},total_cost_usd:0.1,modelUsage:{[t.model]:{contextWindow:200000}}});await tick();
+  assert.equal(t.contextUsage.usedTokens,115315);
+  assert.equal(t.turns[0].usage.cache,110000);assert.equal(t.turns[0].usage.cacheWrite,4500);
+  // Next turn with OpenAI-compatible placeholder {0,0} on message_start preserves prior context until real usage arrives.
+  await engine.send(t.id,'next');await tick();
+  sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{id:'msg_2',model:t.model,usage:{input_tokens:0,output_tokens:0}}}});await tick();
+  assert.equal(t.contextUsage.usedTokens,115315);
+  sdk.outputs.push({type:'stream_event',event:{type:'message_delta',usage:{input_tokens:120000,output_tokens:500}}});
+  sdk.outputs.push({type:'assistant',uuid:'u-oa',message:{id:'msg_2',model:t.model,content:[{type:'text',text:'ok'}],usage:{input_tokens:0,output_tokens:500}}});
+  await complete(sdk,'ok');
+  assert.equal(t.contextUsage.usedTokens,120500);
+  await engine.shutdown();
+});
+test('contextDetails syncs authoritative totalTokens, deduplicates concurrent calls, handles starting state and preserves CLI window',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  // While run exists without query attached yet, report starting rather than null.
+  let releaseWarm;
+  engine.startup=()=>new Promise(resolve=>{releaseWarm=resolve;});
+  engine.prewarm(t.id);
+  const sendP=engine.send(t.id,'warm');await tick();
+  const starting=await engine.contextDetails(t.id,'summary');
+  assert.deepEqual(starting,{status:'starting'});
+  releaseWarm({query:input=>sdk.query({prompt:input,options:{}}),close(){}});
+  await sendP;await tick();
+  // Seed a stale small value, then let getContextUsage report the true totalTokens and CLI compaction window.
+  t.contextUsage={usedTokens:500,contextWindow:null,model:t.model,updatedAt:Date.now()};
+  let calls=0;
+  engine.runs.get(t.id).query.getContextUsage=async({detail})=>{
+    calls++;await new Promise(r=>setTimeout(r,30));
+    return{model:t.model,totalTokens:68000,maxTokens:180000,rawMaxTokens:200000,percentage:34,categories:[{id:'messages',name:'Messages',tokens:68000,kind:'used'}],detail};
+  };
+  const [a,b]=await Promise.all([engine.contextDetails(t.id,'full'),engine.contextDetails(t.id,'full')]);
+  assert.equal(calls,1,'concurrent identical detail requests reuse one CLI call');
+  assert.equal(a.totalTokens,68000);assert.equal(b.totalTokens,68000);
+  assert.equal(t.contextUsage.usedTokens,68000);assert.equal(t.contextUsage.contextWindow,200000);
+  // Result carrying a larger 1M nominal window does not clobber the CLI compaction window.
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'ok',usage:{input_tokens:10,output_tokens:20},modelUsage:{[t.model]:{contextWindow:1000000}}});await tick();
+  assert.equal(t.contextUsage.contextWindow,200000);
+  // Compaction without post_tokens proactively refreshes via contextDetails.
+  engine.runs.get(t.id).query.getContextUsage=async()=>({model:t.model,totalTokens:14000,maxTokens:180000,rawMaxTokens:200000,percentage:7,categories:[]});
+  await engine.send(t.id,'/compact');await tick();
+  sdk.outputs.push({type:'system',subtype:'compact_boundary',compact_metadata:{trigger:'auto',pre_tokens:150000}});await tick();await tick();
+  assert.equal(t.contextUsage.usedTokens,14000);
+  await complete(sdk,'');await engine.shutdown();
+});

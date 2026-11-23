@@ -68,7 +68,7 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
     }
     worktreeState = null; await refreshFiles();
   }));
-  let generation = 0, lastProject = '', panelKey = '';
+  let generation = 0, lastProject = '', panelKey = '', refreshing = 0;
   const list = $('#file-list');
 
   async function refreshFiles() {
@@ -79,6 +79,7 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
       setHtml(list, '<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>尚未选择项目</strong>选择项目后，在这里查看文件与改动。</div>');
       $('#branch').textContent = '本地项目'; $('#change-count').textContent = '0'; $('#diff-view').hidden = true; return;
     }
+    refreshing++;
     try {
       if (lastProject !== project.id) { $('#diff-view').hidden = true; lastProject = project.id; }
       const changes = await api('project:changes', project.id); if (current !== generation) return;
@@ -89,6 +90,7 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
       list.dataset.view = 'files';
       setHtml(list, files.length ? files.map(f => `<button class="file-row" data-file="${escape(f.path)}" title="${escape(f.path)}"><span class="file-icon">▧</span><span class="file-path">${escape(f.path.replaceAll('\\', '/'))}</span><span class="file-status"></span></button>`).join('') : '<div class="empty-files"><span class="empty-icon"><svg class="folder-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.5 1.6h4.8A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4Z"/></svg></span><strong>没有文件</strong>这个文件夹里还没有可显示的文件。</div>');
     } catch (e) { if (current === generation) setHtml(list, `<div class="empty-files">${escape(e.message)}</div>`); }
+    finally { refreshing--; }
   }
 
   function renderPanel() {
@@ -154,7 +156,12 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
     if (thread.id === store.selected || !store.selected) renderPanel();
     if (thread.id === store.selected && ['done', 'error', 'stopped'].includes(thread.status)) refreshFiles();
   });
-  // While tools run, file changes appear without a manual refresh.
-  setInterval(() => { if (store.current()?.status === 'tool') refreshFiles(); }, 12000);
+  // While tools run, file changes appear without a manual refresh — only when the changes tab is visible and idle.
+  setInterval(() => {
+    if (refreshing || store.current()?.status !== 'tool' || store.panelTab !== 'changes') return;
+    const panel = $('#inspector');
+    if (panel && panel.offsetParent === null) return;
+    refreshFiles();
+  }, 12000);
   return { refreshFiles, renderPanel, selectTab, tick };
 }

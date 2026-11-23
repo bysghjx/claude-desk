@@ -65,3 +65,13 @@ test('restores only the listed files and can put them back again', async()=>{
   const redo=await store.restore(project,undo.before,undo.files.map(f=>f.path));
   assert.equal(redo.files.length,2);assert.equal(read(project,'a.txt'),'two');assert.equal(read(project,'src/new.js'),'n');
 });
+
+test('snapshotting many files stats asynchronously without stalling the event loop', async()=>{
+  const project=tmp(),store=new Checkpoints(tmp());
+  fs.mkdirSync(path.join(project,'many'));
+  for(let i=0;i<600;i++)fs.writeFileSync(path.join(project,'many',`f${i}.txt`),'hello\n');
+  let last=Date.now(),worst=0;const timer=setInterval(()=>{const now=Date.now();worst=Math.max(worst,now-last);last=now;},10);
+  const tree=await store.snapshot(project);clearInterval(timer);
+  assert.match(tree,/^[0-9a-f]{40}$/);
+  assert.ok(worst<250,`event loop blocked for ${worst} ms`);
+});
