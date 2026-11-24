@@ -6,7 +6,11 @@ import { elapsed, STATUS_LABELS } from '../core/format.mjs';
 import { turnParts, toolView, stepParts, agentOf, agentParts, fileChanges, changesHtml, taskListHtml, wrapUpHtml, proposalsHtml, groupSteps, groupSummaryHtml, hasUnexecutedToolText } from '../lib/worklog.mjs';
 import { replySpeed } from '../lib/metrics.mjs';
 
-function userHtml(turn) {
+export function userHtml(turn) {
+  if (turn.fromBackground) {
+    const title = turn.backgroundSummary || '后台任务完成后自动继续输出';
+    return `<div class="assistant-label"><span class="spark">✳</span>Claude<span class="background-tag" title="${escape(title)}">后台任务回报</span></div>`;
+  }
   const images = turn.images?.length ? `<div class="user-images">${turn.images.map(image => `<button type="button" class="user-image" data-open-image="${escape(image.id)}" data-image-turn="${escape(turn.id)}" title="${escape(image.name)}">${image.thumb ? `<img src="${escape(image.thumb)}" alt="${escape(image.name)}">` : `<span>${escape(image.name)}</span>`}</button>`).join('')}</div>` : '';
   const references = turn.references?.length ? `<div class="turn-references">${turn.references.map(r => `<span${r.kind === 'upload' ? ` title="${escape(r.path)}"` : ''}>${r.kind === 'file' ? '@' : r.kind === 'upload' ? '📎' : '@@'} ${escape(r.label || r.path)}</span>`).join('')}</div>` : '';
   const label = `<div class="assistant-label"><span class="spark">✳</span>${turn.source === 'codex' ? 'Codex · 历史导入' : turn.source === 'claude' ? 'Claude Code · 历史导入' : 'Claude'}${turn.contextRestored ? '<span class="restore" title="应用已从本地历史恢复上下文">从本地历史恢复上下文</span>' : ''}</div>`;
@@ -28,7 +32,8 @@ export function completionLabel(turn) {
 function footerHtml(turn, threadActive) {
   if (turn.status === 'running') return '';
   const speed = replySpeed(turn);
-  return `<div class="turn-footer"><span>${completionLabel(turn)}</span><span>${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}</span><button class="icon-action" data-copy="${escape(turn.id)}" title="复制回复" aria-label="复制回复"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"/></svg></button><button class="icon-action delete-turn" data-delete-turn="${escape(turn.id)}" ${threadActive ? 'disabled' : ''} title="删除这一轮提问、回复与工具记录" aria-label="删除这轮"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1M6.7 7v4M9.3 7v4"/></svg></button>${['error', 'stopped', 'interrupted'].includes(turn.status) ? `<button data-retry="${escape(turn.id)}">↻ 重试</button>` : ''}${speed != null ? `<span class="reply-speed" title="全程平均：CLI 输出 tokens ÷ 本轮总耗时，包含等待、思考、工具执行与审批时间；不是纯解码速度。">${speed.toFixed(1)} tok/s · 全程平均</span>` : ''}${turn.usage ? `<span class="usage">${turn.usage.output.toLocaleString()} 输出 tokens · $${turn.usage.cost.toFixed(4)}</span>` : ''}</div>`;
+  const canRetry = !turn.fromBackground && ['error', 'stopped', 'interrupted'].includes(turn.status);
+  return `<div class="turn-footer"><span>${completionLabel(turn)}</span><span>${elapsed(turn.startedAt, turn.finishedAt || turn.startedAt)}</span><button class="icon-action" data-copy="${escape(turn.id)}" title="复制回复" aria-label="复制回复"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"/></svg></button><button class="icon-action delete-turn" data-delete-turn="${escape(turn.id)}" ${threadActive ? 'disabled' : ''} title="${turn.fromBackground ? '删除这段后台任务回报与工具记录' : '删除这一轮提问、回复与工具记录'}" aria-label="删除这轮"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1M6.7 7v4M9.3 7v4"/></svg></button>${canRetry ? `<button data-retry="${escape(turn.id)}">↻ 重试</button>` : ''}${speed != null ? `<span class="reply-speed" title="全程平均：CLI 输出 tokens ÷ 本轮总耗时，包含等待、思考、工具执行与审批时间；不是纯解码速度。">${speed.toFixed(1)} tok/s · 全程平均</span>` : ''}${turn.usage ? `<span class="usage">${turn.usage.output.toLocaleString()} 输出 tokens · $${turn.usage.cost.toFixed(4)}</span>` : ''}</div>`;
 }
 
 // Plays a one-off entrance animation; the class is removed afterwards so later
@@ -203,10 +208,10 @@ export function createTurn(turn, context) {
 }
 
 // `turns` is the whole conversation, passed for the latest turn only: its task list is built from every turn.
-export function updateTurn(view, turn, { threadActive, latest = false, turns = null, run = null }) {
+export function updateTurn(view, turn, { threadActive, latest = false, wrapActive = latest, turns = null, run = null }) {
   const runKey = run ? [run.status, run.detail, run.lastEventAt].join('|') : '';
-  if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && view.runKey === runKey && turn.rev != null) return false;
-  view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest; view.runKey = runKey;
+  if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && view.wrapActive === wrapActive && view.runKey === runKey && turn.rev != null) return false;
+  view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest; view.wrapActive = wrapActive; view.runKey = runKey;
   const live = turn.status === 'running';
   if (!view.head.querySelector('.user-edit')) setHtml(view.head, userHtml(turn));
   const final = updateBody(view, turn, live, run || {});
@@ -216,6 +221,6 @@ export function updateTurn(view, turn, { threadActive, latest = false, turns = n
   view.live = live;
   const changes = live ? [] : fileChanges(turn, view.cwd);
   const tasks = latest && turns ? taskListHtml(turns, escape) : '';
-  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape, { turnId: turn.id, undo: turn.undone ? 'undone' : turn.checkpoint ? 'ready' : '', disabled: threadActive })}${live ? '' : proposalsHtml(turn, { escape })}${wrapUpHtml(turn, { escape, latest, threadActive })}${footerHtml(turn, threadActive)}`);
+  setHtml(view.tail, `${tasks}${turn.error ? `<div class="error-card">${escape(turn.error)}</div>` : ''}${changesHtml(changes, escape, { turnId: turn.id, undo: turn.undone ? 'undone' : turn.checkpoint ? 'ready' : '', disabled: threadActive })}${live ? '' : proposalsHtml(turn, { escape })}${wrapUpHtml(turn, { escape, latest, wrapActive, threadActive })}${footerHtml(turn, threadActive)}`);
   return true;
 }

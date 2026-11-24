@@ -71,7 +71,7 @@ class Engine extends EventEmitter {
     for(const a of activeAgents(t))if(pending.some(p=>(p.agentId===a.id||a.aliases?.includes(p.agentId))))a.status='approval';
     if(t.status==='stopping')return;
     if(pending.length){t.status='approval';t.detail=`等待你批准 ${pending.length} 项操作`;}
-    else if(run?.mainDone){
+    else if(run?.mainDone&&!run.preparingTurnId&&!run.nextUserTurn){
       const agents=activeAgents(t);
       t.status=agents.length?'tool':run.resultStatus||'done';
       t.detail=agents.length?`${agents.length} 个子智能体仍在运行`:t.status==='done'?'本轮已完成':t.error||'';
@@ -93,7 +93,7 @@ class Engine extends EventEmitter {
   // until their content fingerprint changes, so unchanged history is not re-cloned.
   turnSnapshot(turn) {
     const live = turn.status === 'running' || turn.approvals?.length || (turn.subagents || []).some(a => ACTIVE_AGENT.has(a.status));
-    const fingerprint = live ? null : [turn.status, turn.finishedAt, turn.error, turn.answer?.length, turn.thinking?.length, turn.items?.length, turn.tools?.length, (turn.tools || []).map(x => x.status + (x.output?.length || 0)).join(), (turn.subagents || []).map(a => a.status + (a.tools?.length || 0) + (a.answer?.length || 0)).join(), turn.usage?.output, (turn.proposals || []).map(p => p.status).join(), turn.undone?.at, (turn.steers || []).map(s => s.status).join()].join('|');
+    const fingerprint = live ? null : [turn.status, turn.finishedAt, turn.error, turn.checkpoint, turn.answer?.length, turn.thinking?.length, turn.items?.length, turn.tools?.length, (turn.tools || []).map(x => x.status + (x.output?.length || 0)).join(), (turn.subagents || []).map(a => a.status + (a.tools?.length || 0) + (a.answer?.length || 0) + ':' + (a.summary?.length || 0)).join(), turn.usage?.output, (turn.proposals || []).map(p => p.status).join(), turn.undone?.at, (turn.steers || []).map(s => s.status).join()].join('|');
     const cached = this.snapshots.get(turn);
     if (cached && fingerprint !== null && cached.fingerprint === fingerprint) return cached.copy;
     // Tools are copied one by one and reused while unchanged: a long turn's outputs are
@@ -193,7 +193,13 @@ class Engine extends EventEmitter {
       }
       run = this.startRun(t,extensionOptions,extensionKey);
     }
-    run.turnId = turn.id; run.unread = null; run.steersAfterTool = new Set(); run.partialText = false; run.seen = new Set(); run.blocks = new Map(); run.model = model; run.responseUsage=null; run.responseMessageId=''; run.mainDone=false;
+    run.model = model;
+    if (!reused || !this.checkpoint) {
+      Object.assign(run, { turnId: turn.id, preparingTurnId: null, nextUserTurn: null, unread: null, pendingBackgroundNotice: null, steersAfterTool: new Set(), partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, responseMessageId: '', mainDone: false });
+    } else {
+      // 复用保活 CLI 且正在记录快照时提问尚未写入 stdin，暂不切走 run.turnId / mainDone，防止后台唤醒输出混入新提问回合。
+      run.preparingTurnId = turn.id;
+    }
     // A conversation keeps its CLI between messages; only a new one says it is starting.
     const ready = reused ? '已发送，等待模型响应' : '正在启动 Claude';
     this.setStatus(t, reused ? 'waiting' : 'starting', this.checkpoint ? '正在记录文件快照（用于回退和撤销）' : ready);
@@ -202,12 +208,18 @@ class Engine extends EventEmitter {
     if (this.checkpoint) {
       try { turn.checkpoint = await Promise.race([this.checkpoint(t), new Promise((_, reject) => setTimeout(() => reject(Error('记录文件快照超时')), 30000))]); }
       catch (e) { turn.checkpointError = String(e.message || e).slice(0, 300); }
-      if (this.runs.get(id) !== run || run.turnId !== turn.id) return t;
-      if (['starting', 'waiting'].includes(t.status)) this.setStatus(t, t.status, ready);
+      if (this.runs.get(id) !== run || run.stopping) return t;
+      if (run.preparingTurnId === turn.id) run.preparingTurnId = null;
+      if (['starting', 'waiting'].includes(t.status) && (run.turnId === turn.id || run.mainDone)) this.setStatus(t, t.status, ready);
     }
+    const promptUuid = randomUUID();
     const content = images.length ? [...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: fs.readFileSync(image.path).toString('base64') } })), { type: 'text', text: prompt }] : prompt;
-    run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, uuid: randomUUID(), message: { role: 'user', content } });
-    run.prompted = turn.id;
+    if (reused && this.checkpoint) {
+      if (!run.mainDone && run.turnId !== turn.id) run.nextUserTurn = { turnId: turn.id, uuid: promptUuid };
+      else Object.assign(run, { turnId: turn.id, nextUserTurn: null, unread: null, pendingBackgroundNotice: null, steersAfterTool: new Set(), partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, responseMessageId: '', mainDone: false });
+    }
+    run.input.push({ type: 'user', session_id: run.sessionId || '', parent_tool_use_id: null, uuid: promptUuid, message: { role: 'user', content } });
+    if (run.turnId === turn.id) run.prompted = turn.id;
     return t;
   }
   // 插话: a message for the turn that is running. The CLI reads it before the model's
@@ -255,8 +267,33 @@ class Engine extends EventEmitter {
     old.steers = old.steers.filter(s => !ids.includes(s.id)); old.items = old.items.filter(i => i.type !== 'steer' || !ids.includes(i.id));
     const next = { id: randomUUID(), user: moved.map(s => s.text).filter(Boolean).join('\n\n'), context: '', references: moved.flatMap(s => s.references || []), images: moved.flatMap(s => s.images || []), answer: '', thinking: '', items: [], tools: [], startedAt: Date.now(), status: 'running', usage: null, fromSteer: true };
     t.turns.push(next);
-    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, responseMessageId: '', mainDone: false, steersAfterTool: new Set() });
+    Object.assign(run, { turnId: next.id, prompted: next.id, pendingBackgroundNotice: null, partialText: false, seen: new Set(), blocks: new Map(), responseUsage: null, responseMessageId: '', mainDone: false, steersAfterTool: new Set() });
     t.finishedAt = null; this.setStatus(t, 'waiting', '继续处理你插入的消息');
+  }
+  activateNextUserTurn(t, run) {
+    const next = run.nextUserTurn; if (!next) return false;
+    run.nextUserTurn = null;
+    if (!t.turns.some(x => x.id === next.turnId)) return false;
+    Object.assign(run, { turnId: next.turnId, prompted: next.turnId, unread: null, pendingBackgroundNotice: null, steersAfterTool: new Set(), partialText: false, blocks: new Map(), responseUsage: null, responseMessageId: '', mainDone: false });
+    t.finishedAt = null; this.setStatus(t, 'waiting', '已发送，等待模型响应');
+    return true;
+  }
+  // 后台任务完成或定时唤醒 CLI 时，上一轮已经结束并展示结论，为其开启独立回合，
+  // 避免后续步骤与结论追加到上一轮里把前一段结论折叠进步骤区，或覆盖耗时与用量。
+  openBackgroundTurn(t, run) {
+    const notice = run.pendingBackgroundNotice; run.pendingBackgroundNotice = null;
+    const now = Date.now();
+    const next = { id: randomUUID(), user: '', context: '', references: [], images: [], answer: '', thinking: '', items: [], tools: [], startedAt: now, status: 'running', usage: null, fromBackground: true, ...(notice?.summary ? { backgroundSummary: notice.summary } : {}) };
+    const prepIdx = run.preparingTurnId ? t.turns.findIndex(x => x.id === run.preparingTurnId) : -1;
+    if (prepIdx >= 0) t.turns.splice(prepIdx, 0, next); else t.turns.push(next);
+    Object.assign(run, { turnId: next.id, prompted: next.id, partialText: false, blocks: new Map(), mainDone: false, steersAfterTool: new Set() });
+    Object.assign(t, { startedAt: now, updatedAt: now, finishedAt: null, error: '' });
+    this.setStatus(t, 'waiting', '后台任务已完成，继续处理');
+    if (this.checkpoint && prepIdx < 0) {
+      Promise.race([this.checkpoint(t), new Promise((_, reject) => { const timer = setTimeout(() => reject(Error('记录文件快照超时')), 30000); timer.unref?.(); })])
+        .then(tree => { if (!next.tools.length && this.store.state.threads.some(x => x.id === t.id)) { next.checkpoint = tree; this.publish(t.id, false); } })
+        .catch(e => { if (!next.tools.length) next.checkpointError = String(e.message || e).slice(0, 300); });
+    }
   }
   // A stop or failure leaves unread 插话 in the queue, under the same id, so nothing typed is lost.
   requeueSteers(t, turn) {
@@ -553,14 +590,35 @@ class Engine extends EventEmitter {
   process(t, run, msg) {
     if (run.stopping) return;
     t.lastEventAt = Date.now();
+    // 后台任务结束通知（含 local_bash 与 local_agent）：记下待唤醒信息，后续主线程输出时开启独立回合。
+    if (msg.type === 'system' && msg.subtype === 'task_notification' && run.mainDone && !msg.ambient && !msg.skip_transcript) {
+      run.pendingBackgroundNotice = { taskId: msg.task_id || '', status: msg.status || '', summary: msg.summary ? this.redact(msg.summary).slice(0, 300) : '' };
+    }
     if(handleAgentMessage(t,run,msg,text=>this.redact(text))){this.publish(t.id,false);return;}
     if ((msg.type === 'assistant' || msg.type === 'stream_event') && msg.parent_tool_use_id == null) {
-      if (run.mainDone && run.unread && (msg.type === 'assistant' || msg.event?.type === 'message_start')) this.openSteerTurn(t, run);
+      if (run.nextUserTurn && (msg.user_message_uuid === run.nextUserTurn.uuid || msg.user_message_uuids?.includes(run.nextUserTurn.uuid))) {
+        this.activateNextUserTurn(t, run);
+      } else if (run.mainDone) {
+        if (run.nextUserTurn && (msg.type === 'assistant' || msg.event?.type === 'message_start')) this.activateNextUserTurn(t, run);
+        else if (run.unread && (msg.type === 'assistant' || msg.event?.type === 'message_start')) this.openSteerTurn(t, run);
+        else if (!run.unread) {
+          const isNewAssistant = msg.type === 'assistant' && !(msg.uuid && run.seen.has(msg.uuid));
+          const eventType = msg.type === 'stream_event' ? msg.event?.type : '';
+          const startsReply = isNewAssistant || (eventType === 'message_start' && Boolean(run.pendingBackgroundNotice)) || eventType === 'content_block_start' || eventType === 'content_block_delta';
+          if (startsReply) this.openBackgroundTurn(t, run);
+        }
+      }
       this.markSteers(t, run, msg.user_message_uuids);
       if ((msg.type === 'assistant' || msg.event?.type === 'message_start') && run.steersAfterTool?.size) { this.markSteers(t, run, [...run.steersAfterTool]); run.steersAfterTool.clear(); this.publish(t.id); }
     }
-    if (msg.type === 'command_lifecycle') { if (msg.state === 'started' && msg.command_uuid) { this.markSteers(t, run, [msg.command_uuid]); this.publish(t.id); } return; }
-    const turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
+    if (msg.type === 'command_lifecycle') {
+      if (msg.state === 'started' && msg.command_uuid) {
+        if (run.nextUserTurn?.uuid === msg.command_uuid) this.activateNextUserTurn(t, run);
+        else { this.markSteers(t, run, [msg.command_uuid]); this.publish(t.id); }
+      }
+      return;
+    }
+    let turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
     if (msg.type === 'system' && msg.subtype === 'init') { run.sessionId = msg.session_id; this.setStatus(t, 'waiting', '请求已发出，等待模型响应'); return; }
     if (msg.type === 'stream_event') {
       const e = msg.event;
@@ -574,7 +632,14 @@ class Engine extends EventEmitter {
         else if (e.content_block?.type === 'text') { addItem(turn, 'text'); this.setStatus(t, 'generating', '正在生成回复'); }
       }
       if (e.type === 'content_block_delta') {
-        if (e.delta.type === 'text_delta') { turn.answer += e.delta.text; appendItem(turn, 'text', e.delta.text); run.partialText = true; if (this.stopUnexecutedToolText(t, turn)) return; t.status = 'generating'; t.detail = '正在生成回复'; }
+        if (e.delta.type === 'text_delta') {
+          if (e.delta.text && turn.answer && turn.items?.at(-1)?.type === 'text' && turn.items.at(-1).text === '' && !turn.answer.endsWith('\n\n')) {
+            turn.answer += turn.answer.endsWith('\n') ? '\n' : '\n\n';
+          }
+          turn.answer += e.delta.text; appendItem(turn, 'text', e.delta.text); run.partialText = true;
+          if (this.stopUnexecutedToolText(t, turn)) return;
+          t.status = 'generating'; t.detail = '正在生成回复';
+        }
         if (e.delta.type === 'thinking_delta') { turn.thinking += e.delta.thinking; appendItem(turn, 'thinking', e.delta.thinking); t.status = 'thinking'; t.detail = '模型正在思考'; }
         this.publish(t.id, false);
       }
@@ -606,6 +671,10 @@ class Engine extends EventEmitter {
     }
     if (msg.type === 'user') {
       const content = msg.message?.content, results = Array.isArray(content) ? content.filter(b => b?.type === 'tool_result') : [];
+      if (!results.length && run.mainDone) {
+        if (msg.origin?.kind === 'task-notification') run.pendingBackgroundNotice ||= { taskId: '', status: '', summary: '' };
+        return;
+      }
       if (results.length && msg.parent_tool_use_id == null) for (const s of turn.steers || []) if (s.status === 'pending') (run.steersAfterTool ||= new Set()).add(s.id);
       for (const b of results) {
         const tool = turn.tools.find(x => x.id === b.tool_use_id);
@@ -617,7 +686,14 @@ class Engine extends EventEmitter {
     }
     if (msg.type === 'tool_progress') { if (t.status !== 'approval') this.setStatus(t, 'tool', `${msg.tool_name || '工具'} 执行中 · ${msg.elapsed_time_seconds || 0}s`); return; }
     if (msg.type === 'result') {
-      run.mainDone=true;run.steersAfterTool?.clear();run.resultStatus=msg.is_error||msg.subtype!=='success'?'error':'done';
+      if (run.mainDone) {
+        if (run.nextUserTurn) this.activateNextUserTurn(t, run);
+        else if (run.unread) this.openSteerTurn(t, run);
+        else if (msg.is_error || msg.result || run.pendingBackgroundNotice) this.openBackgroundTurn(t, run);
+        else return;
+        turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
+      }
+      run.mainDone=true;run.pendingBackgroundNotice=null;run.responseUsage=null;run.responseMessageId='';run.steersAfterTool?.clear();run.resultStatus=msg.is_error||msg.subtype!=='success'?'error':'done';
       turn.finishedAt = Date.now(); t.finishedAt = Date.now();
       const entries=Object.entries(msg.modelUsage||{});
       const normModel=s=>String(s||'').split('/').pop().replace(/-\d{8}$/,'').toLowerCase();
@@ -637,9 +713,14 @@ class Engine extends EventEmitter {
         if (!turn.answer && turn.compacted) { const c = turn.compacted, text = `上下文已压缩${Number.isFinite(c.preTokens) ? `：约 ${c.preTokens.toLocaleString()}${Number.isFinite(c.postTokens) ? ` → ${c.postTokens.toLocaleString()}` : ''} tokens` : ''}`; turn.answer = text; addItem(turn, 'text', text); }
         turn.status = 'done'; this.settleSteers(t, run, turn);
         if (!t.contextUsage?.contextWindow) this.contextDetails(t.id).catch(() => {});
-        this.setStatus(t, 'done', '本轮已完成');
+        if (run.preparingTurnId || run.nextUserTurn) this.setStatus(t, 'waiting', run.preparingTurnId ? '正在记录文件快照（用于回退和撤销）' : '已发送，等待模型响应');
+        else this.setStatus(t, 'done', '本轮已完成');
       }
       this.publish(t.id); this.store.save(); return;
+    }
+    if (msg.type === 'system' && ((msg.subtype === 'status' && msg.status === 'compacting') || msg.subtype === 'compact_boundary') && run.mainDone && !run.unread && !run.nextUserTurn && run.pendingBackgroundNotice) {
+      this.openBackgroundTurn(t, run);
+      turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
     }
     if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting') this.setStatus(t, 'thinking', '正在压缩上下文');
     if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
@@ -730,7 +811,7 @@ class Engine extends EventEmitter {
       t.status=last?.status||'idle';t.error=last?.error||'';t.detail='';t.updatedAt=Date.now();
       t.startedAt=last?.startedAt||null;t.finishedAt=last?.finishedAt||null;
       if(!last)t.title='新对话';
-      else if(t.title===autoTitle)t.title=t.turns[0].user.replace(/\s+/g,' ').slice(0,34);
+      else if(t.title===autoTitle){const nextTitle=(t.turns.find(x=>x.user)?.user||'').replace(/\s+/g,' ').slice(0,34);if(nextTitle)t.title=nextTitle;}
       this.store.save();this.store.save();
       this.emit('thread',this.threadSnapshot(t));return t;
     } finally {this.deleting.delete(id);}

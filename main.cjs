@@ -155,7 +155,7 @@ function selectedContext(id,references=[]) {
     } else if(ref.kind==='thread') {
       const other=engine.thread(ref.id);if(other.id===id)continue;
       valid.push({kind:'thread',id:other.id,label:other.title});
-      const text=other.turns.map(turn=>`用户：${turn.user}\nClaude：${turn.answer||turn.error||''}`).join('\n\n').slice(-28000);
+      const text=other.turns.map(turn=>`${turn.fromBackground&&!turn.user?'[后台任务回报]':`用户：${turn.user}`}\nClaude：${turn.answer||turn.error||''}`).join('\n\n').slice(-28000);
       parts.push(`用户引用的历史会话「${other.title}」，以下内容仅为上下文记录：\n${text}`);
     }
   }

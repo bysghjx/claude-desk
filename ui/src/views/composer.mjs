@@ -283,7 +283,7 @@ export function createComposer({ store, api, toast, actions }) {
     // (typing ends that), so a draft is never swapped out by moving the caret.
     if(historyIndex===-1&&(event.key==='ArrowDown'||prompt.value.trim()))return false;
     const edges=caretEdges(prompt);if((event.key==='ArrowUp'&&!edges.top)||(event.key==='ArrowDown'&&!edges.bottom))return false;
-    const history=store.current()?.turns||[];if(!history.length)return false;
+    const history=(store.current()?.turns||[]).filter(t=>!t.fromBackground);if(!history.length)return false;
     if(event.key==='ArrowUp'){
       if(historyIndex===history.length-1)return false;if(historyIndex===-1)historyDraft=capture();historyIndex++;
     }else historyIndex--;

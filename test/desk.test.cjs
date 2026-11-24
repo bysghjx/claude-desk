@@ -52,14 +52,23 @@ test('task list follows TodoWrite and TaskCreate / TaskUpdate and shows only whe
   assert.equal(taskListHtml([...turns,{tools:[{name:'Bash',input:{}}]}],escape),'');
   assert.equal(taskListHtml([{tools:[{name:'TodoWrite',input:{todos:[{content:'<b>',status:'pending'}]}}]}],escape).includes('&lt;b&gt;'),true);
 });
-test('wrap-up box hides its tool row, waits for the turn to finish and only offers buttons on the latest idle turn',async()=>{
-  const {splitTurn,wrapUpHtml}=await worklog();
+test('wrap-up box hides its tool row, waits for the turn to finish and keeps buttons live across plain background reports',async()=>{
+  const {splitTurn,wrapUpHtml,isActiveWrapUp}=await worklog();
   const turn={status:'done',tools:[{id:'b',name:'Bash',input:{command:'ls'}},{id:'w',name:WRAP_UP,input:{}}],items:[{type:'tool',id:'b'},{type:'tool',id:'w'},{type:'text',text:'Final reply'}],wrapUp:{recap:'Done <now>',ask:'Ship it?',actions:['Ship','Wait']}};
   const split=splitTurn(turn);assert.deepEqual(split.work.map(i=>i.id),['b']);assert.equal(split.final,'Final reply');
   const html=wrapUpHtml(turn,{escape,latest:true,threadActive:false});assert.match(html,/Done &lt;now&gt;/);assert.match(html,/data-wrap-reply="Ship"/);assert.match(html,/class="primary"/);
   assert.doesNotMatch(wrapUpHtml(turn,{escape,latest:false,threadActive:false}),/data-wrap-reply/);
   assert.doesNotMatch(wrapUpHtml(turn,{escape,latest:true,threadActive:true}),/data-wrap-reply/);
   assert.equal(wrapUpHtml({...turn,status:'running'},{escape,latest:true,threadActive:true}),'');
+  // A follow-up background report without its own wrap-up buttons leaves the earlier question live.
+  const bgReport={status:'done',fromBackground:true,answer:'Background comparison finished.'};
+  assert.equal(isActiveWrapUp([turn,bgReport],turn),true);
+  assert.match(wrapUpHtml(turn,{escape,latest:false,wrapActive:isActiveWrapUp([turn,bgReport],turn),threadActive:false}),/data-wrap-reply="Ship"/);
+  // A later background report with its own wrap-up buttons, or a new user turn, retires the earlier buttons.
+  const bgAsk={status:'done',fromBackground:true,wrapUp:{recap:'New',ask:'Deploy?',actions:['Yes']}};
+  assert.equal(isActiveWrapUp([turn,bgAsk],turn),false);
+  assert.equal(isActiveWrapUp([turn,bgAsk],bgAsk),true);
+  assert.equal(isActiveWrapUp([turn,bgReport,{status:'done',user:'next'}],turn),false);
 });
 
 test('proposal input needs a title and a brief and keeps the line breaks of the brief',()=>{

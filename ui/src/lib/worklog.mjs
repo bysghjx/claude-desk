@@ -324,10 +324,18 @@ export function taskListHtml(turns,escape){
   const done=items.filter(x=>x.status==='done').length;
   return `<section class="task-list" aria-label="任务清单"><div class="task-list-head"><span>任务</span><span>${done}/${items.length}</span></div><ol>${items.map(x=>`<li class="task-${x.status}"><span class="task-mark" aria-hidden="true"></span><span>${escape(x.text)}</span></li>`).join('')}</ol></section>`;
 }
-// Buttons answer the question, so they only work on the newest turn of an idle conversation.
-export function wrapUpHtml(turn,{escape,latest,threadActive}){
+// Buttons answer the question, so they stay live until the user sends a new turn
+// or a later background report asks its own wrap-up question.
+export function isActiveWrapUp(turns,turn){
+  if(!turn?.wrapUp?.ask||!turn.wrapUp.actions?.length)return false;
+  if(!Array.isArray(turns)||!turns.length)return true;
+  const at=turns.indexOf(turn);if(at<0)return false;
+  for(let i=at+1;i<turns.length;i++){const later=turns[i];if(!later.fromBackground||(later.wrapUp?.ask&&later.wrapUp.actions?.length))return false;}
+  return true;
+}
+export function wrapUpHtml(turn,{escape,latest,wrapActive=latest,threadActive}){
   const box=turn?.wrapUp;if(!box?.recap||turn.status==='running')return'';
-  const live=latest&&!threadActive&&box.ask&&box.actions?.length;
+  const live=wrapActive&&!threadActive&&box.ask&&box.actions?.length;
   return `<section class="wrap-up" aria-label="本轮小结"><p class="wrap-recap">${escape(box.recap)}</p>${box.ask?`<p class="wrap-ask">${escape(box.ask)}</p>`:''}${live?`<div class="wrap-actions">${box.actions.map((label,i)=>`<button type="button" class="${i?'secondary':'primary'}" data-wrap-reply="${escape(label)}">${escape(label)}</button>`).join('')}</div>`:''}</section>`;
 }
 // Conversations Claude proposed with propose_session. A started one links to its conversation.

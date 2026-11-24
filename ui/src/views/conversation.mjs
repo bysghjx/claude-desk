@@ -3,6 +3,7 @@ import { $, escape, setHtml, setText } from '../core/dom.mjs';
 import { elapsed, isActive } from '../core/format.mjs';
 import { guarded, showImage } from '../core/ui.mjs';
 import { createTurn, updateTurn, animateIn, liveLabel } from './turn.mjs';
+import { isActiveWrapUp } from '../lib/worklog.mjs';
 
 const SUGGESTIONS = [
   // Drawn icons: text symbols like ⌘ ⌕ ↗ sit at different heights in each font.
@@ -115,7 +116,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     else older.remove();
     let previous = hidden ? older : null;
     for (const turn of turns) {
-      const latest = turn === thread.turns.at(-1), turnContext = latest ? { ...context, latest, turns: thread.turns, run: { status: thread.status, detail: thread.detail, lastEventAt: thread.lastEventAt } } : context;
+      const latest = turn === thread.turns.at(-1), wrapActive = isActiveWrapUp(thread.turns, turn), turnContext = latest ? { ...context, latest, wrapActive, turns: thread.turns, run: { status: thread.status, detail: thread.detail, lastEventAt: thread.lastEventAt } } : { ...context, wrapActive };
       let view = views.get(turn.id);
       if (!view) { view = createTurn(turn, turnContext); views.set(turn.id, view); if (!switched) animateIn(view.root); }
       else updateTurn(view, turn, turnContext);

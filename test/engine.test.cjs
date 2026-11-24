@@ -630,3 +630,126 @@ test('contextDetails syncs authoritative totalTokens, deduplicates concurrent ca
   assert.equal(t.contextUsage.usedTokens,14000);
   await complete(sdk,'');await engine.shutdown();
 });
+test('background task wakeup after a finished turn opens an independent follow-up turn without swallowing the earlier conclusion',async()=>{
+  const worklog=await import('../ui/src/lib/worklog.mjs');
+  const {historyTail}=require('../json-stream.cjs');
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  await engine.send(t.id,'排查脚印问题');await tick();
+  sdk.outputs.push({type:'assistant',uuid:'a1',parent_tool_use_id:null,message:{content:[
+    {type:'tool_use',id:'t1',name:'Bash',input:{command:'check-logs'}},
+    {type:'tool_use',id:'w1',name:'mcp__desk__wrap_up',input:{recap:'脚印问题已定位并修好',ask:'星陨装备要补属性还是先下架？',actions:['补上属性','先下架']}}
+  ]}});
+  sdk.outputs.push({type:'user',parent_tool_use_id:null,message:{content:[
+    {type:'tool_result',tool_use_id:'t1',content:'ok'},
+    {type:'tool_result',tool_use_id:'w1',content:'ok'}
+  ]}});
+  sdk.outputs.push({type:'assistant',uuid:'a2',parent_tool_use_id:null,message:{content:[{type:'text',text:'第一段结论：脚印已修好。'}]}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'第一段结论：脚印已修好。',usage:{input_tokens:100,output_tokens:3500},total_cost_usd:1.25});await tick();
+  assert.equal(t.turns.length,1);assert.equal(t.status,'done');assert.equal(t.turns[0].status,'done');
+  const firstFinishedAt=t.turns[0].finishedAt;
+  // Duplicate assistant replay from the finished turn must not open a new turn.
+  sdk.outputs.push({type:'assistant',uuid:'a2',parent_tool_use_id:null,message:{content:[{type:'text',text:'第一段结论：脚印已修好。'}]}});await tick();
+  assert.equal(t.turns.length,1);
+  // First background shell task finishes and wakes the CLI with new tool calls + a second conclusion.
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'bash-1',status:'failed',summary:'全量对比超时，已停止'});
+  sdk.outputs.push({type:'user',parent_tool_use_id:null,origin:{kind:'task-notification'},message:{role:'user',content:'<task-notification>timeout</task-notification>'}});await tick();
+  assert.equal(t.turns.length,1,'notification alone does not open a turn until the model replies');
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'message_start',message:{id:'m2',model:t.model,usage:{input_tokens:200,output_tokens:0}}}});await tick();
+  assert.equal(t.turns.length,2);assert.equal(t.turns[1].fromBackground,true);assert.equal(t.turns[1].status,'running');assert.equal(t.turns[1].backgroundSummary,'全量对比超时，已停止');
+  assert.equal(engine.canSteer(t.id),true);
+  sdk.outputs.push({type:'assistant',uuid:'a3',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'t2',name:'Bash',input:{command:'rerun-fast'}}]}});
+  sdk.outputs.push({type:'user',parent_tool_use_id:null,message:{content:[{type:'tool_result',tool_use_id:'t2',content:'started'}]}});
+  sdk.outputs.push({type:'assistant',uuid:'a4',parent_tool_use_id:null,message:{content:[{type:'text',text:'第二段结论：已换成快速比对重跑。'}]}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'第二段结论：已换成快速比对重跑。',usage:{input_tokens:50,output_tokens:400},total_cost_usd:1.45});await tick();
+  // Second background task finishes without an explicit task_notification (tests content-block trigger too).
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'message_start',message:{id:'m3',model:t.model,usage:{input_tokens:220,output_tokens:0}}}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'content_block_start',index:0,content_block:{type:'text'}}});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'content_block_delta',index:0,delta:{type:'text_delta',text:'第三段结论：全量对比完成。'}}});
+  sdk.outputs.push({type:'assistant',uuid:'a5',parent_tool_use_id:null,message:{content:[{type:'text',text:'第三段结论：全量对比完成。'}]}});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'第三段结论：全量对比完成。',usage:{input_tokens:40,output_tokens:772},total_cost_usd:1.7263});await tick();
+  assert.equal(t.turns.length,3);assert.equal(t.status,'done');
+  assert.equal(worklog.turnParts(t.turns[0]).final,'第一段结论：脚印已修好。');
+  assert.equal(worklog.turnParts(t.turns[1]).final,'第二段结论：已换成快速比对重跑。');
+  assert.equal(worklog.turnParts(t.turns[2]).final,'第三段结论：全量对比完成。');
+  assert.equal(t.turns[0].finishedAt,firstFinishedAt,'earlier turn timing is preserved');
+  assert.equal(t.turns[0].usage.output,3500,'earlier turn usage is not overwritten');
+  assert.ok(Math.abs(t.turns[0].usage.cost-1.25)<0.0001);
+  assert.equal(t.turns[0].wrapUp.recap,'脚印问题已定位并修好');
+  assert.equal(t.turns[1].usage.output,400);assert.ok(Math.abs(t.turns[1].usage.cost-0.2)<0.0001);
+  assert.equal(t.turns[2].usage.output,772);assert.ok(Math.abs(t.turns[2].usage.cost-0.2763)<0.0001);
+  assert.equal(t.turns[2].fromBackground,true);
+  assert.match(historyTail(t.turns),/后台任务完成后自动继续/);
+  await engine.shutdown();
+});
+test('stopping a running background wakeup turn leaves the previous completed turn untouched',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  await engine.send(t.id,'start');await tick();await complete(sdk,'first answer');
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'bg-1',status:'completed',summary:'done'});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'message_start',message:{id:'m2',model:t.model}}});await tick();
+  assert.equal(t.turns.length,2);assert.equal(t.turns[1].status,'running');
+  await engine.stop(t.id);
+  assert.equal(t.turns[0].status,'done');assert.equal(t.turns[0].answer,'first answer');
+  assert.equal(t.turns[1].status,'stopped');assert.equal(t.status,'stopped');
+  await engine.shutdown();
+});
+test('background wakeup during checkpoint snapshot stays ordered before the new user turn and never steals its reply',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  await engine.send(t.id,'first');await tick();await complete(sdk,'first done');
+  let finishSnap;
+  engine.checkpoint=()=>new Promise(resolve=>{finishSnap=resolve;});
+  const sendPromise=engine.send(t.id,'second user prompt');await tick();
+  // While checkpoint is still awaiting, a background task wakes the CLI.
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'bg-race',status:'completed',summary:'race done'});
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event:{type:'message_start',message:{id:'m-bg',model:t.model}}});
+  sdk.outputs.push({type:'assistant',uuid:'bg-a1',parent_tool_use_id:null,message:{content:[{type:'text',text:'后台回报内容'}]}});await tick();
+  // Checkpoint finishes while background turn is still running; user prompt is pushed to stdin.
+  finishSnap('tree-user-2');await sendPromise;await tick();
+  // Background turn finishes first; thread stays active waiting for the queued user prompt's reply.
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'后台回报内容',usage:{output_tokens:10},total_cost_usd:0.01});await tick();
+  assert.equal(t.status,'waiting');
+  // CLI now answers the user's second prompt.
+  const userUuid=sdk.messages.at(-1).uuid;
+  sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,user_message_uuids:[userUuid],event:{type:'message_start',message:{id:'m-u2',model:t.model}}});
+  await complete(sdk,'用户新提问的回答');
+  assert.equal(t.turns.length,3);
+  assert.deepEqual(t.turns.map(x=>[Boolean(x.fromBackground),x.user,x.answer]),[
+    [false,'first','first done'],
+    [true,'','后台回报内容'],
+    [false,'second user prompt','用户新提问的回答']
+  ]);
+  assert.equal(t.turns[2].checkpoint,'tree-user-2');
+  assert.equal(t.status,'done');
+  await engine.shutdown();
+});
+test('streamed multi-block text separates paragraphs, background turns record checkpoints, and snapshot fingerprints track late summaries',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  engine.checkpoint=async()=>'tree-bg-1';
+  await engine.send(t.id,'go');await tick();
+  // Stream two text blocks separated by a tool call: turn.answer must separate them with \n\n.
+  const stream=event=>sdk.outputs.push({type:'stream_event',parent_tool_use_id:null,event});
+  stream({type:'content_block_start',index:0,content_block:{type:'text'}});
+  stream({type:'content_block_delta',index:0,delta:{type:'text_delta',text:'Part one.'}});
+  sdk.outputs.push({type:'assistant',uuid:'s1',parent_tool_use_id:null,message:{content:[{type:'text',text:'Part one.'},{type:'tool_use',id:'t-mid',name:'Bash',input:{command:'ls'}}]}});
+  sdk.outputs.push({type:'user',parent_tool_use_id:null,message:{content:[{type:'tool_result',tool_use_id:'t-mid',content:'ok'}]}});
+  stream({type:'content_block_start',index:0,content_block:{type:'text'}});
+  stream({type:'content_block_delta',index:0,delta:{type:'text_delta',text:'Part two.'}});
+  sdk.outputs.push({type:'assistant',uuid:'s2',parent_tool_use_id:null,message:{content:[{type:'text',text:'Part two.'}]}});
+  // Background subagent finishes via task_updated first (status settled), then task_notification brings summary.
+  sdk.outputs.push({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'ag-1',description:'Check',is_backgrounded:true});
+  sdk.outputs.push({type:'result',subtype:'success',is_error:false,result:'Part two.',usage:{output_tokens:20},total_cost_usd:0.01});await tick();
+  assert.equal(t.turns[0].answer,'Part one.\n\nPart two.');
+  sdk.outputs.push({type:'system',subtype:'task_updated',task_id:'ag-1',patch:{status:'completed'}});await tick();
+  const snapBeforeSummary=engine.threadSnapshot(t).turns[0];
+  assert.equal(snapBeforeSummary.subagents[0].summary,undefined);
+  sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'ag-1',status:'completed',summary:'子智能体最终摘要'});await tick();
+  const snapAfterSummary=engine.threadSnapshot(t).turns[0];
+  assert.equal(snapAfterSummary.subagents[0].summary,'子智能体最终摘要');
+  assert.notEqual(snapAfterSummary.rev,snapBeforeSummary.rev);
+  // Auto-compaction followed by reply after background task_notification attaches to the new background turn.
+  sdk.outputs.push({type:'system',subtype:'status',status:'compacting'});
+  sdk.outputs.push({type:'system',subtype:'compact_boundary',compact_metadata:{trigger:'auto',pre_tokens:100000,post_tokens:12000}});await tick();
+  assert.equal(t.turns.length,2);assert.equal(t.turns[1].fromBackground,true);assert.equal(t.turns[0].compacted,undefined);assert.equal(t.turns[1].compacted.postTokens,12000);
+  await complete(sdk,'压缩后的后台回报');await tick();
+  assert.equal(engine.threadSnapshot(t).turns[1].checkpoint,'tree-bg-1');
+  await engine.shutdown();
+});

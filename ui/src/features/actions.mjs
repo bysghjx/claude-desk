@@ -86,7 +86,7 @@ export function createActions({ store, api, composer, toast, confirm }) {
   }
   async function deleteTurn(turnId) {
     const id = store.selected, turn = store.current()?.turns.find(t => t.id === turnId); if (!turn) return false;
-    if (!await confirm({ title: '删除这轮问答？', description: '将删除这一轮的提问、回复、思考和工具记录。后续问答与项目文件保留。此操作无法撤销。', preview: turn.user, label: '删除这轮' })) return false;
+    if (!await confirm({ title: '删除这轮问答？', description: '将删除这一轮的提问、回复、思考和工具记录。后续问答与项目文件保留。此操作无法撤销。', preview: turn.user || (turn.fromBackground ? (turn.answer || turn.backgroundSummary || '后台任务回报').slice(0, 120) : ''), label: '删除这轮' })) return false;
     await apply(await api('turn:delete', id, turnId)); toast('这轮问答已删除'); return true;
   }
   async function rename(id, title) {
@@ -133,7 +133,7 @@ export function createActions({ store, api, composer, toast, confirm }) {
     composer.save(); composer.focus(); store.emit('composer');
   }
 
-  async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) await sendMessage(turn.user); }
+  async function retry(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn?.user) await sendMessage(turn.user); }
   async function copyAnswer(turnId) { const turn = store.current()?.turns.find(t => t.id === turnId); if (turn) { await api('copy', turn.answer); toast('已复制回复'); } }
 
   return { apply, fetchFull, markSeen, selectThread, showHome, newTask, selectProject, addProject, newThread, sendMessage, stop, deleteThread, deleteTurn, rename, setPinned, setArchived, setLocation, moveThread, reorderProjects, setProjectPinned, sendQueuedNow, steerQueued, steerNow, removeQueued, editQueued, retry, copyAnswer };
