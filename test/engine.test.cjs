@@ -753,3 +753,20 @@ test('streamed multi-block text separates paragraphs, background turns record ch
   assert.equal(engine.threadSnapshot(t).turns[1].checkpoint,'tree-bg-1');
   await engine.shutdown();
 });
+test('API retries show their reason in the status until the model answers',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  try{
+    await engine.send(t.id,'hi');await tick();
+    const retry=fields=>sdk.outputs.push({type:'system',subtype:'api_retry',uuid:String(Math.random()),session_id:'cli-id',...fields});
+    retry({attempt:2,max_retries:10,retry_delay_ms:4200,error_status:529,error:'overloaded'});await tick();
+    assert.equal(t.status,'waiting');assert.equal(t.detail,'服务商过载（529），4s 后第 2/10 次重试');assert.deepEqual(t.retry,{attempt:2,max:10});
+    retry({attempt:1,max_retries:1,retry_delay_ms:0,error_status:null,error:'unknown',no_response:{waited_ms:90000,retry_wait_ms:180000}});await tick();
+    assert.equal(t.detail,'服务商 90s 没有响应，第 1/1 次重试（最多等 180s）');
+    retry({attempt:3,max_retries:10,retry_delay_ms:1000,error_status:null,error:'unknown'});await tick();
+    assert.equal(t.detail,'连接中断或超时，1s 后第 3/10 次重试');
+    sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{id:'m1'}}});await tick();
+    assert.equal(t.retry,null);
+    sdk.outputs.push({type:'stream_event',event:{type:'content_block_start',index:0,content_block:{type:'text'}}});await tick();
+    assert.equal(t.status,'generating');
+  }finally{await engine.shutdown();}
+});

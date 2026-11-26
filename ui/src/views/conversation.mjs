@@ -116,7 +116,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
     else older.remove();
     let previous = hidden ? older : null;
     for (const turn of turns) {
-      const latest = turn === thread.turns.at(-1), wrapActive = isActiveWrapUp(thread.turns, turn), turnContext = latest ? { ...context, latest, wrapActive, turns: thread.turns, run: { status: thread.status, detail: thread.detail, lastEventAt: thread.lastEventAt } } : { ...context, wrapActive };
+      const latest = turn === thread.turns.at(-1), wrapActive = isActiveWrapUp(thread.turns, turn), turnContext = latest ? { ...context, latest, wrapActive, turns: thread.turns, run: { status: thread.status, detail: thread.detail, lastEventAt: thread.lastEventAt, retry: thread.retry } } : { ...context, wrapActive };
       let view = views.get(turn.id);
       if (!view) { view = createTurn(turn, turnContext); views.set(turn.id, view); if (!switched) animateIn(view.root); }
       else updateTurn(view, turn, turnContext);
@@ -130,7 +130,7 @@ export function createConversation({ store, actions, api, composer, toast, dock 
   // Live "正在处理 · 1m 2s" labels advance once a second without re-rendering turns.
   function tick() {
     for (const label of box.querySelectorAll('.work-label[data-since]')) {
-      const now = liveLabel(label.dataset.status, Number(label.dataset.since), Number(label.dataset.lastEvent) || 0, label.dataset.detail);
+      const now = liveLabel(label.dataset.status, Number(label.dataset.since), Number(label.dataset.lastEvent) || 0, label.dataset.detail, Date.now(), label.dataset.retry === '1');
       label.textContent = now.label; label.parentNode.querySelector('.work-detail').textContent = now.detail;
     }
     updateLiveFloat();

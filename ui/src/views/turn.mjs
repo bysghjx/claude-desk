@@ -136,9 +136,10 @@ function renderSteps(list, nodes, work, ctx) {
 // The folded group with everything that happened before the final answer.
 // While the turn runs its row reads like the status: 等待模型响应 · 41s, with the detail
 // (工具已返回，等待模型继续) after it; the row exists from the start, before any step.
-export function liveLabel(status, since, lastEventAt, detail, now = Date.now()) {
-  const quiet = Math.floor((now - (lastEventAt || since)) / 1000);
-  return { label: `${STATUS_LABELS[status] || '正在处理'} · ${elapsed(since, now)}`, detail: quiet > 25 && status !== 'approval' ? `${quiet}s 未收到新事件，可能在等服务商` : detail || '' };
+// While the CLI retries a request the detail keeps its reason (服务商过载（529），2s 后第 3/10 次重试).
+export function liveLabel(status, since, lastEventAt, detail, now = Date.now(), retrying = false) {
+  const quiet = Math.floor((now - (lastEventAt || since)) / 1000), silent = quiet > 25 && status !== 'approval';
+  return { label: `${STATUS_LABELS[status] || '正在处理'} · ${elapsed(since, now)}`, detail: retrying ? `${detail}${silent ? ` · 已过 ${quiet}s` : ''}` : silent ? `${quiet}s 未收到新事件，可能在等服务商` : detail || '' };
 }
 // `part` holds one folded group and its step nodes; a turn has one per stretch between 插话.
 function updateWork(view, part, turn, work, live, run, span) {
@@ -155,9 +156,9 @@ function updateWork(view, part, turn, work, live, run, span) {
   // Open while running, fold when finished, unless the user chose otherwise.
   if (!group.dataset.userToggled) group.open = live;
   const label = group.querySelector('.work-label'), detail = group.querySelector('.work-detail');
-  if (live) Object.assign(label.dataset, { since: turn.startedAt, status: run.status || '', lastEvent: run.lastEventAt || '', detail: run.detail || '' });
-  else for (const key of ['since', 'status', 'lastEvent', 'detail']) delete label.dataset[key];
-  const now = live ? liveLabel(run.status, turn.startedAt, run.lastEventAt, run.detail) : null;
+  if (live) Object.assign(label.dataset, { since: turn.startedAt, status: run.status || '', lastEvent: run.lastEventAt || '', detail: run.detail || '', retry: run.retry ? '1' : '' });
+  else for (const key of ['since', 'status', 'lastEvent', 'detail', 'retry']) delete label.dataset[key];
+  const now = live ? liveLabel(run.status, turn.startedAt, run.lastEventAt, run.detail, Date.now(), Boolean(run.retry)) : null;
   label.textContent = live ? now.label : `已处理 ${elapsed(span.since, span.until)}`;
   detail.textContent = live ? now.detail : '';
   group.querySelector('.work-count').textContent = steps ? `${steps} 个步骤` : '';
@@ -209,7 +210,7 @@ export function createTurn(turn, context) {
 
 // `turns` is the whole conversation, passed for the latest turn only: its task list is built from every turn.
 export function updateTurn(view, turn, { threadActive, latest = false, wrapActive = latest, turns = null, run = null }) {
-  const runKey = run ? [run.status, run.detail, run.lastEventAt].join('|') : '';
+  const runKey = run ? [run.status, run.detail, run.lastEventAt, run.retry ? 1 : 0].join('|') : '';
   if (view.rev === turn.rev && view.threadActive === threadActive && view.latest === latest && view.wrapActive === wrapActive && view.runKey === runKey && turn.rev != null) return false;
   view.rev = turn.rev; view.threadActive = threadActive; view.latest = latest; view.wrapActive = wrapActive; view.runKey = runKey;
   const live = turn.status === 'running';

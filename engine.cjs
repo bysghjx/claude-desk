@@ -21,6 +21,14 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
 // Items keep text, thinking and tool calls in the order they happened so the
 // renderer can show the work leading up to the final answer.
 function addItem(turn, type, text = '') { (turn.items ||= []).push(type === 'tool' ? { type, id: text } : { type, text }); return turn.items.at(-1); }
+// The CLI retries a failed or silent API request on its own (system/api_retry); the status says why and when.
+const RETRY_REASONS = { rate_limit: '触发限流', overloaded: '服务商过载', server_error: '服务商出错', authentication_failed: '认证失败', billing_error: '账户计费问题', model_not_found: '找不到模型' };
+function retryDetail(msg) {
+  const seconds = ms => `${Math.max(0, Math.round((Number(ms) || 0) / 1000))}s`, attempt = `第 ${msg.attempt || 1}${msg.max_retries ? `/${msg.max_retries}` : ''} 次重试`;
+  if (msg.no_response) return `服务商 ${seconds(msg.no_response.waited_ms)} 没有响应，${attempt}（最多等 ${seconds(msg.no_response.retry_wait_ms)}）`;
+  const reason = RETRY_REASONS[msg.error] || (msg.error_status ? '请求失败' : '连接中断或超时');
+  return `${reason}${msg.error_status ? `（${msg.error_status}）` : ''}，${seconds(msg.retry_delay_ms)} 后${attempt}`;
+}
 function appendItem(turn, type, text) { const last = turn.items?.at(-1); if (last?.type === type) last.text += text; else addItem(turn, type, text); }
 class InputQueue {
   constructor() { this.items = []; this.waiters = []; this.closed = false; }
@@ -114,7 +122,7 @@ class Engine extends EventEmitter {
     return { ...structuredClone(meta), turns: turns.map(turn => this.turnSnapshot(turn)) };
   }
   snapshot() { const { threads, ...rest } = this.store.state; return { ...structuredClone(rest), threads: threads.map(t => this.threadSnapshot(t)) }; }
-  setStatus(t, status, detail) { t.status = status; t.detail = detail || ''; t.lastEventAt = Date.now(); this.publish(t.id); }
+  setStatus(t, status, detail) { t.retry = null; t.status = status; t.detail = detail || ''; t.lastEventAt = Date.now(); this.publish(t.id); }
   addProject(directory) {
     const real = fs.realpathSync(directory);
     if (!fs.statSync(real).isDirectory()) throw Error('请选择文件夹');
@@ -590,6 +598,7 @@ class Engine extends EventEmitter {
   process(t, run, msg) {
     if (run.stopping) return;
     t.lastEventAt = Date.now();
+    if (t.retry && !(msg.type === 'system' && msg.subtype === 'api_retry')) t.retry = null;
     // 后台任务结束通知（含 local_bash 与 local_agent）：记下待唤醒信息，后续主线程输出时开启独立回合。
     if (msg.type === 'system' && msg.subtype === 'task_notification' && run.mainDone && !msg.ambient && !msg.skip_transcript) {
       run.pendingBackgroundNotice = { taskId: msg.task_id || '', status: msg.status || '', summary: msg.summary ? this.redact(msg.summary).slice(0, 300) : '' };
@@ -620,6 +629,10 @@ class Engine extends EventEmitter {
     }
     let turn = t.turns.find(x => x.id === run.turnId); if (!turn) return;
     if (msg.type === 'system' && msg.subtype === 'init') { run.sessionId = msg.session_id; this.setStatus(t, 'waiting', '请求已发出，等待模型响应'); return; }
+    if (msg.type === 'system' && msg.subtype === 'api_retry') {
+      if (!run.mainDone && t.status !== 'approval') { this.setStatus(t, 'waiting', retryDetail(msg)); t.retry = { attempt: msg.attempt || 1, max: msg.max_retries || 0 }; this.publish(t.id); }
+      return;
+    }
     if (msg.type === 'stream_event') {
       const e = msg.event;
       if(msg.parent_tool_use_id==null){

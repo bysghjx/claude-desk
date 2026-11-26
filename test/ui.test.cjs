@@ -182,6 +182,8 @@ test('the running turn reads like the status, and says when events stop coming',
   assert.match(liveLabel('tool',now-90000,now-30000,'执行 Bash',now).detail,/30s 未收到新事件/);
   assert.equal(liveLabel('approval',now-90000,now-30000,'等待你批准 Bash',now).detail,'等待你批准 Bash');
   assert.match(liveLabel(undefined,now-5000,0,'',now).label,/^正在处理 · /);
+  assert.equal(liveLabel('waiting',now-90000,now-3000,'服务商过载（529），4s 后第 2/10 次重试',now,true).detail,'服务商过载（529），4s 后第 2/10 次重试');
+  assert.equal(liveLabel('waiting',now-90000,now-40000,'服务商过载（529），4s 后第 2/10 次重试',now,true).detail,'服务商过载（529），4s 后第 2/10 次重试 · 已过 40s');
 });
 test('background wakeup turns render a compact label without user bubble or edit/rewind controls',async()=>{
   const {userHtml}=await import('../ui/src/views/turn.mjs');
