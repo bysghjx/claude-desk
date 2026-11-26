@@ -523,6 +523,8 @@ class Engine extends EventEmitter {
         new Promise((_, reject) => { timer = setTimeout(() => reject(Error('读取上下文明细超时')), timeoutMs); timer.unref?.(); })
       ]).finally(() => clearTimeout(timer));
       const window = usage.rawMaxTokens || usage.maxTokens;
+      // The part of the window the CLI keeps free for compacting; 剩余空间 leaves it out, as /context does.
+      const reserved = (usage.categories || []).filter(c => ['autocompact_buffer', 'compact_buffer'].includes(c.id) && Number.isFinite(c.tokens)).reduce((sum, c) => sum + c.tokens, 0);
       const cliTotal = Number.isFinite(usage.totalTokens) && usage.totalTokens >= 0 ? usage.totalTokens : null;
       if ((Number.isFinite(window) && window > 0) || cliTotal !== null) {
         const previous = t.contextUsage || {};
@@ -533,6 +535,7 @@ class Engine extends EventEmitter {
           ...(Number.isFinite(nextUsed) ? { usedTokens: nextUsed } : {}),
           contextWindow: hasWindow ? window : previous.contextWindow ?? null,
           ...(hasWindow ? { windowSource: 'cli' } : {}),
+          ...(Array.isArray(usage.categories) ? { reservedTokens: reserved } : {}),
           model: previous.model || usage.model || run.contextModel || t.model,
           updatedAt: Date.now()
         };
@@ -550,7 +553,8 @@ class Engine extends EventEmitter {
     return task;
   }
   recordContext(t, run, usage, model, { messageId = '', merge = false } = {}) {
-    if (!usage || typeof usage !== 'object') return;
+    // The CLI's own messages (API errors, interruptions) carry zero usage under model <synthetic>.
+    if (!usage || typeof usage !== 'object' || model === '<synthetic>') return;
     const inputFields = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
     const fields = [...inputFields, 'output_tokens'];
     if (fields.some(key => usage[key] != null && (!Number.isFinite(usage[key]) || usage[key] < 0))) return;
@@ -585,6 +589,7 @@ class Engine extends EventEmitter {
       usedTokens,
       contextWindow: sameModel ? previous.contextWindow : null,
       ...(sameModel && previous?.windowSource ? { windowSource: previous.windowSource } : {}),
+      ...(sameModel && Number.isFinite(previous?.reservedTokens) ? { reservedTokens: previous.reservedTokens } : {}),
       model: run.contextModel,
       updatedAt: Date.now()
     };
@@ -636,7 +641,7 @@ class Engine extends EventEmitter {
     if (msg.type === 'stream_event') {
       const e = msg.event;
       if(msg.parent_tool_use_id==null){
-        if(e.type==='message_start'){run.responseUsage=null;run.responseMessageId=e.message?.id||'';this.recordContext(t,run,e.message?.usage,e.message?.model,{messageId:run.responseMessageId});}
+        if(e.type==='message_start'){turn.requests=(turn.requests||0)+1;run.responseUsage=null;run.responseMessageId=e.message?.id||'';this.recordContext(t,run,e.message?.usage,e.message?.model,{messageId:run.responseMessageId});}
         if(e.type==='message_delta'&&e.usage)this.recordContext(t,run,e.usage,run.contextModel,{messageId:run.responseMessageId,merge:Boolean(run.responseUsage)});
       }
       if (e.type === 'content_block_start') {

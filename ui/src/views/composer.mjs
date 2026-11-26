@@ -148,17 +148,17 @@ export function createComposer({ store, api, toast, actions }) {
     $('#usage-ring').setAttribute('stroke-dashoffset',String(100-(percent||0)));
     $('#context-usage').classList.toggle('usage-high',percent!==null&&percent>=80);
     const number=value=>Number.isFinite(value)?value.toLocaleString():'未返回';
-    const last=t?.turns.at(-1)?.usage;
+    const lastTurn=t?.turns.at(-1),last=lastTurn?.usage;
     const lastInput=last?(last.input||0)+(last.cache||0)+(last.cacheWrite||0):null;
-    const lastCache=last?(last.cache||0)+(last.cacheWrite||0):0;
+    const reserved=Number.isFinite(usage?.reservedTokens)?usage.reservedTokens:0;
     const summary=percent===null?'上下文用量：等待 CLI 返回完整统计':`上下文已用 ${label}，约 ${number(used)} / ${number(limit)} tokens`;
     $('#context-usage').title=summary;$('#context-usage').setAttribute('aria-label',summary);
     const rows=[
       ['最近上下文',used===null?'暂无统计':`${number(used)} tokens`],
       ['上下文上限',limit===null?'CLI 尚未返回':`${number(limit)} tokens`],
-      ['剩余空间',used!==null&&limit!==null?`${number(Math.max(0,limit-used))} tokens`:'暂无统计'],
+      ['剩余空间',used!==null&&limit!==null?`${number(Math.max(0,limit-used-reserved))} tokens`:'暂无统计'],
       ['统计模型',usage?.model||'发送后更新'],
-      ['本轮输入 / 输出',last?`${number(lastInput)} / ${number(last.output)} tokens${lastCache>0?`（含缓存 ${number(lastCache)}）`:''}`:'暂无统计']
+      [`本轮累计${lastTurn?.requests?`（${lastTurn.requests} 次请求）`:''}`,last?`输入 ${number(lastInput)} / 输出 ${number(last.output)}`:'暂无统计']
     ];
     $('#usage-details').innerHTML=rows.map(([name,value])=>`<div class="usage-detail-row"><span>${escape(name)}</span><strong>${escape(value)}</strong></div>`).join('');
     if(!$('#usage-picker').hidden){

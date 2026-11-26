@@ -770,3 +770,17 @@ test('API retries show their reason in the status until the model answers',async
     assert.equal(t.status,'generating');
   }finally{await engine.shutdown();}
 });
+test('context meter: the compact reserve, requests per turn, and <synthetic> error messages',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  try{
+    await engine.send(t.id,'test');await tick();
+    engine.runs.get(t.id).query.getContextUsage=async()=>({model:t.model,totalTokens:600,maxTokens:967000,rawMaxTokens:1000000,categories:[{id:'messages',name:'Messages',tokens:600,kind:'used'},{id:'autocompact_buffer',name:'Autocompact buffer',tokens:33000,kind:'reserved'}]});
+    const start=input=>sdk.outputs.push({type:'stream_event',event:{type:'message_start',message:{model:t.model,usage:{input_tokens:input,output_tokens:0}}}});
+    start(600);await tick();await tick();
+    assert.equal(t.contextUsage.contextWindow,1000000);assert.equal(t.contextUsage.reservedTokens,33000);
+    start(900);await tick();
+    assert.equal(t.contextUsage.usedTokens,900);assert.equal(t.contextUsage.reservedTokens,33000);assert.equal(t.turns[0].requests,2);
+    sdk.outputs.push({type:'assistant',uuid:'synthetic',message:{model:'<synthetic>',content:[{type:'text',text:'API Error: 429'}],usage:{input_tokens:0,output_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0}}});await tick();
+    assert.equal(t.contextUsage.usedTokens,900);assert.equal(t.contextUsage.model,t.model);assert.notEqual(engine.runs.get(t.id).contextModel,'<synthetic>');
+  }finally{await engine.shutdown();}
+});
