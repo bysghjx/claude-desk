@@ -378,6 +378,7 @@ if(primaryInstance)app.whenReady().then(async () => {
     if(typeof value.notifications === 'boolean') settings.notifications = value.notifications;
     if(typeof value.keepAwake === 'boolean'){ settings.keepAwake = value.keepAwake; updateAwake(); }
     if(typeof value.closeToTray === 'boolean') settings.closeToTray = value.closeToTray;
+    if(typeof value.agentProgress === 'boolean') settings.agentProgress = value.agentProgress;
     if(typeof value.autoUpdate === 'boolean') settings.autoUpdate = value.autoUpdate;
     if(['local','worktree'].includes(value.location)) settings.location = value.location;
     if(['','orange','blue','green','purple','pink','yellow'].includes(value.accent)) settings.accent = value.accent;

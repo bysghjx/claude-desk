@@ -241,11 +241,11 @@ export function agentParts(tool,agent,{escape}){
   const status=agent?AGENT_STATES[agent.status]||'':STATE_LABELS[tool.status]||'';
   const running=live||['running','approval'].includes(tool.status);
   const label=running?(steps?`子智能体正在工作 · 已 ${steps} 步`:'正在启动子智能体'):steps?`子智能体完成了 ${steps} 个步骤`:'启动了子智能体';
-  const icon=STEP_ICONS.agent;
+  const icon=STEP_ICONS.agent,target=running&&agent?.progress?agent.progress:view.target;
   const meta=[agent?.type||input.subagent_type,agent?.background||input.run_in_background?'后台':'',agent?.usage?.totalTokens?`${Number(agent.usage.totalTokens).toLocaleString()} tokens`:''].filter(Boolean);
   return{
     className:`step step-agent ${running?'running':tool.status||''}${agent?.status==='error'?' error':''}`,
-    summary:`<span class="step-icon" aria-hidden="true"><svg viewBox="0 0 18 18">${icon}</svg></span><span class="step-label">${escape(label)}</span>${view.target?`<span class="step-target">${escape(view.target)}</span>`:''}${status&&status!=='已完成'?`<span class="step-state">${escape(status)}</span>`:''}`,
+    summary:`<span class="step-icon" aria-hidden="true"><svg viewBox="0 0 18 18">${icon}</svg></span><span class="step-label">${escape(label)}</span>${target?`<span class="step-target">${escape(target)}</span>`:''}${status&&status!=='已完成'?`<span class="step-state">${escape(status)}</span>`:''}`,
     head:`<div class="step-detail-head"><span>${escape(view.verb)}</span>${view.target?`<code>${escape(view.target)}</code>`:''}${meta.map(m=>`<span class="agent-step-meta">${escape(m)}</span>`).join('')}</div>`,
     prompt:String(input.prompt||agent?.description||''),
     work,final,

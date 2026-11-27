@@ -27,7 +27,7 @@ function liveCards(agents, { home, now }) {
     const key = a.ownerId + '-agent-' + a.id, live = AGENT_ACTIVE.has(a.status), tools = a.tools || [];
     const tool = tools.findLast(x => x.status === 'running') || tools.at(-1);
     const toolTarget = tool?.input?.file_path || tool?.input?.command || tool?.input?.pattern || '';
-    const brief = a.summary || (a.lastTool && '最近工具 · ' + a.lastTool) || (a.status === 'approval' ? '等待你批准工具操作' : live ? '已启动，等待 CLI 返回进展' : AGENT_LABELS[a.status] || a.status);
+    const brief = (live && a.progress) || a.summary || (a.lastTool && '最近工具 · ' + a.lastTool) || (a.status === 'approval' ? '等待你批准工具操作' : live ? '已启动，等待 CLI 返回进展' : AGENT_LABELS[a.status] || a.status);
     const toolBrief = tool ? `${tool.name}${toolTarget ? ' · ' + String(toolTarget).slice(0, 120) : ''}` : '';
     const meta = toolBrief || (home ? a.ownerTitle : '');
     const time = `<span data-agent-start="${a.startedAt}" data-agent-end="${a.finishedAt || ''}">${elapsed(a.startedAt, a.finishedAt || now)}</span>`;
@@ -97,7 +97,7 @@ export function createInspector({ store, actions, api, composer, toast, dock, re
     const thread = store.current(), sources = new Map();
     for (const r of [...(thread?.turns.flatMap(t => t.references || []) || []), ...(composer.capture().references || [])]) sources.set(r.kind + ':' + (r.path || r.id), r);
     const agents = collectAgents(store);
-    const key = JSON.stringify([[...sources.keys()], agents.map(a => [a.id, a.status, a.summary, a.lastTool, a.tools?.length, a.answer?.length])]);
+    const key = JSON.stringify([[...sources.keys()], agents.map(a => [a.id, a.status, a.summary, a.progress, a.lastTool, a.tools?.length, a.answer?.length])]);
     if (key === panelKey) return; panelKey = key;
     $('#source-count').textContent = sources.size || '';
     setHtml($('#source-list'), sources.size ? [...sources.values()].map(r => `<div class="source-row" title="${escape(r.label || r.path || r.id)}"><span>${r.kind === 'file' ? '@' : '@@'}</span><span>${escape(r.label || r.path || r.id)}</span></div>`).join('') : '<p class="context-empty">使用 @ 文件或 @@ 会话添加来源</p>');

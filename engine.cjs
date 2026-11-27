@@ -432,6 +432,7 @@ class Engine extends EventEmitter {
       ...(extensionOptions.plugins?.length?{plugins:extensionOptions.plugins}:{}),
       ...(this.deskServer?{mcpServers:{desk:this.deskServer(t.id)},allowedTools:DESK_TOOLS}:{}),
       model, thinking: { type: 'adaptive' }, effort,
+      ...(this.store.state.settings?.agentProgress === true ? { agentProgressSummaries: true } : {}),
       permissionMode: mode, settingSources: ['user', 'project', 'local'],
       allowDangerouslySkipPermissions: mode === 'bypassPermissions',
       systemPrompt: { type: 'preset', preset: 'claude_code', append: '你在 Claude Desk 本地桌面客户端中工作。默认用中文与用户交流。简明汇报进度；只有实际完成工具操作后才能声称完成。' + FORMAT_PROMPT + (this.deskServer ? DESK_PROMPT : '') + instructionsPrompt(this.instructionsOf(t)) },

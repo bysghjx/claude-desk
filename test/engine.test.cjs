@@ -165,7 +165,7 @@ test('main completion does not hide background agents, and late progress cannot 
   sdk.outputs.push({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'agent-a',tool_use_id:'spawn-a',run_id:'002',description:'Investigate',is_backgrounded:true});
   await complete(sdk,'Main complete');assert.equal(t.status,'tool');assert.equal(t.turns[0].status,'done');
   sdk.outputs.push({type:'system',subtype:'task_progress',task_id:'agent-a',run_id:'002',description:'Investigate',usage:{total_tokens:123,tool_uses:2,duration_ms:1000},summary:'Inspecting files'});await tick();
-  const agent=t.turns[0].subagents[0];assert.equal(agent.usage.totalTokens,123);assert.equal(agent.summary,'Inspecting files');
+  const agent=t.turns[0].subagents[0];assert.equal(agent.usage.totalTokens,123);assert.equal(agent.progress,'Inspecting files');
   sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'agent-a',run_id:'001',status:'failed',summary:'stale'});await tick();assert.equal(agent.status,'running');
   sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'agent-a',run_id:'002',status:'completed',summary:'Review complete'});await tick();assert.equal(t.status,'done');assert.equal(agent.status,'done');
   sdk.outputs.push({type:'system',subtype:'task_progress',task_id:'agent-a',run_id:'002',description:'Investigate',usage:{total_tokens:124,tool_uses:2,duration_ms:1001}});await tick();assert.equal(agent.status,'done');assert.equal(t.status,'done');
@@ -800,4 +800,19 @@ test('background commands are listed while they run, after the turn ends, and cl
     run.query.close();await run.task;
     assert.deepEqual(t.backgroundTasks,[]);
   }finally{await engine.shutdown();}
+});
+test('agent progress summaries are asked for only when turned on, and kept apart from the result',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  try{
+    await engine.send(t.id,'test');await tick();
+    assert.equal(sdk.contexts[0].agentProgressSummaries,undefined);
+    sdk.outputs.push({type:'system',subtype:'task_started',task_id:'a1',tool_use_id:'tu1',task_type:'local_agent',subagent_type:'general-purpose',description:'look around',is_backgrounded:true});await tick();
+    sdk.outputs.push({type:'system',subtype:'task_progress',task_id:'a1',tool_use_id:'tu1',description:'look around',usage:{total_tokens:10,tool_uses:1,duration_ms:5},summary:'Reading the config files'});await tick();
+    const a=t.turns[0].subagents[0];assert.equal(a.progress,'Reading the config files');assert.equal(a.summary,undefined);
+    sdk.outputs.push({type:'system',subtype:'task_notification',task_id:'a1',tool_use_id:'tu1',status:'completed',output_file:'',summary:'Found three files'});await tick();
+    assert.equal(a.summary,'Found three files');assert.equal(a.status,'done');
+  }finally{await engine.shutdown();}
+  const on=fakeSdk();const second=setup(on.query);second.engine.store.state.settings.agentProgress=true;
+  try{await second.engine.send(second.t.id,'test');await tick();assert.equal(on.contexts[0].agentProgressSummaries,true);}
+  finally{await second.engine.shutdown();}
 });

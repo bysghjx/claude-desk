@@ -94,7 +94,8 @@ function handleAgentMessage(thread,run,msg,redact){
     const found=ensureAgent(thread,current,msg);if(!found)return true;
     const a=found.agent;
     if(msg.usage)a.usage={totalTokens:msg.usage.total_tokens,toolUses:msg.usage.tool_uses,durationMs:msg.usage.duration_ms};
-    if(msg.summary)a.summary=redact(msg.summary);
+    // A task_progress summary says what a running agent is doing now; the others are its result.
+    if(msg.summary){if(msg.subtype==='task_progress')a.progress=redact(msg.summary);else a.summary=redact(msg.summary);}
     if(msg.last_tool_name)a.lastTool=msg.last_tool_name;
     if(msg.subtype==='task_updated'){
       const p=msg.patch||{};

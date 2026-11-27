@@ -86,7 +86,7 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   }
 
   async function openSettings(page = settingsPage) {
-    themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false; $('#tray-toggle').checked = store.state.settings?.closeToTray !== false;
+    themeButtons(); $('#notify-toggle').checked = store.state.settings?.notifications !== false; $('#awake-toggle').checked = store.state.settings?.keepAwake !== false; $('#tray-toggle').checked = store.state.settings?.closeToTray !== false; $('#agent-progress-toggle').checked = store.state.settings?.agentProgress === true;
     const p = store.state.provider;
     setHtml($('#connection-status'), connectionHtml(p));
     setText($('#cli-path'), p.cliPath ? (p.cliBundled ? 'Claude Desk 内置版本：' : '你安装的版本：') + p.cliPath : '没有找到');
@@ -126,6 +126,11 @@ export function createChrome({ store, actions, api, toast, manager, composer, si
   $('#tray-toggle').addEventListener('change', guarded(toast, async () => {
     const on = $('#tray-toggle').checked;
     store.state.settings = { ...store.state.settings, closeToTray: on }; await api('settings', { closeToTray: on });
+  }));
+  // Off unless turned on: each summary is one more model call.
+  $('#agent-progress-toggle').addEventListener('change', guarded(toast, async () => {
+    const on = $('#agent-progress-toggle').checked;
+    store.state.settings = { ...store.state.settings, agentProgress: on }; await api('settings', { agentProgress: on });
   }));
   $('#notify-test').addEventListener('click', guarded(toast, async () => { toast(await api('notify:test') ? '已发送测试通知，请看屏幕右下角' : '系统不支持桌面通知，或通知已被 Windows 关闭'); }));
   $('#notify-test-done').addEventListener('click', guarded(toast, async () => { toast(await api('notify:test','done') ? '已发送任务完成提示音试听' : '系统不支持桌面通知，或通知已被 Windows 关闭'); }));
