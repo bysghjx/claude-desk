@@ -2,7 +2,7 @@
 // messages and the approval card for the selected conversation.
 import { $, escape, markdown, setHtml, setText } from '../core/dom.mjs';
 import { approvalHtml, collectAnswers, isPlan, pickChoice, questionPage, questionsOf, showQuestion } from './approval.mjs';
-import { isActive } from '../core/format.mjs';
+import { elapsed, isActive } from '../core/format.mjs';
 import { guarded } from '../core/ui.mjs';
 
 export function pendingApproval(thread) {
@@ -17,6 +17,14 @@ export function createStatus({ store, actions, api, composer, toast }) {
     send.classList.toggle('stop', stop);
     send.setAttribute('aria-label', stop ? '停止当前运行' : active ? '插话' : '发送消息');
     send.title = stop ? '停止当前运行' : active ? '插话 · Enter（不停止任务，下一步之前交给 Claude）；Tab 加入队列' : '发送 · Enter';
+  }
+
+  // Commands and other tasks Claude left running in the background; the turn may already be over.
+  const BACKGROUND_KINDS = { local_bash: '后台命令', local_workflow: '后台工作流' };
+  function background() {
+    const items = store.current()?.backgroundTasks || [], now = Date.now();
+    $('#background-list').hidden = !items.length;
+    setHtml($('#background-list'), items.map(x => `<div class="queue-item background-item"><span class="queue-badge background-badge">${BACKGROUND_KINDS[x.type] || '后台任务'}</span><span class="queue-text" title="${escape(x.description)}">${escape(x.description || x.id)}</span><span class="background-time" data-since="${x.startedAt}" title="已运行时长">${elapsed(x.startedAt, now)}</span></div>`).join(''));
   }
 
   // Queued messages; 插话 not read yet shows in the conversation, at the end of the running turn.
@@ -39,12 +47,13 @@ export function createStatus({ store, actions, api, composer, toast }) {
   // The running state itself shows in the turn, or pinned above the input box (conversation.mjs).
   function activity() {
     const thread = store.current(), active = isActive(thread);
+    for (const el of $('#background-list').querySelectorAll('[data-since]')) el.textContent = elapsed(Number(el.dataset.since));
     $('#prompt').placeholder = active ? '运行中可以插话：Enter 交给 Claude（不停止任务），Tab 加入队列…' : '发送消息到 Claude Code… 输入 / 唤起命令，@ 引用文件，@@ 引用会话，可粘贴图片';
     if (!active) { setText($('#context-hint'), thread?.status === 'error' ? '运行失败，可查看具体错误并重试' : '沿用本机 Claude CLI 配置 · 无需额外账号'); return; }
     setText($('#context-hint'), thread.status === 'approval' ? '需要你批准后才能继续，不会自动放行' : '运行中 · 可以切换其他会话，当前任务会继续');
   }
 
-  function render() { activity(); sendButton(); queue(); approval(); composer.renderUsage(); }
+  function render() { activity(); sendButton(); background(); queue(); approval(); composer.renderUsage(); }
 
   $('#queue-list').addEventListener('click', guarded(toast, async event => {
     const steer = event.target.closest('[data-queue-steer]'); if (steer) { steer.disabled = true; return actions.steerQueued(steer.dataset.queueSteer); }

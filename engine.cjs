@@ -52,7 +52,7 @@ class JsonStore {
     store.state.ui={selectedThread:null,projectId:null,drafts:{},...store.state.ui};
     for (const t of store.state.threads) {
       if(activeAgents(t).length&&!ACTIVE.has(t.status)){t.status='interrupted';t.error='上次运行的子智能体随应用退出而中断。';}
-      settleAgents(t,'interrupted');
+      settleAgents(t,'interrupted');delete t.backgroundTasks;
       if (ACTIVE.has(t.status)) { t.status = 'interrupted'; t.error = '上次运行随应用退出而中断。可以重试。'; const last=t.turns.at(-1); if(last){last.status='interrupted';last.error=t.error;delete last.approval;} }
       for (const turn of t.turns) { dropToolAgents(turn); for (const tool of turn.tools || []) if (['running', 'approval'].includes(tool.status)) tool.status = 'interrupted'; }
     }
@@ -286,6 +286,14 @@ class Engine extends EventEmitter {
     t.finishedAt = null; this.setStatus(t, 'waiting', '已发送，等待模型响应');
     return true;
   }
+  // Background commands, monitors and workflows still running in this CLI; sub-agents are kept on their turns.
+  // The CLI sends the whole set on every change, so it replaces what was there.
+  trackBackground(t, tasks = []) {
+    const before = new Map((t.backgroundTasks || []).map(x => [x.id, x]));
+    t.backgroundTasks = tasks.filter(x => x.task_id && !x.ambient && x.task_type !== 'local_agent')
+      .map(x => ({ id: x.task_id, type: x.task_type || '', description: this.redact(x.description || '').slice(0, 200), startedAt: before.get(x.task_id)?.startedAt || Date.now() }));
+    this.publish(t.id, false);
+  }
   // 后台任务完成或定时唤醒 CLI 时，上一轮已经结束并展示结论，为其开启独立回合，
   // 避免后续步骤与结论追加到上一轮里把前一段结论折叠进步骤区，或覆盖耗时与用量。
   openBackgroundTurn(t, run) {
@@ -484,6 +492,7 @@ class Engine extends EventEmitter {
         if (this.runs.get(t.id) === run) {
           this.runs.delete(t.id);
           if(activeAgents(t).length){settleAgents(t,'interrupted');t.status='interrupted';t.detail='子智能体随 CLI 进程结束而中断';this.publish(t.id);}
+          if(t.backgroundTasks?.length){t.backgroundTasks=[];this.publish(t.id);}
         }
       }
     })();
@@ -608,6 +617,7 @@ class Engine extends EventEmitter {
     if (msg.type === 'system' && msg.subtype === 'task_notification' && run.mainDone && !msg.ambient && !msg.skip_transcript) {
       run.pendingBackgroundNotice = { taskId: msg.task_id || '', status: msg.status || '', summary: msg.summary ? this.redact(msg.summary).slice(0, 300) : '' };
     }
+    if (msg.type === 'system' && msg.subtype === 'background_tasks_changed') this.trackBackground(t, msg.tasks);
     if(handleAgentMessage(t,run,msg,text=>this.redact(text))){this.publish(t.id,false);return;}
     if ((msg.type === 'assistant' || msg.type === 'stream_event') && msg.parent_tool_use_id == null) {
       if (run.nextUserTurn && (msg.user_message_uuid === run.nextUserTurn.uuid || msg.user_message_uuids?.includes(run.nextUserTurn.uuid))) {

@@ -553,6 +553,8 @@
   .queue-badge{color:#96772f;background:#96772f1a;border-color:#96772f33}
   .queue-text{color:#37342a}
   .queue-images{color:#696862}
+  .background-badge{color:#2d6fb0;background:#2d6fb01a;border-color:#2d6fb033}
+  .background-time{color:#696862}
   .queue-item button{color:#4d4a41}
   .queue-item button:hover{background:#0f0f0f0d;color:#2c281b}
   .turn-steer-text{background:#ebebeb;color:#1e1e1e}

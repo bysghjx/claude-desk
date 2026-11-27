@@ -784,3 +784,20 @@ test('context meter: the compact reserve, requests per turn, and <synthetic> err
     assert.equal(t.contextUsage.usedTokens,900);assert.equal(t.contextUsage.model,t.model);assert.notEqual(engine.runs.get(t.id).contextModel,'<synthetic>');
   }finally{await engine.shutdown();}
 });
+test('background commands are listed while they run, after the turn ends, and cleared with the CLI',async()=>{
+  const sdk=fakeSdk();const {engine,t}=setup(sdk.query);
+  try{
+    await engine.send(t.id,'test');await tick();const run=engine.runs.get(t.id);
+    const changed=tasks=>sdk.outputs.push({type:'system',subtype:'background_tasks_changed',tasks});
+    changed([{task_id:'b1',task_type:'local_bash',description:'npm run dev'},{task_id:'w1',task_type:'local_bash',description:'watcher',ambient:true},{task_id:'a1',task_type:'local_agent',description:'helper'}]);await tick();
+    assert.deepEqual(t.backgroundTasks.map(x=>[x.id,x.type,x.description]),[['b1','local_bash','npm run dev']]);
+    const started=t.backgroundTasks[0].startedAt;
+    await complete(sdk);assert.equal(t.backgroundTasks.length,1);
+    changed([{task_id:'b1',task_type:'local_bash',description:'npm run dev'},{task_id:'b2',task_type:'local_bash',description:'npm test'}]);await tick();
+    assert.deepEqual(t.backgroundTasks.map(x=>x.id),['b1','b2']);assert.equal(t.backgroundTasks[0].startedAt,started);assert.equal(t.status,'done');
+    changed([{task_id:'b2',task_type:'local_bash',description:'npm test'}]);await tick();
+    assert.deepEqual(t.backgroundTasks.map(x=>x.id),['b2']);
+    run.query.close();await run.task;
+    assert.deepEqual(t.backgroundTasks,[]);
+  }finally{await engine.shutdown();}
+});
